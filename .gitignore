@@ -1,1 +1,34 @@
-.artifacts/
+# Gradle
+.gradle/
+build/
+*/build/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Kotlin
+.kotlin/
+
+# Native / generated
+.externalNativeBuild/
+.cxx/
+captures/
+
+# Signing
+*.jks
+*.keystore
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+*.7z
