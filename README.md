@@ -5,7 +5,7 @@
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://www.android.com/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
-[![Release](https://img.shields.io/badge/Release-v1.0.0-6f42c1)](../../releases)
+[![Public version](https://img.shields.io/badge/Public%20version-v1.0.0-6f42c1)](../../releases)
 
 ---
 
@@ -36,9 +36,7 @@
 
 ## 📥 Скачать
 
-### 🟣 Последний публичный релиз
-
-**[MangaBuffAuto v1.0.0 →](../../releases/tag/v1.0.0)**
+### 🟣 Публичные релизы
 
 Все APK и файлы релизов публикуются в разделе **[Releases](../../releases)**.
 
@@ -50,7 +48,7 @@
 ## 📱 Установка
 
 1. Откройте **Releases**.
-2. Скачайте APK последней версии.
+2. Скачайте APK нужной версии.
 3. При необходимости разрешите установку из неизвестного источника.
 4. Установите приложение.
 5. Запустите MangaBuffAuto.
