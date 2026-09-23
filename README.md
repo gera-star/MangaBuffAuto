@@ -1,6 +1,6 @@
 # 📚 MangaBuffAuto
 
-> **Android-автоматизация для MangaBuff** — чтение, навигация и автоматизация рутинных действий в одном приложении. БОТ
+> **Android-автоматизация для MangaBuff** — чтение, навигация и автоматизация рутинных действий в одном приложении. Мангабафф БОТ
 
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://www.android.com/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
