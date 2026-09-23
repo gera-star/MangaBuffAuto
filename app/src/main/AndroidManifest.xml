@@ -6,16 +6,29 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <application android:allowBackup="true" android:label="MangaBuff Auto Experiment"
-        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"
-        android:supportsRtl="true" android:theme="@style/Theme.MangaBuffAuto"
+
+    <application
+        android:allowBackup="true"
+        android:label="MangaBuffAuto"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MangaBuffAuto"
         android:enableOnBackInvokedCallback="true">
-        <service android:name=".automation.AutomationForegroundService" android:enabled="true"
-            android:exported="false" android:foregroundServiceType="specialUse">
-            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+
+        <service
+            android:name=".automation.AutomationForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="user initiated WebView automation that must continue while the screen is locked" />
         </service>
-        <activity android:name=".MainActivity" android:exported="true"
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density">
             <intent-filter>
@@ -23,7 +36,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <receiver android:name=".automation.AutomationBootReceiver" android:enabled="true" android:exported="false">
+
+        <receiver
+            android:name=".automation.AutomationBootReceiver"
+            android:enabled="true"
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
