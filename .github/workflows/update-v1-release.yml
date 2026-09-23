@@ -1,0 +1,88 @@
+name: Update v1.0.0 release notes
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  update-release:
+    if: github.repository == 'gera-star/MangaBuffAuto'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update release description
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > /tmp/release-notes.md <<'EOF'
+## MangaBuffAuto v1.0.0
+
+Первый публичный релиз **MangaBuffAuto**.
+
+MangaBuffAuto — независимое стороннее Android-приложение для автоматизации части повторяющихся действий при работе с MangaBuff.
+
+### Возможности
+
+- 📖 автоматизация чтения;
+- 🖱️ автоматический скроллинг;
+- 🔄 восстановление состояния;
+- 🌐 встроенный WebView;
+- 👆 навигация жестами между страницами;
+- ⏱️ фоновые задачи;
+- 📢 обработка рекламных окон;
+- 💬 автоматические комментарии;
+- 📊 статистика;
+- 🧪 диагностический журнал;
+- 🛡️ защита задач от конфликтов;
+- 🧹 обслуживание памяти WebView.
+
+### 📱 Установка
+
+1. Скачайте **MangaBuffAuto-v1.0.0.apk** из Assets ниже.
+2. Установите APK.
+3. Запустите приложение и откройте MangaBuff внутри WebView.
+4. При необходимости выполните вход в свой аккаунт.
+
+### ⚙️ Что разрешить на телефоне для стабильной фоновой работы
+
+Для обычной работы приложения достаточно доступа к интернету. Для длительной автоматизации, особенно при заблокированном экране, на Android/HyperOS рекомендуется проверить следующие настройки:
+
+- 🔋 **Батарея → Без ограничений / Не ограничивать** для MangaBuffAuto.
+- 🚀 **Автозапуск → Разрешить** (если такой пункт есть на устройстве).
+- 🌙 Разрешить приложению работать **в фоне** / не приостанавливать его при блокировке экрана.
+- 🔔 **Уведомления → Разрешить**, если система предлагает это для работы фонового сервиса и его уведомления.
+- 🔋 Если Android предлагает отключить оптимизацию батареи для приложения — разрешить это для MangaBuffAuto, если нужна максимально стабильная длительная работа.
+- 📲 После изменения настроек желательно один раз перезапустить приложение.
+
+На Xiaomi/HyperOS названия пунктов могут отличаться в зависимости от версии системы. Не требуется выдавать приложению доступ к контактам, SMS, камере, микрофону или геолокации — приложение их не запрашивает.
+
+### 🔐 Важно
+
+Авторизация выполняется внутри WebView. Не передавайте разработчику пароль, cookies, session token или другие данные авторизации.
+
+MangaBuffAuto не является официальным приложением MangaBuff. Используйте приложение в соответствии с правилами соответствующего сервиса.
+
+### 📦 APK
+
+**MangaBuffAuto-v1.0.0.apk**
+
+Размер: ~10.7 MB.
+
+EOF
+          gh release edit v1.0.0 \
+            --repo "${{ github.repository }}" \
+            --title "MangaBuffAuto v1.0.0" \
+            --notes-file /tmp/release-notes.md
+
+      - name: Remove temporary workflow
+        run: |
+          git clone "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" repo
+          cd repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/update-v1-release.yml
+          git add -A
+          git commit -m "Remove temporary v1.0.0 release updater" || exit 0
+          git push origin main
