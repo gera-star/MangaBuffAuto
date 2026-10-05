@@ -150,6 +150,34 @@ class MangaBuffAutomation(
      *
      * WebView.flingScroll() must run on the WebView's creation thread (main).
      */
+    /**
+     * Real WebView tap fallback for fullscreen ads whose close control is
+     * hidden from page JavaScript by a cross-origin iframe or closed shadow root.
+     */
+    private fun dispatchNativeTap(
+        webView: WebView,
+        x: Float,
+        y: Float
+    ) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { dispatchNativeTap(webView, x, y) }
+            return
+        }
+        if (!webView.isAttachedToWindow || webView.isDestroyed) return
+
+        val density = webView.resources.displayMetrics.density.coerceAtLeast(1f)
+        val px = x.coerceAtLeast(0f) * density
+        val py = y.coerceAtLeast(0f) * density
+        val down = SystemClock.uptimeMillis()
+
+        MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, px, py, 0).also { event ->
+            try { webView.dispatchTouchEvent(event) } finally { event.recycle() }
+        }
+        MotionEvent.obtain(down, down + 80L, MotionEvent.ACTION_UP, px, py, 0).also { event ->
+            try { webView.dispatchTouchEvent(event) } finally { event.recycle() }
+        }
+    }
+
     private fun dispatchNativeSwipe(
         webView: WebView,
         x1: Float,
@@ -1429,6 +1457,25 @@ class MangaBuffAutomation(
                     log(account.username, "ADS: DAILY_LIMIT_REACHED")
                     safeResume(false)
                 }
+
+                @JavascriptInterface
+                fun onCloseTapRequested(x: Float, y: Float, source: String) {
+                    log(
+                        account.username,
+                        "ADS: NATIVE_CLOSE_TAP_REQUEST x=$x y=$y source=$source"
+                    )
+                    mainHandler.post {
+                        try {
+                            dispatchNativeTap(webView, x, y)
+                        } catch (e: Exception) {
+                            log(
+                                account.username,
+                                "ADS: NATIVE_CLOSE_TAP_ERROR error=" + e.message,
+                                true
+                            )
+                        }
+                    }
+                }
             }
 
             // Keep the bridge registered across the balance navigation.
@@ -1623,13 +1670,8 @@ class MangaBuffAutomation(
                                 function findCloseButton() {
                                     /*
                                      * Exact live Yandex X:
-                                     * <svg width="40" height="40">
-                                     *   <path d="M32.012 10.345..."></path>
-                                     * </svg>
-                                     *
-                                     * IMPORTANT: check the exact path FIRST. The generic
-                                     * fullscreen selectors can otherwise return a visible
-                                     * wrapper that is not the actual close control.
+                                     * path d starts with M32.012 10.345a1.667a1.667
+                                     * and sits below [data-survey-fullscreen-control].
                                      */
                                     var closePath = deepQuery(
                                         "path[d^=\"M32.012 10.345a1.667a1.667\"]"
@@ -1640,9 +1682,7 @@ class MangaBuffAutomation(
                                             var control = closePath.closest(
                                                 "[data-survey-fullscreen-control]"
                                             );
-                                            if (control && isVisibleElement(control)) {
-                                                return control;
-                                            }
+                                            if (control && isVisibleElement(control)) return control;
                                         } catch (e) {}
 
                                         try {
@@ -1651,13 +1691,6 @@ class MangaBuffAutomation(
                                             );
                                             if (fullscreenClose && isVisibleElement(fullscreenClose)) {
                                                 return fullscreenClose;
-                                            }
-                                        } catch (e) {}
-
-                                        try {
-                                            var parent = closePath.parentElement;
-                                            if (parent && isVisibleElement(parent)) {
-                                                return parent;
                                             }
                                         } catch (e) {}
 
@@ -1682,6 +1715,68 @@ class MangaBuffAutomation(
                                     }
 
                                     return null;
+                                }
+
+                                /*
+                                 * Yandex may render the X in a cross-origin iframe or
+                                 * closed shadow root. Page JS cannot inspect that DOM.
+                                 * The supplied X is a 40x40 fullscreen control at the
+                                 * top-right, so use Android's real WebView tap there.
+                                 */
+                                function requestNativeCloseTap() {
+                                    var width = window.innerWidth || document.documentElement.clientWidth || 0;
+                                    var height = window.innerHeight || document.documentElement.clientHeight || 0;
+
+                                    if (width <= 0 || height <= 0) {
+                                        AndroidAds.onStateLog("NATIVE_CLOSE_SKIP", "invalid_viewport");
+                                        return false;
+                                    }
+
+                                    var fullscreenVisible = false;
+
+                                    try {
+                                        var markers = Array.from(
+                                            document.querySelectorAll(
+                                                "[data-fullscreen-element], [data-fullscreen-element-name]"
+                                            )
+                                        );
+                                        fullscreenVisible = markers.some(isVisibleElement);
+                                    } catch (e) {}
+
+                                    try {
+                                        var frames = Array.from(document.querySelectorAll("iframe"));
+                                        fullscreenVisible = fullscreenVisible || frames.some(function(frame) {
+                                            try {
+                                                var r = frame.getBoundingClientRect();
+                                                return r.width >= width * 0.8 && r.height >= height * 0.8;
+                                            } catch (e) {
+                                                return false;
+                                            }
+                                        });
+                                    } catch (e) {}
+
+                                    if (!fullscreenVisible) {
+                                        AndroidAds.onStateLog(
+                                            "NATIVE_CLOSE_SKIP",
+                                            "fullscreen_not_detected viewport=" + width + "x" + height
+                                        );
+                                        return false;
+                                    }
+
+                                    var x = Math.max(1, width - 20);
+                                    var y = Math.max(1, 20);
+
+                                    AndroidAds.onStateLog(
+                                        "NATIVE_CLOSE_TAP",
+                                        "x=" + x + " y=" + y +
+                                        " viewport=" + width + "x" + height
+                                    );
+                                    AndroidAds.onCloseTapRequested(
+                                        x,
+                                        y,
+                                        "fullscreen_top_right_fallback"
+                                    );
+                                    return true;
                                 }
 
                                 function verifyReward(attempt) {
@@ -1892,33 +1987,55 @@ class MangaBuffAutomation(
                                                 close.click();
                                                 AndroidAds.onStateLog(
                                                     "CLOSE_CLICKED",
-                                                    "after_our_32s_timer"
+                                                    "after_our_32s_timer_dom"
                                                 );
                                             } catch (e) {
-                                                finished = true;
-                                                window.__mbAdsRunnerActive = false;
-                                                AndroidAds.onAdFailed(
-                                                    "close_click_exception=" +
-                                                    (e && e.message ? e.message : String(e))
+                                                AndroidAds.onStateLog(
+                                                    "CLOSE_DOM_CLICK_ERROR",
+                                                    "error=" + (e && e.message ? e.message : String(e))
                                                 );
-                                                return;
                                             }
 
                                             AndroidAds.onStateLog(
                                                 "AD_32S_FINISHED",
-                                                "elapsed=" + Math.floor(elapsed / 1000) + "s"
+                                                "elapsed=" + Math.floor(elapsed / 1000) + "s source=DOM"
                                             );
 
-                                            /*
-                                             * Closing the fullscreen ad does not necessarily
-                                             * mean MangaBuff has already received the reward.
-                                             * Give the page a moment, then use the existing
-                                             * local + /balance verification.
-                                             */
                                             setTimeout(function() {
                                                 verifyReward(0);
                                             }, 1800);
                                             return;
+                                        }
+
+                                        /*
+                                         * DOM is invisible to us, but the ad fullscreen is
+                                         * present. Use a real WebView tap on the known X area.
+                                         * Request only once so we never spam the fullscreen.
+                                         */
+                                        if (!window.__mbAdsNativeCloseRequested) {
+                                            window.__mbAdsNativeCloseRequested = true;
+
+                                            if (requestNativeCloseTap()) {
+                                                clearInterval(watchTimer);
+
+                                                AndroidAds.onStateLog(
+                                                    "CLOSE_NATIVE_REQUESTED",
+                                                    "elapsed=" + Math.floor(elapsed / 1000) + "s"
+                                                );
+
+                                                setTimeout(function() {
+                                                    if (finished) return;
+
+                                                    var stillClose = findCloseButton();
+                                                    AndroidAds.onStateLog(
+                                                        "CLOSE_NATIVE_RETRY_CHECK",
+                                                        "visible=" + isVisibleElement(stillClose)
+                                                    );
+
+                                                    verifyReward(0);
+                                                }, 2500);
+                                                return;
+                                            }
                                         }
 
                                         /*
