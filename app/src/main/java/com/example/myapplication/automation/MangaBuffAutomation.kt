@@ -1886,6 +1886,8 @@ class MangaBuffAutomation(
                                 function findTimer() {
                                     // Current Yandex fullscreen markup:
                                     // <div data-fullscreen-element="timer">...</div>
+                                    // Keep the exact selector first; class fallbacks are only
+                                    // for older Yandex variants.
                                     return deepQuery(
                                         "[data-fullscreen-element=\"timer\"]," +
                                         "[data-fullscreen-element-name=\"timer\"]," +
@@ -1893,21 +1895,80 @@ class MangaBuffAutomation(
                                     );
                                 }
 
-                                function readYandexTimerSeconds() {
-                                    var timer = findTimer();
-                                    if (!timer || !isVisibleElement(timer)) return null;
+                                var lastYandexSurfaceDiagAt = 0;
+
+                                function logYandexSurfaceDiagnostics(force) {
+                                    var now = Date.now();
+                                    if (!force && now - lastYandexSurfaceDiagAt < 5000) return;
+                                    lastYandexSurfaceDiagAt = now;
 
                                     try {
-                                        var text = String(timer.innerText || timer.textContent || "").trim();
+                                        var markers = document.querySelectorAll(
+                                            "[data-fullscreen-element], [data-fullscreen-element-name]"
+                                        ).length;
+                                        var iframes = document.querySelectorAll("iframe").length;
+                                        var shadowHosts = 0;
+                                        var nodes = Array.from(document.querySelectorAll("*"));
 
+                                        for (var i = 0; i < nodes.length; i++) {
+                                            if (nodes[i] && nodes[i].shadowRoot) shadowHosts++;
+                                        }
+
+                                        var timer = deepQuery("[data-fullscreen-element=\"timer\"]");
+                                        var close = deepQuery("[data-fullscreen-element=\"close\"]");
+
+                                        AndroidAds.onStateLog(
+                                            "YANDEX_SURFACE_DIAG",
+                                            "markers=" + markers +
+                                            " iframes=" + iframes +
+                                            " shadowHosts=" + shadowHosts +
+                                            " timerFound=" + !!timer +
+                                            " closeFound=" + !!close +
+                                            " url=" + (location.href || "")
+                                        );
+                                    } catch (e) {
+                                        AndroidAds.onStateLog(
+                                            "YANDEX_SURFACE_DIAG_ERROR",
+                                            "error=" + (e && e.message ? e.message : String(e))
+                                        );
+                                    }
+                                }
+
+                                function readYandexTimerSeconds() {
+                                    var timer = findTimer();
+                                    if (!timer) {
+                                        logYandexSurfaceDiagnostics(false);
+                                        return null;
+                                    }
+
+                                    try {
                                         /*
-                                         * IMPORTANT: this is a Kotlin raw string (triple quotes),
-                                         * so the JavaScript RegExp must contain a single backslash.
-                                         * /([\\d]{1,2})/ would be a character class, while
-                                         * /(\\d{1,2})/ is the intended digit matcher.
+                                         * Do not require getBoundingClientRect() visibility here.
+                                         * Yandex may keep the timer in an overlay/shadow tree whose
+                                         * geometry is not exposed to the page document even though
+                                         * the user can see it. The presence of the exact timer node
+                                         * is enough to read its countdown.
                                          */
-                                        var match = text.match(/(\d{1,2})/);
-                                        if (!match) {
+                                        var text = String(
+                                            timer.innerText ||
+                                            timer.textContent ||
+                                            timer.getAttribute("aria-label") ||
+                                            timer.getAttribute("title") ||
+                                            ""
+                                        ).replace(/\\s+/g, " ").trim();
+
+                                        var seconds = null;
+
+                                        // Handle MM:SS / HH:MM:SS first.
+                                        var clock = text.match(/(?:^|\\s)(\\d{1,2}):(\\d{2})(?:\\s|$)/);
+                                        if (clock) {
+                                            seconds = parseInt(clock[2], 10);
+                                        } else {
+                                            var match = text.match(/(\\d{1,2})/);
+                                            if (match) seconds = parseInt(match[1], 10);
+                                        }
+
+                                        if (seconds === null || isNaN(seconds)) {
                                             if (window.__mbLastYandexTimerText !== text) {
                                                 window.__mbLastYandexTimerText = text;
                                                 AndroidAds.onStateLog(
@@ -1917,9 +1978,6 @@ class MangaBuffAutomation(
                                             }
                                             return null;
                                         }
-
-                                        var seconds = parseInt(match[1], 10);
-                                        if (isNaN(seconds)) return null;
 
                                         if (
                                             window.__mbLastYandexTimerValue !== seconds ||
@@ -2327,6 +2385,9 @@ class MangaBuffAutomation(
                                         }
 
                                         var yandexSeconds = readYandexTimerSeconds();
+                                        if (yandexSeconds === null && !window.__mbYandexRewardHookState.rewarded) {
+                                            logYandexSurfaceDiagnostics(false);
+                                        }
                                         var yandexRewarded = !!(
                                             window.__mbYandexRewardHookState &&
                                             window.__mbYandexRewardHookState.rewarded
@@ -2349,7 +2410,43 @@ class MangaBuffAutomation(
                                             );
 
                                             if (elapsed >= hardTimeoutMs) {
+                                                /*
+                                                 * The Yandex timer/callback is not always observable
+                                                 * from the MangaBuff document (the live ad can be hosted
+                                                 * in a cross-origin frame). Do not deadlock the task in
+                                                 * that case. 65s is above the documented 60s maximum
+                                                 * rewarded countdown, so use the native close as a final
+                                                 * watchdog and let the server balance decide whether the
+                                                 * reward actually happened.
+                                                 */
                                                 clearInterval(watchTimer);
+
+                                                AndroidAds.onStateLog(
+                                                    "AD_HARD_TIMEOUT_CLOSE",
+                                                    "elapsed=" + Math.floor(elapsed / 1000) +
+                                                    "s yandexTimer=" +
+                                                    (yandexSeconds === null ? "?" : yandexSeconds) +
+                                                    " rewarded=" + yandexRewarded
+                                                );
+
+                                                if (!window.__mbAdsNativeCloseRequested) {
+                                                    window.__mbAdsNativeCloseRequested = true;
+
+                                                    if (requestNativeCloseTap(null)) {
+                                                        AndroidAds.onStateLog(
+                                                            "CLOSE_NATIVE_REQUESTED",
+                                                            "elapsed=" + Math.floor(elapsed / 1000) +
+                                                            "s source=hard_timeout"
+                                                        );
+
+                                                        setTimeout(function() {
+                                                            if (finished) return;
+                                                            verifyReward(0);
+                                                        }, 2500);
+                                                        return;
+                                                    }
+                                                }
+
                                                 finished = true;
                                                 window.__mbAdsRunnerActive = false;
                                                 AndroidAds.onAdFailed("yandex_reward_timeout");
