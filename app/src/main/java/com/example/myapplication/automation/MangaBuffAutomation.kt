@@ -78,6 +78,8 @@ data class ChapterContext(
     val mangaTitle: String?,
     val mangaUrl: String,
     val actualChapterUrl: String,
+    /** Server reading-quest value captured before this chapter started. */
+    val readQuestBefore: String = "0/75",
     val startedAt: Long = SystemClock.elapsedRealtime(),
     var completionProcessed: Boolean = false
 )
@@ -1619,7 +1621,10 @@ class MangaBuffAutomation(
                     val chId = result.chapterId
                     val chUrl = result.chapterUrl
                     nextChapterUrlToOpen = result.nextChapterUrl
-                    val chapterQuestBefore = lastKnownReadQuest
+                    // Use the baseline captured when this exact chapter opened.
+                    val chapterQuestBefore = activeChapterContext?.readQuestBefore
+                        ?.takeIf { it.isNotBlank() }
+                        ?: lastKnownReadQuest
 
                     val duplicate = (chId.isNotBlank() && chId in completedChapterIds) ||
                             (chUrl.isNotBlank() && chUrl in readChapterUrlsInRun)
@@ -1691,7 +1696,10 @@ class MangaBuffAutomation(
 
                     val chId = lastFinishedChapterId
                     val chUrl = lastFinishedChapterUrl
-                    val chapterQuestBefore = lastKnownReadQuest
+                    // The last chapter also carries its own immutable baseline.
+                    val chapterQuestBefore = activeChapterContext?.readQuestBefore
+                        ?.takeIf { it.isNotBlank() }
+                        ?: lastKnownReadQuest
                     val duplicate = (chId.isNotBlank() && chId in completedChapterIds) ||
                             (chUrl.isNotBlank() && chUrl in readChapterUrlsInRun)
 
@@ -2137,6 +2145,10 @@ class MangaBuffAutomation(
                         val volumeNum = if (parts.size >= 3) parts[2] else "1"
                         val chapterNum = if (parts.size >= 4) parts[3] else "1"
                         val mangaUrl = if (mangaSlug.isNotBlank()) "https://mangabuff.ru/manga/$mangaSlug" else currentMangaUrl
+                        // Capture the authoritative server quest baseline BEFORE this chapter
+                        // can finish. Do not derive the baseline after completion from the
+                        // mutable global lastKnownReadQuest.
+                        val chapterReadQuestBefore = lastKnownReadQuest
 
                         currentMangaUrl = mangaUrl
                         lastFinishedChapterUrl = currentUrl
@@ -2153,7 +2165,8 @@ class MangaBuffAutomation(
                             mangaSlug = mangaSlug,
                             mangaTitle = cleanMangaTitle(lastFinishedMangaTitle),
                             mangaUrl = mangaUrl,
-                            actualChapterUrl = currentUrl
+                            actualChapterUrl = currentUrl,
+                            readQuestBefore = chapterReadQuestBefore
                         )
 
                         log(account.username, "READER: CHAPTER_PAGE_READY")
