@@ -1448,46 +1448,87 @@ class MangaBuffAutomation(
                                     " count=" + (initialButtonCount === null ? "?" : initialButtonCount)
                                 );
 
-                                function findTimer() {
-                                    // MangaBuff's ad fullscreen markup is obfuscated, but the
-                                    // data-fullscreen-element attributes are stable.
-                                    var direct = document.querySelector(
-                                        "[data-fullscreen-element=\"timer\"]"
-                                    );
-                                    if (direct) return direct;
+                                // Yandex fullscreen ads can render the controls inside an open
+                                // ShadowRoot (and sometimes inside a same-origin iframe). A plain
+                                // document.querySelector() misses those nodes, which produced the
+                                // endless AD_TIMER visible=false loop even though the timer was on screen.
+                                function deepQuery(selector, root, depth) {
+                                    root = root || document;
+                                    depth = depth || 0;
+                                    if (depth > 8) return null;
 
-                                    return document.querySelector(
-                                        "[data-fullscreen-element-name=\"timer\"]," +
-                                        "[class*=\"timer\"]"
+                                    try {
+                                        var direct = root.querySelector(selector);
+                                        if (direct) return direct;
+                                    } catch (e) {}
+
+                                    var nodes = [];
+                                    try {
+                                        nodes = Array.from(root.querySelectorAll("*"));
+                                    } catch (e) {
+                                        return null;
+                                    }
+
+                                    for (var i = 0; i < nodes.length; i++) {
+                                        var node = nodes[i];
+
+                                        // Open shadow DOM is accessible to the page script.
+                                        if (node.shadowRoot) {
+                                            var shadowFound = deepQuery(selector, node.shadowRoot, depth + 1);
+                                            if (shadowFound) return shadowFound;
+                                        }
+
+                                        // Same-origin iframe/document fallback. Cross-origin
+                                        // Yandex frames remain inaccessible by browser security.
+                                        if (node.tagName === "IFRAME") {
+                                            try {
+                                                if (node.contentDocument) {
+                                                    var frameFound = deepQuery(
+                                                        selector,
+                                                        node.contentDocument,
+                                                        depth + 1
+                                                    );
+                                                    if (frameFound) return frameFound;
+                                                }
+                                            } catch (e) {}
+                                        }
+                                    }
+
+                                    return null;
+                                }
+
+                                function findTimer() {
+                                    return deepQuery(
+                                        "[data-fullscreen-element=\\"timer\\"]," +
+                                        "[data-fullscreen-element-name=\\"timer\\"]," +
+                                        "[class*=\\"timer\\"]"
                                     );
                                 }
 
                                 function findCloseButton() {
-                                    // Current MangaBuff markup:
+                                    // Current Yandex/MangaBuff markup:
                                     // <div data-fullscreen-element="close">...</div>
-                                    // Older variants used close-btn/aria-label.
                                     var selectors = [
-                                        "[data-fullscreen-element=\"close\"]",
-                                        "[data-fullscreen-element-name=\"close\"]",
-                                        "[data-fullscreen-element=\"close-btn\"]",
-                                        "[data-fullscreen-element-name=\"close-btn\"]",
+                                        "[data-fullscreen-element=\\"close\\"] [data-survey-fullscreen-control]",
+                                        "[data-fullscreen-element=\\"close\\"]",
+                                        "[data-fullscreen-element-name=\\"close\\"]",
+                                        "[data-fullscreen-element=\\"close-btn\\"]",
+                                        "[data-fullscreen-element-name=\\"close-btn\\"]",
                                         ".close-btn",
-                                        "button[class*=\"close\"]",
-                                        "[aria-label*=\"close\" i]",
-                                        "[aria-label*=\"закры\" i]"
+                                        "button[class*=\\"close\\"]",
+                                        "[aria-label*=\\"close\\" i]",
+                                        "[aria-label*=\\"закры\\" i]"
                                     ];
 
                                     for (var i = 0; i < selectors.length; i++) {
-                                        var el = document.querySelector(selectors[i]);
+                                        var el = deepQuery(selectors[i]);
                                         if (el && !el.disabled) return el;
                                     }
 
-                                    // The control can be a div containing the actual clickable node.
-                                    var fullscreenClose = document.querySelector(
-                                        "[data-fullscreen-element=\"close\"] [data-survey-fullscreen-control]," +
-                                        "[data-fullscreen-element=\"close\"] svg"
+                                    // Last fallback for the exact SVG shown in the supplied DOM.
+                                    return deepQuery(
+                                        "[data-fullscreen-element=\\"close\\"] svg"
                                     );
-                                    return fullscreenClose || null;
                                 }
 
                                 function verifyReward(attempt) {
