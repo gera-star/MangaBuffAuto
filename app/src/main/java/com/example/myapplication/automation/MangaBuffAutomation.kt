@@ -1017,9 +1017,14 @@ class MangaBuffAutomation(
             if (account.advEnabled || taskType == TaskType.ADS) {
                 log(account.username, "TASK: ADS_START")
                 val start = SystemClock.elapsedRealtime()
-                runAdsTask(account, settings, webView)
-                log(account.username, "TASK: ADS_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
+                val adsSuccess = runAdsTask(account, settings, webView)
+                log(account.username, "TASK: ADS_END elapsed=" + (SystemClock.elapsedRealtime() - start) + "ms success=" + adsSuccess)
                 fetchAndLogBalanceInfo(account, webView)
+                if (!adsSuccess) {
+                    updateStatus(account, "❌ Реклама не подтверждена", false, "Реклама", 0f)
+                    log(account.username, "TASK: ACCOUNT_ABORTED reason=ADS_FAILED", true)
+                    return
+                }
             }
         }
 
@@ -1375,7 +1380,7 @@ class MangaBuffAutomation(
         account: MangaBuffAccount,
         settings: GlobalSettings,
         webView: WebView
-    ) {
+    ): Boolean {
         /*
          * MangaBuff currently pays 3 ad rewards per day. Keep the user setting,
          * but never drive the site past its real daily limit.
@@ -1429,6 +1434,7 @@ class MangaBuffAutomation(
         }
 
         log(account.username, "TASK: ADS_END successCount=$adsDone target=$target")
+        return adsDone >= target
     }
 
     private suspend fun watchSingleAd(
@@ -1736,7 +1742,7 @@ class MangaBuffAutomation(
                                  * The supplied X is a 40x40 fullscreen control at the
                                  * top-right, so use Android's real WebView tap there.
                                  */
-                                function requestNativeCloseTap() {
+                                function requestNativeCloseTap(closeElement) {
                                     var width = window.innerWidth || document.documentElement.clientWidth || 0;
                                     var height = window.innerHeight || document.documentElement.clientHeight || 0;
 
@@ -1744,6 +1750,24 @@ class MangaBuffAutomation(
                                         AndroidAds.onStateLog("NATIVE_CLOSE_SKIP", "invalid_viewport");
                                         return false;
                                     }
+
+                                    var tapX = null;
+                                    var tapY = null;
+
+                                    try {
+                                        if (closeElement && closeElement.getBoundingClientRect) {
+                                            var closeRect = closeElement.getBoundingClientRect();
+                                            if (closeRect.width > 0 && closeRect.height > 0) {
+                                                tapX = closeRect.left + closeRect.width / 2;
+                                                tapY = closeRect.top + closeRect.height / 2;
+                                                AndroidAds.onStateLog(
+                                                    "NATIVE_CLOSE_EXACT",
+                                                    "x=" + tapX + " y=" + tapY +
+                                                    " rect=" + closeRect.width + "x" + closeRect.height
+                                                );
+                                            }
+                                        }
+                                    } catch (e) {}
 
                                     var fullscreenVisible = false;
 
@@ -1783,19 +1807,19 @@ class MangaBuffAutomation(
                                         );
                                     }
 
-                                    var x = Math.max(1, width - 20);
-                                    var y = Math.max(1, 20);
+                                    var x = tapX !== null ? tapX : Math.max(1, width - 20);
+                                    var y = tapY !== null ? tapY : Math.max(1, 20);
+                                    var source = tapX !== null
+                                        ? "fullscreen_close_element"
+                                        : "fullscreen_top_right_fallback";
 
                                     AndroidAds.onStateLog(
                                         "NATIVE_CLOSE_TAP",
                                         "x=" + x + " y=" + y +
-                                        " viewport=" + width + "x" + height
+                                        " viewport=" + width + "x" + height +
+                                        " source=" + source
                                     );
-                                    AndroidAds.onCloseTapRequested(
-                                        x,
-                                        y,
-                                        "fullscreen_top_right_fallback"
-                                    );
+                                    AndroidAds.onCloseTapRequested(x, y, source);
                                     return true;
                                 }
 
@@ -2003,27 +2027,35 @@ class MangaBuffAutomation(
                                         if (closeVisible) {
                                             clearInterval(watchTimer);
 
-                                            try {
-                                                close.click();
-                                                AndroidAds.onStateLog(
-                                                    "CLOSE_CLICKED",
-                                                    "after_our_32s_timer_dom"
-                                                );
-                                            } catch (e) {
-                                                AndroidAds.onStateLog(
-                                                    "CLOSE_DOM_CLICK_ERROR",
-                                                    "error=" + (e && e.message ? e.message : String(e))
-                                                );
-                                            }
+                                            var nativeRequested = requestNativeCloseTap(close);
 
                                             AndroidAds.onStateLog(
                                                 "AD_32S_FINISHED",
-                                                "elapsed=" + Math.floor(elapsed / 1000) + "s source=DOM"
+                                                "elapsed=" + Math.floor(elapsed / 1000) +
+                                                "s source=" + (nativeRequested ? "NATIVE_EXACT" : "DOM")
                                             );
 
                                             setTimeout(function() {
+                                                if (finished) return;
+
+                                                var stillClose = findCloseButton();
+                                                if (isVisibleElement(stillClose)) {
+                                                    try {
+                                                        stillClose.click();
+                                                        AndroidAds.onStateLog(
+                                                            "CLOSE_CLICKED",
+                                                            "fallback_dom_after_native"
+                                                        );
+                                                    } catch (e) {
+                                                        AndroidAds.onStateLog(
+                                                            "CLOSE_DOM_CLICK_ERROR",
+                                                            "error=" + (e && e.message ? e.message : String(e))
+                                                        );
+                                                    }
+                                                }
+
                                                 verifyReward(0);
-                                            }, 1800);
+                                            }, nativeRequested ? 500 : 0);
                                             return;
                                         }
 
@@ -2035,7 +2067,7 @@ class MangaBuffAutomation(
                                         if (!window.__mbAdsNativeCloseRequested) {
                                             window.__mbAdsNativeCloseRequested = true;
 
-                                            if (requestNativeCloseTap()) {
+                                            if (requestNativeCloseTap(null)) {
                                                 clearInterval(watchTimer);
 
                                                 AndroidAds.onStateLog(
