@@ -23,6 +23,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -1628,12 +1629,26 @@ class MangaBuffAutomation(
                             "READER: PERIODIC_BALANCE_REFRESH chaptersRead=" + chaptersReadCount +
                                 " reason=5_CHAPTERS")
                         try {
-                            fetchAndLogBalanceInfo(account, webView)
+                            val refreshed = withTimeoutOrNull(12_000L) {
+                                fetchAndLogBalanceInfo(account, webView)
+                            }
+                            if (refreshed == null) {
+                                log(
+                                    account.username,
+                                    "READER: PERIODIC_BALANCE_REFRESH_TIMEOUT ignored=true chaptersRead=$chaptersReadCount"
+                                )
+                            } else {
+                                log(
+                                    account.username,
+                                    "READER: PERIODIC_BALANCE_REFRESH_DONE chaptersRead=$chaptersReadCount"
+                                )
+                            }
                         } catch (e: Exception) {
+                            // Statistics refresh is diagnostic only. It must never
+                            // become a reader/account failure.
                             log(
                                 account.username,
-                                "READER: PERIODIC_BALANCE_REFRESH_FAILED ignored=true error=" + e.message,
-                                true
+                                "READER: PERIODIC_BALANCE_REFRESH_FAILED ignored=true error=" + e.message
                             )
                         }
                     }
@@ -2062,7 +2077,7 @@ class MangaBuffAutomation(
                                     log(account.username, "READER: SERVER_QUEST_NATIVE_RESPONSE progress=${progress}% http=${code} quest=${quest}")
                                     onServerReadQuestProbe(quest, progress)
                                 } else {
-                                    log(account.username, "READER: SERVER_QUEST_NATIVE_NO_VALUE progress=${progress}% http=${code}", true)
+                                    log(account.username, "READER: SERVER_QUEST_NATIVE_NO_VALUE progress=${progress}% http=${code} ignored=true")
                                 }
                             }
                         } catch (e: Exception) {
