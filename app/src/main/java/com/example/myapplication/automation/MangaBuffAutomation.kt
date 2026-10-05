@@ -264,6 +264,15 @@ class MangaBuffAutomation(
     private var currentSessionChaptersRead = 0
     private var currentSessionTarget = 0
     private var lastKnownReadQuest = "0/75"
+
+    // MangaBuff increments the reading quest while the NEXT chapter is being
+    // read, not necessarily when the current chapter reaches 100%.
+    private var pendingReadQuestBefore: String? = null
+    private var pendingReadQuestConfirmed = false
+    private var pendingReadQuestConfirmedValue = ""
+    private var pendingReadChapterId = ""
+    private var pendingReadChapterUrl = ""
+
     private var lastPoolSize = 0
     private var lastItemCount = 0
 
@@ -1588,6 +1597,12 @@ class MangaBuffAutomation(
         lastFinishedMangaTitle = ""
         totalMangaChapters = 0
 
+        pendingReadQuestBefore = null
+        pendingReadQuestConfirmed = false
+        pendingReadQuestConfirmedValue = ""
+        pendingReadChapterId = ""
+        pendingReadChapterUrl = ""
+
         var chaptersReadCount = 0
         var chaptersSinceComment = 0
         var nextCommentAfter = (5..15).random()
@@ -1634,25 +1649,76 @@ class MangaBuffAutomation(
                         break
                     }
 
-                    log(account.username, "READER: SERVER_CHECK_START chapterId=$chId questBefore=$chapterQuestBefore")
-                    if (!verifyServerReadQuestIncrement(account, webView, chapterQuestBefore)) {
-                        log(account.username, "READER: CHAPTER_NOT_SERVER_CONFIRMED chapterId=$chId questBefore=$chapterQuestBefore questAfter=$lastKnownReadQuest", true)
-                        break
+                    // The current chapter becomes pending. Its server quest
+                    // increment is checked non-destructively while the NEXT
+                    // chapter is being read.
+                    if (pendingReadQuestBefore != null) {
+                        val questAfter = if (pendingReadQuestConfirmedValue.isNotBlank()) {
+                            pendingReadQuestConfirmedValue
+                        } else {
+                            lastKnownReadQuest
+                        }
+
+                        log(
+                            account.username,
+                            "READER: PENDING_SERVER_CHECK chapterId=$pendingReadChapterId " +
+                                "questBefore=$pendingReadQuestBefore confirmed=$pendingReadQuestConfirmed " +
+                                "questAfter=$questAfter"
+                        )
+
+                        if (!pendingReadQuestConfirmed) {
+                            log(
+                                account.username,
+                                "READER: PREVIOUS_CHAPTER_NOT_SERVER_CONFIRMED " +
+                                    "chapterId=$pendingReadChapterId questBefore=$pendingReadQuestBefore",
+                                true
+                            )
+                            break
+                        }
+
+                        if (pendingReadChapterId.isNotBlank()) {
+                            completedChapterIds.add(pendingReadChapterId)
+                        }
+                        if (pendingReadChapterUrl.isNotBlank()) {
+                            readChapterUrlsInRun.add(pendingReadChapterUrl)
+                        }
+
+                        chaptersReadCount++
+                        currentSessionChaptersRead = chaptersReadCount
+                        updateReaderStatus(account)
+
+                        log(
+                            account.username,
+                            "READER: CHAPTER_READ count=$chaptersReadCount/$target " +
+                                "id=$pendingReadChapterId " +
+                                "serverQuest=$pendingReadQuestBefore->$questAfter"
+                        )
+
+                        chaptersSinceComment++
+
+                        pendingReadQuestBefore = null
+                        pendingReadQuestConfirmed = false
+                        pendingReadQuestConfirmedValue = ""
+                        pendingReadChapterId = ""
+                        pendingReadChapterUrl = ""
                     }
 
-                    if (chId.isNotBlank()) completedChapterIds.add(chId)
-                    if (chUrl.isNotBlank()) readChapterUrlsInRun.add(chUrl)
-
-                    chaptersReadCount++
-                    currentSessionChaptersRead = chaptersReadCount
-                    updateReaderStatus(account)
+                    pendingReadQuestBefore = chapterQuestBefore
+                    pendingReadQuestConfirmed = false
+                    pendingReadQuestConfirmedValue = ""
+                    pendingReadChapterId = chId
+                    pendingReadChapterUrl = chUrl
 
                     log(
                         account.username,
-                        "READER: CHAPTER_READ count=$chaptersReadCount/$target gifts=${result.gifts} id=$chId"
+                        "READER: CHAPTER_PENDING_SERVER_CONFIRM chapterId=$chId " +
+                            "questBefore=$chapterQuestBefore"
                     )
 
-                    chaptersSinceComment++
+                    log(
+                        account.username,
+                        "COMMENT: DECISION chaptersSinceComment=$chaptersSinceComment nextCommentAfter=$nextCommentAfter"
+                    )
 
                     log(
                         account.username,
@@ -1704,10 +1770,20 @@ class MangaBuffAutomation(
                             (chUrl.isNotBlank() && chUrl in readChapterUrlsInRun)
 
                     if (!duplicate && (chId.isNotBlank() || chUrl.isNotBlank())) {
-                        if (!verifyServerReadQuestIncrement(account, webView, chapterQuestBefore)) {
-                            log(account.username, "READER: LAST_CHAPTER_NOT_SERVER_CONFIRMED chapterId=$chId questBefore=$chapterQuestBefore questAfter=$lastKnownReadQuest", true)
-                            break
-                        }
+                        // There is no following chapter to trigger the observed
+                        // server-side transition, so leave the last chapter pending
+                        // instead of falsely counting it.
+                        pendingReadQuestBefore = chapterQuestBefore
+                        pendingReadQuestConfirmed = false
+                        pendingReadQuestConfirmedValue = ""
+                        pendingReadChapterId = chId
+                        pendingReadChapterUrl = chUrl
+                        log(
+                            account.username,
+                            "READER: LAST_CHAPTER_LEFT_PENDING_NO_NEXT_CHAPTER " +
+                                "chapterId=$chId questBefore=$chapterQuestBefore"
+                        )
+                    }
 
                         if (chId.isNotBlank()) completedChapterIds.add(chId)
                         if (chUrl.isNotBlank()) readChapterUrlsInRun.add(chUrl)
@@ -2042,6 +2118,30 @@ class MangaBuffAutomation(
                         if (itemsJson.isNotBlank() && itemsJson != "[]") {
                             log(account.username, "history_pool_contents=$itemsJson")
                         }
+                    }
+                }
+
+                @JavascriptInterface
+                fun onServerReadQuestProbe(quest: String, progress: Int) {
+                    val before = pendingReadQuestBefore ?: return
+                    val beforeNum = before.substringBefore('/').toIntOrNull() ?: 0
+                    val afterNum = quest.substringBefore('/').toIntOrNull() ?: beforeNum
+
+                    log(
+                        account.username,
+                        "READER: SERVER_QUEST_PROBE progress=" + progress +
+                            "% before=" + before + " after=" + quest
+                    )
+                    lastKnownReadQuest = quest
+
+                    if (afterNum > beforeNum) {
+                        pendingReadQuestConfirmed = true
+                        pendingReadQuestConfirmedValue = quest
+                        log(
+                            account.username,
+                            "READER: SERVER_QUEST_INCREMENT_CONFIRMED_DURING_NEXT_CHAPTER " +
+                                before + "->" + quest + " progress=" + progress + "%"
+                        )
                     }
                 }
 
@@ -2853,6 +2953,102 @@ class MangaBuffAutomation(
                                                 ' progress=' + percent +
                                                 '% elapsed=' + Math.floor((Date.now() - startMs) / 1000) + 's'
                                             );
+                                        }
+
+                                        // Probe /balance without navigating away from the reader.
+                                        if (percent >= 55 && percent < 95) {
+                                            if (!window.__mbPendingQuestProbeDone) {
+                                                window.__mbPendingQuestProbeDone = {};
+                                            }
+
+                                            var probeKey = String(Math.floor(percent / 5) * 5);
+                                            if (!window.__mbPendingQuestProbeDone[probeKey]) {
+                                                window.__mbPendingQuestProbeDone[probeKey] = true;
+
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: SERVER_QUEST_PROBE_START progress=' + percent + '%'
+                                                );
+
+                                                fetch('/balance', {
+                                                    method: 'GET',
+                                                    credentials: 'include',
+                                                    cache: 'no-store'
+                                                }).then(function(response) {
+                                                    return response.text();
+                                                }).then(function(html) {
+                                                    try {
+                                                        var parser = new DOMParser();
+                                                        var doc = parser.parseFromString(html, 'text/html');
+                                                        var wallet = doc.querySelector('.wallet-panel');
+                                                        var quest = '';
+
+                                                        if (wallet) {
+                                                            var heads = Array.from(
+                                                                wallet.querySelectorAll('.wallet-panel__stat-head')
+                                                            );
+
+                                                            heads.forEach(function(head) {
+                                                                var span = head.querySelector('span');
+                                                                var b = head.querySelector('b');
+                                                                var label = (
+                                                                    span ? (span.textContent || '') : (head.textContent || '')
+                                                                ).replace(/\s+/g, ' ').trim().toLowerCase();
+                                                                var value = b
+                                                                    ? (b.textContent || '').replace(/\s+/g, ' ').trim()
+                                                                    : '';
+
+                                                                if (
+                                                                    !quest &&
+                                                                    (label.indexOf('глав') !== -1 || label.indexOf('чита') !== -1) &&
+                                                                    value
+                                                                ) {
+                                                                    quest = value;
+                                                                }
+
+                                                                if (!quest) {
+                                                                    var full = (head.textContent || '')
+                                                                        .replace(/\s+/g, ' ').trim();
+                                                                    var m = full.match(/(\d+)\s*\/\s*(\d+)/);
+                                                                    if (
+                                                                        m &&
+                                                                        (full.toLowerCase().indexOf('глав') !== -1 ||
+                                                                         full.toLowerCase().indexOf('чита') !== -1)
+                                                                    ) {
+                                                                        quest = m[1] + '/' + m[2];
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
+
+                                                        if (!quest) {
+                                                            var bodyText = (doc.body && doc.body.innerText) || '';
+                                                            var matches = bodyText.match(
+                                                                /(?:глав|чита)[^\d]{0,80}(\d+)\s*\/\s*(\d+)/i
+                                                            );
+                                                            if (matches) quest = matches[1] + '/' + matches[2];
+                                                        }
+
+                                                        if (quest) {
+                                                            AndroidReaderBridge.onServerReadQuestProbe(quest, percent);
+                                                        } else {
+                                                            AndroidReaderBridge.onLogStep(
+                                                                'READER: SERVER_QUEST_PROBE_NO_VALUE progress=' +
+                                                                    percent + '%'
+                                                            );
+                                                        }
+                                                    } catch (e) {
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'READER: SERVER_QUEST_PROBE_PARSE_ERROR error=' +
+                                                                (e && e.message ? e.message : String(e))
+                                                        );
+                                                    }
+                                                }).catch(function(e) {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: SERVER_QUEST_PROBE_FETCH_ERROR error=' +
+                                                            (e && e.message ? e.message : String(e))
+                                                    );
+                                                });
+                                            }
                                         }
 
                                         var maxScrollTop = Math.max(0, metrics.height - metrics.viewport);
