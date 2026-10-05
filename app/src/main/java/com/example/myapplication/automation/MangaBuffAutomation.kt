@@ -227,19 +227,9 @@ class MangaBuffAutomation(
                 webView.scrollBy(0, (endY - startY).toInt())
             }
         } catch (e: Exception) {
-            logSwipeFailure(webView, e)
+            throw e
         } finally {
             tracker.recycle()
-        }
-    }
-
-    private fun logSwipeFailure(webView: WebView, error: Exception) {
-        try {
-            webView.post {
-                // Intentionally empty: the caller logs the bridge exception.
-            }
-        } catch (_: Exception) {
-            // no-op
         }
     }
 
