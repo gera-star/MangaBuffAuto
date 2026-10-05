@@ -396,82 +396,57 @@ fun AccountCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // ВЕРХНЯЯ ПАНЕЛЬ СТАТИСТИКИ АКТИВНОСТИ АККАУНТА (💎 578     🃏 1/10     📖 13/75     💬 0/13)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "💎 ${account.diamonds}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "🃏 ${account.cardDrop}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "📖 ${account.chapterProgress}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "💬 ${account.commentProgress}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
+            // ЕДИНАЯ ГОРИЗОНТАЛЬНАЯ СТРОКА АККАУНТА:
+            // ник + текущая задача/статус + статистика.
             HorizontalDivider(
-                modifier = Modifier.padding(bottom = 12.dp),
+                modifier = Modifier.padding(bottom = 10.dp),
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
             )
 
-            // ОСНОВНОЙ РЯД АККАУНТА (Аватар, Имя, Статус и Кнопки управления)
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (account.isRunning) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.secondaryContainer
-                            )
-                            .clickable { onOpenBalance() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = account.username.ifEmpty { "U" }.take(1).uppercase(),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (account.isRunning) MaterialTheme.colorScheme.onPrimaryContainer
-                                    else MaterialTheme.colorScheme.onSecondaryContainer
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (account.isRunning) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.secondaryContainer
                         )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { onOpenBalance() }
+                        .clickable { onOpenBalance() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = \u0024{account.username.ifEmpty { "U" }.take(1).uppercase()},
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (account.isRunning) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = account.username.ifEmpty { "Пользователь" },
+                                text = \u0024{account.username.ifEmpty { "Пользователь" }},
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Icon(
@@ -481,8 +456,123 @@ fun AccountCard(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (account.isRunning) {
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Text(
+                            text = "💎 \u0024{account.diamonds}  🃏 \u0024{account.cardDrop}  📖 \u0024{account.chapterProgress}  💬 \u0024{account.commentProgress}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(3.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (account.isRunning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .padding(end = 4.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        Text(
+                            text = \u0024{account.getSafeStatusMessage()},
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (account.isRunning) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outline
+                            },
+                            fontWeight = if (account.isRunning) FontWeight.Medium else FontWeight.Normal,
+                            maxLines = 1
+                        )
+                    }
+
+                    // Кнопки управления — непосредственно под ником/статусом.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = onChangeManga,
+                            enabled = account.isRunning,
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Text(
+                                text = "🔄",
+                                fontSize = 17.sp
+                            )
+                        }
+
+                        if (account.isRunning) {
+                            IconButton(
+                                onClick = onStopAccount,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Stop,
+                                    contentDescription = "Стоп",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        } else {
+                            IconButton(
+                                onClick = { onRunTask(TaskType.ALL) },
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = "Запустить все",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = onRefresh,
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Refresh,
+                                contentDescription = "Обновить и на главную",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Удалить",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { expanded = !expanded },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = "Настройки"
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (account.isRunning) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(12.dp).padding(end = 4.dp),
                                     strokeWidth = 2.dp,
