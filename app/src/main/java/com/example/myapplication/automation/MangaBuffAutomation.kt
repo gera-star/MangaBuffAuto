@@ -1355,8 +1355,25 @@ class MangaBuffAutomation(
             val script = """
                         (function() {
                             try {
-                                if (window.__mbAdsRunnerActive) return;
+                                var existingRunner = !!window.__mbAdsRunnerActive;
+                                var runnerStartedAt = Number(window.__mbAdsRunnerStartedAt || 0);
+                                var runnerAge = runnerStartedAt > 0 ? (Date.now() - runnerStartedAt) : 0;
+
+                                if (existingRunner && runnerAge < 15000) {
+                                    try {
+                                        AndroidAds.onStateLog(
+                                            "RUNNER_ALREADY_ACTIVE",
+                                            "ageMs=" + runnerAge
+                                        );
+                                    } catch (e) {}
+                                    return;
+                                }
+
+                                // A previous WebView injection can leave the guard set after
+                                // the native coroutine has already timed out. Treat such a
+                                // stale runner as dead and allow a fresh ad session.
                                 window.__mbAdsRunnerActive = true;
+                                window.__mbAdsRunnerStartedAt = Date.now();
 
                                 var finished = false;
                                 var buttonPollStarted = Date.now();
