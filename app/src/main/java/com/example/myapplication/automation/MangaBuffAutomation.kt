@@ -2784,7 +2784,7 @@ class MangaBuffAutomation(
                                         function finishSetup(ok, reason) {
                                             if (ok) {
                                                 AndroidReaderBridge.onLogStep(
-                                                    'READER: MANGABUFF_AUTOSCROLL_CONFIGURED speed=360 enabled=true'
+                                                    'READER: MANGABUFF_AUTOSCROLL_CONFIGURED speed=900 enabled=true'
                                                 );
                                             } else {
                                                 AndroidReaderBridge.onLogStep(
@@ -2836,7 +2836,7 @@ class MangaBuffAutomation(
                                             }
 
                                             try {
-                                                speed.value = '360';
+                                                speed.value = '900';
                                                 speed.dispatchEvent(new Event('input', { bubbles: true }));
                                                 speed.dispatchEvent(new Event('change', { bubbles: true }));
                                             } catch(e) {
@@ -2845,7 +2845,7 @@ class MangaBuffAutomation(
                                             }
 
                                             var valueLabel = popup.querySelector('[data-reader-value="speed"]');
-                                            if (valueLabel) valueLabel.textContent = '360';
+                                            if (valueLabel) valueLabel.textContent = '900';
 
                                             var toggle = popup.querySelector('[data-reader-autoscroll-enabled]');
                                             if (!toggle) {
@@ -2900,7 +2900,7 @@ class MangaBuffAutomation(
                                                         var pause = document.querySelector('.reader-autoscroll-icon-pause');
                                                         if (pause && visible(pause)) {
                                                             AndroidReaderBridge.onLogStep(
-                                                                'READER: MANGABUFF_AUTOSCROLL_STARTED speed=360'
+                                                                'READER: MANGABUFF_AUTOSCROLL_STARTED speed=900'
                                                             );
                                                             finishSetup(true, '');
                                                         } else {
@@ -2912,7 +2912,7 @@ class MangaBuffAutomation(
                                                                 var afterY = window.scrollY || window.pageYOffset || 0;
                                                                 if (afterY > beforeY + 2) {
                                                                     AndroidReaderBridge.onLogStep(
-                                                                        'READER: MANGABUFF_AUTOSCROLL_STARTED_BY_SCROLL speed=360'
+                                                                        'READER: MANGABUFF_AUTOSCROLL_STARTED_BY_SCROLL speed=900'
                                                                     );
                                                                     finishSetup(true, '');
                                                                 } else {
@@ -3332,7 +3332,7 @@ class MangaBuffAutomation(
                                             }
 
                                             AndroidReaderBridge.onLogStep(
-                                                'READER: MANGABUFF_AUTOSCROLL_MONITORING speed=360'
+                                                'READER: MANGABUFF_AUTOSCROLL_MONITORING speed=900'
                                             );
 
                                             // MangaBuff now owns the actual scrolling. Our interval below
