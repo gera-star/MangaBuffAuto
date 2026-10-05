@@ -1764,6 +1764,41 @@ class MangaBuffAutomation(
                     val duplicate = (chId.isNotBlank() && chId in completedChapterIds) ||
                             (chUrl.isNotBlank() && chUrl in readChapterUrlsInRun)
 
+                    // The last chapter can still confirm the PREVIOUS chapter
+                    // through the same mid-chapter /balance probe. Count that
+                    // previous chapter before leaving the manga.
+                    if (pendingReadQuestBefore != null && pendingReadQuestConfirmed) {
+                        val questAfter = if (pendingReadQuestConfirmedValue.isNotBlank()) {
+                            pendingReadQuestConfirmedValue
+                        } else {
+                            lastKnownReadQuest
+                        }
+
+                        if (pendingReadChapterId.isNotBlank()) {
+                            completedChapterIds.add(pendingReadChapterId)
+                        }
+                        if (pendingReadChapterUrl.isNotBlank()) {
+                            readChapterUrlsInRun.add(pendingReadChapterUrl)
+                        }
+
+                        chaptersReadCount++
+                        currentSessionChaptersRead = chaptersReadCount
+                        updateReaderStatus(account)
+
+                        log(
+                            account.username,
+                            "READER: CHAPTER_READ count=$chaptersReadCount/$target " +
+                                "id=$pendingReadChapterId " +
+                                "serverQuest=$pendingReadQuestBefore->$questAfter"
+                        )
+
+                        pendingReadQuestBefore = null
+                        pendingReadQuestConfirmed = false
+                        pendingReadQuestConfirmedValue = ""
+                        pendingReadChapterId = ""
+                        pendingReadChapterUrl = ""
+                    }
+
                     if (!duplicate && (chId.isNotBlank() || chUrl.isNotBlank())) {
                         // There is no following chapter to trigger the observed
                         // server-side transition, so leave the last chapter pending
