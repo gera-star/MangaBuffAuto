@@ -1720,11 +1720,6 @@ class MangaBuffAutomation(
                         "COMMENT: DECISION chaptersSinceComment=$chaptersSinceComment nextCommentAfter=$nextCommentAfter"
                     )
 
-                    log(
-                        account.username,
-                        "COMMENT: DECISION chaptersSinceComment=$chaptersSinceComment nextCommentAfter=$nextCommentAfter"
-                    )
-
                     if (
                         account.commentEnabled &&
                         chaptersSinceComment >= nextCommentAfter &&
@@ -1782,17 +1777,6 @@ class MangaBuffAutomation(
                             account.username,
                             "READER: LAST_CHAPTER_LEFT_PENDING_NO_NEXT_CHAPTER " +
                                 "chapterId=$chId questBefore=$chapterQuestBefore"
-                        )
-                    }
-
-                        if (chId.isNotBlank()) completedChapterIds.add(chId)
-                        if (chUrl.isNotBlank()) readChapterUrlsInRun.add(chUrl)
-                        chaptersReadCount++
-                        currentSessionChaptersRead = chaptersReadCount
-                        updateReaderStatus(account)
-                        log(
-                            account.username,
-                            "READER: CHAPTER_READ (LAST_CHAPTER) count=$chaptersReadCount/$target id=$chId"
                         )
                     }
 
