@@ -1,5 +1,4 @@
 package com.example.myapplication.automation
-        initDailyStats(account)
 
 import android.content.Context
 import android.graphics.Bitmap
