@@ -1706,62 +1706,96 @@ class MangaBuffAutomation(
                                  */
                                 function installYandexRewardHook() {
                                     try {
-                                        if (window.__mbYandexRewardHookInstalled) return true;
+                                        if (window.__mbYandexRewardHookState) return true;
 
-                                        var adv = window.Ya &&
-                                            window.Ya.Context &&
-                                            window.Ya.Context.AdvManager;
-
-                                        if (!adv || typeof adv.render !== "function") {
-                                            AndroidAds.onStateLog("YANDEX_REWARD_HOOK", "unavailable");
-                                            return false;
-                                        }
-
-                                        var originalRender = adv.render;
-                                        adv.render = function(options) {
-                                            try {
-                                                if (options && typeof options.onRewarded === "function") {
-                                                    var originalOnRewarded = options.onRewarded;
-                                                    var wrappedOptions = Object.assign({}, options);
-
-                                                    wrappedOptions.onRewarded = function(isRewarded) {
-                                                        AndroidAds.onStateLog(
-                                                            "YANDEX_REWARDED_CALLBACK",
-                                                            "isRewarded=" + !!isRewarded
-                                                        );
-
-                                                        try {
-                                                            return originalOnRewarded.apply(this, arguments);
-                                                        } finally {
-                                                            if (isRewarded) {
-                                                                setTimeout(function() {
-                                                                    try {
-                                                                        verifyReward(0);
-                                                                    } catch (e) {
-                                                                        AndroidAds.onStateLog(
-                                                                            "YANDEX_REWARD_VERIFY_ERROR",
-                                                                            "error=" + (e && e.message ? e.message : String(e))
-                                                                        );
-                                                                    }
-                                                                }, 250);
-                                                            }
-                                                        }
-                                                    };
-
-                                                    return originalRender.call(this, wrappedOptions);
-                                                }
-                                            } catch (e) {
-                                                AndroidAds.onStateLog(
-                                                    "YANDEX_REWARD_HOOK_ERROR",
-                                                    "error=" + (e && e.message ? e.message : String(e))
-                                                );
-                                            }
-
-                                            return originalRender.apply(this, arguments);
+                                        window.__mbYandexRewardHookState = {
+                                            installed: false,
+                                            rewarded: false,
+                                            callbackValue: null
                                         };
 
-                                        window.__mbYandexRewardHookInstalled = true;
-                                        AndroidAds.onStateLog("YANDEX_REWARD_HOOK", "installed");
+                                        function tryInstall() {
+                                            try {
+                                                var adv = window.Ya &&
+                                                    window.Ya.Context &&
+                                                    window.Ya.Context.AdvManager;
+
+                                                if (!adv || typeof adv.render !== "function") return false;
+                                                if (adv.__mbOriginalRender) {
+                                                    window.__mbYandexRewardHookState.installed = true;
+                                                    return true;
+                                                }
+
+                                                var originalRender = adv.render;
+                                                adv.__mbOriginalRender = originalRender;
+
+                                                adv.render = function(options) {
+                                                    try {
+                                                        if (options && typeof options.onRewarded === "function") {
+                                                            var originalOnRewarded = options.onRewarded;
+                                                            var wrappedOptions = Object.assign({}, options);
+
+                                                            wrappedOptions.onRewarded = function(isRewarded) {
+                                                                window.__mbYandexRewardHookState.callbackValue = !!isRewarded;
+                                                                window.__mbYandexRewardHookState.rewarded = !!isRewarded;
+
+                                                                AndroidAds.onStateLog(
+                                                                    "YANDEX_REWARDED_CALLBACK",
+                                                                    "isRewarded=" + !!isRewarded
+                                                                );
+
+                                                                try {
+                                                                    return originalOnRewarded.apply(this, arguments);
+                                                                } finally {
+                                                                    if (isRewarded) {
+                                                                        setTimeout(function() {
+                                                                            try { verifyReward(0); } catch (e) {}
+                                                                        }, 250);
+                                                                    }
+                                                                }
+                                                            };
+
+                                                            return originalRender.call(this, wrappedOptions);
+                                                        }
+                                                    } catch (e) {
+                                                        AndroidAds.onStateLog(
+                                                            "YANDEX_REWARD_HOOK_ERROR",
+                                                            "error=" + (e && e.message ? e.message : String(e))
+                                                        );
+                                                    }
+
+                                                    return originalRender.apply(this, arguments);
+                                                };
+
+                                                window.__mbYandexRewardHookState.installed = true;
+                                                AndroidAds.onStateLog("YANDEX_REWARD_HOOK", "installed");
+                                                return true;
+                                            } catch (e) {
+                                                return false;
+                                            }
+                                        }
+
+                                        if (!tryInstall()) {
+                                            var tries = 0;
+                                            var retry = setInterval(function() {
+                                                if (finished || window.__mbYandexRewardHookState.rewarded) {
+                                                    clearInterval(retry);
+                                                    return;
+                                                }
+
+                                                tries++;
+                                                if (tryInstall() || tries >= 40) {
+                                                    clearInterval(retry);
+                                                    if (!window.__mbYandexRewardHookState.installed) {
+                                                        AndroidAds.onStateLog(
+                                                            "YANDEX_REWARD_HOOK",
+                                                            "not_installed_after_40_tries"
+                                                        );
+                                                    }
+                                                }
+                                            }, 250);
+                                        }
+
                                         return true;
                                     } catch (e) {
                                         AndroidAds.onStateLog(
@@ -1771,7 +1805,6 @@ class MangaBuffAutomation(
                                         return false;
                                     }
                                 }
-
                                 var initialButton = findWatchButton();
                                 var initialDiamond = readDiamondBalance(document);
                                 var initialButtonCount = readButtonCount(initialButton);
@@ -1859,6 +1892,23 @@ class MangaBuffAutomation(
                                         "[class*=\"timer\"]"
                                     );
                                 }
+
+                                function readYandexTimerSeconds() {
+                                    var timer = findTimer();
+                                    if (!timer || !isVisibleElement(timer)) return null;
+
+                                    try {
+                                        var text = String(timer.innerText || timer.textContent || "").trim();
+                                        var match = text.match(/(\\d{1,2})/);
+                                        if (!match) return null;
+                                        var seconds = parseInt(match[1], 10);
+                                        return isNaN(seconds) ? null : seconds;
+                                    } catch (e) {
+                                        return null;
+                                    }
+                                }
+
+
 
                                 function findCloseButton() {
                                     /*
@@ -2241,6 +2291,37 @@ class MangaBuffAutomation(
                                             return;
                                         }
 
+                                        var yandexSeconds = readYandexTimerSeconds();
+                                        var yandexRewarded = !!(
+                                            window.__mbYandexRewardHookState &&
+                                            window.__mbYandexRewardHookState.rewarded
+                                        );
+
+                                        /*
+                                         * 32s is only our watchdog. Never close the Yandex
+                                         * Rewarded solely because it expired. We wait for the
+                                         * real Yandex timer to reach zero or onRewarded(true).
+                                         */
+                                        var yandexReady = yandexRewarded ||
+                                            (yandexSeconds !== null && yandexSeconds <= 0);
+
+                                        if (!yandexReady) {
+                                            AndroidAds.onStateLog(
+                                                "AD_WAIT_YANDEX_REWARD",
+                                                "ownElapsed=" + Math.floor(elapsed / 1000) +
+                                                "s yandexTimer=" + (yandexSeconds === null ? "?" : yandexSeconds) +
+                                                " rewarded=" + yandexRewarded
+                                            );
+
+                                            if (elapsed >= hardTimeoutMs) {
+                                                clearInterval(watchTimer);
+                                                finished = true;
+                                                window.__mbAdsRunnerActive = false;
+                                                AndroidAds.onAdFailed("yandex_reward_timeout");
+                                            }
+                                            return;
+                                        }
+
                                         var close = findCloseButton();
                                         var closeVisible = isVisibleElement(close);
 
@@ -2248,7 +2329,9 @@ class MangaBuffAutomation(
                                             "CLOSE_SEARCH",
                                             "elapsed=" + Math.floor(elapsed / 1000) +
                                             "s found=" + !!close +
-                                            " visible=" + closeVisible
+                                            " visible=" + closeVisible +
+                                            " yandexTimer=" + (yandexSeconds === null ? "?" : yandexSeconds) +
+                                            " rewarded=" + yandexRewarded
                                         );
 
                                         if (closeVisible) {
@@ -2257,7 +2340,7 @@ class MangaBuffAutomation(
                                             var nativeRequested = requestNativeCloseTap(close);
 
                                             AndroidAds.onStateLog(
-                                                "AD_32S_FINISHED",
+                                                "AD_REWARDED_FINISHED",
                                                 "elapsed=" + Math.floor(elapsed / 1000) +
                                                 "s source=" + (nativeRequested ? "NATIVE_EXACT" : "DOM")
                                             );
@@ -2273,12 +2356,7 @@ class MangaBuffAutomation(
                                                             "CLOSE_CLICKED",
                                                             "fallback_dom_after_native"
                                                         );
-                                                    } catch (e) {
-                                                        AndroidAds.onStateLog(
-                                                            "CLOSE_DOM_CLICK_ERROR",
-                                                            "error=" + (e && e.message ? e.message : String(e))
-                                                        );
-                                                    }
+                                                    } catch (e) {}
                                                 }
 
                                                 verifyReward(0);
@@ -2286,11 +2364,6 @@ class MangaBuffAutomation(
                                             return;
                                         }
 
-                                        /*
-                                         * DOM is invisible to us, but the ad fullscreen is
-                                         * present. Use a real WebView tap on the known X area.
-                                         * Request only once so we never spam the fullscreen.
-                                         */
                                         if (!window.__mbAdsNativeCloseRequested) {
                                             window.__mbAdsNativeCloseRequested = true;
 
@@ -2299,51 +2372,19 @@ class MangaBuffAutomation(
 
                                                 AndroidAds.onStateLog(
                                                     "CLOSE_NATIVE_REQUESTED",
-                                                    "elapsed=" + Math.floor(elapsed / 1000) + "s"
+                                                    "elapsed=" + Math.floor(elapsed / 1000) +
+                                                    "s yandexReady=true"
                                                 );
 
                                                 setTimeout(function() {
                                                     if (finished) return;
-
-                                                    var stillClose = findCloseButton();
-                                                    AndroidAds.onStateLog(
-                                                        "CLOSE_NATIVE_RETRY_CHECK",
-                                                        "visible=" + isVisibleElement(stillClose)
-                                                    );
-
                                                     verifyReward(0);
                                                 }, 2500);
                                                 return;
                                             }
                                         }
 
-                                        /*
-                                         * If the close control is temporarily inaccessible,
-                                         * first give the Rewarded callback/automatic close a
-                                         * few seconds to finish. At 32s Yandex may already have
-                                         * completed the fullscreen session even though the open
-                                         * shadow DOM is gone from the page.
-                                         */
-                                        if (elapsed < 38000) {
-                                            AndroidAds.onStateLog(
-                                                "CLOSE_NOT_FOUND_WAIT_REWARD",
-                                                "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s waiting_for_yandex_callback"
-                                            );
-                                            return;
-                                        }
 
-                                        /*
-                                         * The ad may still be closing/rendering its control.
-                                         * Keep searching after 38 seconds, but never restart
-                                         * the 30-second viewing timer.
-                                         */
-                                        if (elapsed >= hardTimeoutMs) {
-                                            clearInterval(watchTimer);
-                                            finished = true;
-                                            window.__mbAdsRunnerActive = false;
-                                            AndroidAds.onAdFailed("close_button_timeout_60s");
-                                        }
                                     }, 250);
                                 }
 
