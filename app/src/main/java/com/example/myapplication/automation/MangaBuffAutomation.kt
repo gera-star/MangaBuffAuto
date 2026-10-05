@@ -276,6 +276,10 @@ class MangaBuffAutomation(
     private var lastPoolSize = 0
     private var lastItemCount = 0
 
+    /** Chapters actually included in successful /addHistory 2xx batches. */
+    private val historyServerAcceptedChapterIds = mutableSetOf<String>()
+    private val currentHistoryPostChapterIds = mutableSetOf<String>()
+
     fun getCurrentMangaUrl(): String = currentMangaUrl
     fun getLastFinishedChapterId(): String = lastFinishedChapterId
     fun getLastFinishedChapterNumber(): String = lastFinishedChapterNumber
@@ -1544,6 +1548,8 @@ class MangaBuffAutomation(
         completedMangaIds.clear()
         completedChapterIds.clear()
         readChapterUrlsInRun.clear()
+        historyServerAcceptedChapterIds.clear()
+        currentHistoryPostChapterIds.clear()
 
         activeChapterContext = null
 
@@ -1686,63 +1692,6 @@ class MangaBuffAutomation(
         activeChapterContext = null
         log(account.username, "READER: STOP_CLEANUP_COMPLETE")
         log(account.username, "READER: FINISHED totalRead=$chaptersReadCount/$target")
-    }
-
-    /**
-     * Authoritative chapter completion gate.
-     * Local reader state (/addHistory, is_read, history_pool) is only a hint.
-     * A chapter is accepted only when /balance reports a larger reading-quest counter.
-     */
-    private suspend fun verifyChapterServerQuestIncrement(
-        account: MangaBuffAccount,
-        webView: WebView,
-        chapterId: String,
-        questBefore: String,
-        maxAttempts: Int = 3
-    ): Pair<Boolean, String> {
-        val beforeNum = questBefore.substringBefore('/').toIntOrNull() ?: 0
-        var lastQuest = lastKnownReadQuest.ifBlank { questBefore }
-
-        log(account.username, "READER: SERVER_QUEST_VERIFY_START chapterId=" + chapterId +
-            " before=" + questBefore + " attempts=" + maxAttempts)
-
-        repeat(maxAttempts) { index ->
-            coroutineContext.ensureActive()
-            val attempt = index + 1
-            log(account.username, "READER: SERVER_QUEST_REFRESH attempt=" + attempt +
-                "/" + maxAttempts + " before=" + questBefore)
-
-            try {
-                fetchAndLogBalanceInfo(account, webView)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log(account.username, "READER: SERVER_QUEST_REFRESH_ERROR attempt=" +
-                    attempt + " error=" + (e.message ?: "unknown"), true)
-            }
-
-            lastQuest = lastKnownReadQuest.ifBlank { questBefore }
-            val afterNum = lastQuest.substringBefore('/').toIntOrNull() ?: beforeNum
-            val delta = afterNum - beforeNum
-            val deltaText = if (delta >= 0) "+$delta" else delta.toString()
-
-            log(account.username, "READER: SERVER_QUEST_VERIFY attempt=" + attempt +
-                "/" + maxAttempts + " before=" + questBefore +
-                " after=" + lastQuest + " delta=" + deltaText)
-
-            if (afterNum > beforeNum) {
-                log(account.username, "READER: SERVER_QUEST_INCREMENT_CONFIRMED " +
-                    questBefore + "->" + lastQuest)
-                return true to lastQuest
-            }
-
-            if (attempt < maxAttempts) delay(1500L)
-        }
-
-        log(account.username, "READER: SERVER_QUEST_INCREMENT_NOT_CONFIRMED chapterId=" +
-            chapterId + " before=" + questBefore + " after=" + lastQuest +
-            " attempts=" + maxAttempts, true)
-        return false to lastQuest
     }
 
     // =========================================================
@@ -1963,6 +1912,7 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onHistoryPostStarted(url: String, currentChapterId: String) {
+                    currentHistoryPostChapterIds.clear()
                     log(account.username, "READER: MB_HISTORY_POST_STARTED")
                     log(account.username, "url=$url method=POST currentChapterId=$currentChapterId")
                     log(account.username, "[READQUEST_DIAG] POST_PREPARE quest=$lastKnownReadQuest poolSize=$lastPoolSize")
@@ -1976,6 +1926,7 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onHistoryPostItem(index: Int, mangaId: String, chapterId: String) {
+                    if (chapterId.isNotBlank()) currentHistoryPostChapterIds.add(chapterId)
                     log(account.username, "READER: MB_HISTORY_POST_ITEM index=$index manga_id=$mangaId chapter_id=$chapterId")
                     log(account.username, "[READQUEST_DIAG] ITEM index=$index mangaId=$mangaId chapterId=$chapterId")
                 }
@@ -1994,13 +1945,16 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun onHistoryPostFinished(status: Int, url: String) {
                     val ok = status in 200..299
+                    val batchIds = currentHistoryPostChapterIds.toList()
                     log(account.username, "READER: MB_HISTORY_POST_FINISHED status=$status url=$url")
                     log(account.username, "[READQUEST_DIAG] POST_RESULT status=$status")
                     if (ok) {
-                        log(account.username, "[READQUEST_DIAG] POST_HTTP_SUCCESS status=$status")
+                        historyServerAcceptedChapterIds.addAll(batchIds)
+                        log(account.username, "[READQUEST_DIAG] POST_HTTP_SUCCESS status=$status items=${batchIds.joinToString(",").ifBlank { "none" }}")
                     } else {
                         log(account.username, "[READQUEST_DIAG] POST_HTTP_FAILED status=$status", true)
                     }
+                    currentHistoryPostChapterIds.clear()
                 }
 
                 @JavascriptInterface
@@ -2157,47 +2111,48 @@ class MangaBuffAutomation(
                         ?: lastKnownReadQuest
 
                     log(account.username, "READ: CHAPTER_READER_FINISHED elapsed=" + elapsedMs + "ms")
-                    log(account.username, "READ: CHAPTER_END_REACHED chapter=$number")
-                    log(account.username, "READER: COMPLETION_ACCEPTED chapterId=$chapterId")
-                    log(account.username, "READER: CHAPTER_PENDING_SERVER_CONFIRM chapterId=$chapterId questBefore=$questBefore")
+                    log(account.username, "READ: CHAPTER_END_REACHED chapter=" + number)
+                    log(account.username, "READER: COMPLETION_ACCEPTED chapterId=" + chapterId)
 
-                    CoroutineScope(Dispatchers.Main.immediate).launch {
-                        val (confirmed, questAfter) = verifyChapterServerQuestIncrement(
-                            account, webView, chapterId, questBefore, 3
-                        )
+                    /*
+                     * MangaBuff uses ccl=2 in the tested flow. The first chapter
+                     * can stay in history_pool while /balance still shows the
+                     * old value. The next chapter causes a batched /addHistory
+                     * POST, and only then the quest counter catches up.
+                     *
+                     * Therefore the /balance quest delta is NOT a per-chapter
+                     * gate. A missing 4/75 -> 5/75 immediately after a chapter
+                     * is expected and must never stop the reader.
+                     */
+                    val historyAccepted = chapterId.isNotBlank() &&
+                        historyServerAcceptedChapterIds.contains(chapterId)
 
-                        if (!confirmed) {
-                            log(account.username,
-                                "READER: NEXT_CHAPTER_BLOCKED_SERVER_NOT_CONFIRMED " +
-                                    "chapterId=$chapterId questBefore=$questBefore questAfter=$questAfter", true)
-                            safeResume(ReaderResult.Failed("SERVER_QUEST_NOT_CONFIRMED"))
-                            return@launch
+                    if (historyAccepted) {
+                        log(account.username, "READER: CHAPTER_HISTORY_SERVER_ACCEPTED chapterId=$chapterId source=ADD_HISTORY_2XX")
+                    } else {
+                        log(account.username, "READER: CHAPTER_SERVER_QUEST_DEFERRED chapterId=$chapterId questBefore=$questBefore reason=CCL_BATCH_OR_ASYNC_ACCOUNTING")
+                    }
+
+                    if (isRealLastChapter) {
+                        log(account.username, "READER: LAST_CHAPTER_REACHED historyAccepted=$historyAccepted")
+                        pendingMangaMarkAsRead = true
+                        val chapterCanonical = ensureCanonicalMangaUrl(chapterUrl)
+                        val slug = chapterCanonical.substringAfter("/manga/").substringBefore("/")
+
+                        currentMangaUrl = if (slug.isNotBlank()) {
+                            "https://mangabuff.ru/manga/$slug"
+                        } else {
+                            currentMangaUrl
                         }
 
-                        log(account.username, "READER: CHAPTER_SERVER_CONFIRMED chapterId=$chapterId " +
-                            "quest=$questBefore->$questAfter")
-
-                        if (isRealLastChapter) {
-                            log(account.username, "READER: LAST_CHAPTER_CONFIRMED")
-                            pendingMangaMarkAsRead = true
-                            val chapterCanonical = ensureCanonicalMangaUrl(chapterUrl)
-                            val slug = chapterCanonical.substringAfter("/manga/").substringBefore("/")
-
-                            currentMangaUrl = if (slug.isNotBlank()) {
-                                "https://mangabuff.ru/manga/$slug"
-                            } else {
-                                currentMangaUrl
-                            }
-
-                            log(account.username, "READER: OPEN_MANGA_INFO_FOR_READ_MARK url=$currentMangaUrl")
-                            webView.loadUrl(currentMangaUrl)
+                        log(account.username, "READER: OPEN_MANGA_INFO_FOR_READ_MARK url=$currentMangaUrl")
+                        webView.loadUrl(currentMangaUrl)
+                    } else {
+                        if (nextChapterUrl.isBlank()) {
+                            safeResume(ReaderResult.Failed("NEXT_CHAPTER_UNKNOWN"))
                         } else {
-                            if (nextChapterUrl.isBlank()) {
-                                safeResume(ReaderResult.Failed("NEXT_CHAPTER_UNKNOWN"))
-                            } else {
-                                log(account.username, "READER: OPEN_NEXT_CHAPTER_AFTER_SERVER_CONFIRM url=$nextChapterUrl")
-                                safeResume(ReaderResult.ChapterRead(giftsFound, chapterUrl, chapterId, nextChapterUrl))
-                            }
+                            log(account.username, "READER: OPEN_NEXT_CHAPTER url=$nextChapterUrl serverQuestGate=DISABLED_DELAYED_CCL_ACCOUNTING")
+                            safeResume(ReaderResult.ChapterRead(giftsFound, chapterUrl, chapterId, nextChapterUrl))
                         }
                     }
                 }
@@ -3227,9 +3182,9 @@ class MangaBuffAutomation(
                                         AndroidReaderBridge.onLogStep('READER: FINAL_UI_CHECK');
                                         AndroidReaderBridge.onLogStep('NEXT_CHAPTER_DOM_SCAN');
 
-                                        // IMPORTANT: local is_read/history_pool/addHistory signals are only
-                                        // hints. The authoritative acceptance remains the /balance quest
-                                        // increment checked on the native side.
+                                        // MangaBuff may delay the reading-quest counter because
+                                        // history is batched (ccl=2). The quest counter is diagnostic
+                                        // only and must never stop the reader per chapter.
                                         var stateAtBottom = checkMangaBuffReadState();
                                         logReadState(stateAtBottom);
                                         AndroidReaderBridge.onLogStep(
