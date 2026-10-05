@@ -790,7 +790,7 @@ fun LogsTab(
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Прочитано → дальше")
+                    Text("Прочитано → следующая")
                 }
                 OutlinedButton(
                     onClick = onSkipManga,
@@ -798,7 +798,7 @@ fun LogsTab(
                 ) {
                     Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Скипнуть")
+                    Text("Скипнуть → следующая")
                 }
                 OutlinedButton(
                     onClick = onClearLogs,
