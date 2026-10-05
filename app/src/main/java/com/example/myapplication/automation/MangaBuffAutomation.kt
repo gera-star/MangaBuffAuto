@@ -248,6 +248,8 @@ class MangaBuffAutomation(
 
     @Volatile
     private var activeReaderSkip: (() -> Unit)? = null
+    @Volatile
+    private var activeReaderMarkRead: (() -> Unit)? = null
 
     private val commentPhrases = listOf(
         "Спасибо за главу! Было интересно читать.",
@@ -314,6 +316,19 @@ class MangaBuffAutomation(
         mainHandler.post {
             try { activeReaderSkip?.invoke() }
             catch (e: Exception) { log("SYSTEM", "READER: SKIP_MANGA_ERROR error=" + e.message, true) }
+        }
+        return true
+    }
+
+    fun markCurrentMangaAsRead(): Boolean {
+        if (activeReaderMarkRead == null) {
+            log("SYSTEM", "READER: MARK_READ_NOT_AVAILABLE")
+            return false
+        }
+        log("SYSTEM", "READER: MARK_READ_REQUESTED title='$lastFinishedMangaTitle' url='$currentMangaUrl'")
+        mainHandler.post {
+            try { activeReaderMarkRead?.invoke() }
+            catch (e: Exception) { log("SYSTEM", "READER: MARK_READ_ERROR error=" + e.message, true) }
         }
         return true
     }
@@ -1794,12 +1809,14 @@ class MangaBuffAutomation(
             if (!resumed && continuation.isActive) {
                 resumed = true
                 activeReaderSkip = null
+                activeReaderMarkRead = null
                 continuation.resume(result)
             }
         }
 
         continuation.invokeOnCancellation {
             activeReaderSkip = null
+            activeReaderMarkRead = null
             mainHandler.post {
                 try { webView.stopLoading() } catch (_: Exception) {}
                 try {
@@ -1826,6 +1843,37 @@ class MangaBuffAutomation(
                         title = cleanMangaTitle(lastFinishedMangaTitle)
                     )
                 )
+            }
+        }
+
+        activeReaderMarkRead = {
+            if (!resumed && continuation.isActive) {
+                log(account.username, "READER: MARK_READ_EXECUTED title='" + cleanMangaTitle(lastFinishedMangaTitle) + "' url='" + currentMangaUrl + "'")
+                try {
+                    webView.evaluateJavascript(
+                        "try{window.__mbNativeFingerRunning=false;if(window.__mbNativeFingerTimer){clearTimeout(window.__mbNativeFingerTimer);window.__mbNativeFingerTimer=null;}}catch(e){}",
+                        null
+                    )
+                } catch (_: Exception) {}
+
+                pendingMangaMarkAsRead = true
+                val markUrl = ensureCanonicalMangaUrl(
+                    currentMangaUrl.ifBlank { activeChapterContext?.mangaUrl ?: "" }
+                )
+                if (markUrl.isBlank()) {
+                    log(account.username, "READER: MARK_READ_NO_MANGA_URL", true)
+                    pendingMangaMarkAsRead = false
+                    return@let
+                }
+                currentMangaUrl = markUrl
+                log(account.username, "READER: OPEN_MANGA_INFO_FOR_MANUAL_READ_MARK url=" + markUrl)
+                mainHandler.post {
+                    try { webView.loadUrl(markUrl) }
+                    catch (e: Exception) {
+                        pendingMangaMarkAsRead = false
+                        log(account.username, "READER: MARK_READ_NAVIGATION_ERROR error=" + (e.message ?: "unknown"), true)
+                    }
+                }
             }
         }
 
@@ -2551,6 +2599,7 @@ class MangaBuffAutomation(
                                     var lastObservedScrollY = -1;
                                     var stagnantChecks = 0;
                                     var completionScheduled = false;
+                                    var swipeRecoveryAttempts = 0;
 
                                     window.__mbHistoryPostStarted = false;
                                     window.__mbHistoryPostStatus = null;
@@ -3627,7 +3676,8 @@ class MangaBuffAutomation(
                                             window.__mbNativeFingerTimer = setTimeout(function() {
                                                 if (chapterDone || !window.__mbNativeFingerRunning) return;
                                                 var after = metrics();
-                                                var moved = Math.abs(after.y - beforeY) >= 12;
+                                                var deltaY = Math.abs(after.y - beforeY);
+                                                var moved = deltaY >= 12;
                                                 AndroidReaderBridge.onLogStep(
                                                     'READER: NATIVE_FINGER_SWIPE_RESULT moved=' + moved +
                                                     ' beforeY=' + Math.floor(beforeY) +
@@ -3635,13 +3685,18 @@ class MangaBuffAutomation(
                                                     ' deltaY=' + Math.floor(after.y - beforeY) +
                                                     ' remaining=' + Math.floor(after.remaining)
                                                 );
-                                                if (!moved && after.remaining > 120) {
+
+                                                if (after.remaining > 120 && deltaY < 120) {
+                                                    swipeRecoveryAttempts++;
                                                     AndroidReaderBridge.onLogStep(
-                                                        'READER: NATIVE_FINGER_SWIPE_RETRY reason=NO_SCROLL_MOVEMENT remaining=' +
-                                                        Math.floor(after.remaining)
+                                                        'READER: NATIVE_FINGER_SWIPE_RECOVERY deltaY=' +
+                                                        Math.floor(deltaY) +
+                                                        ' remaining=' + Math.floor(after.remaining) +
+                                                        ' attempt=' + swipeRecoveryAttempts
                                                     );
-                                                    setTimeout(nextSwipe, 120);
+                                                    setTimeout(nextSwipe, swipeRecoveryAttempts >= 3 ? 220 : 100);
                                                 } else {
+                                                    swipeRecoveryAttempts = 0;
                                                     setTimeout(nextSwipe, pause);
                                                 }
                                             }, duration + 220);
