@@ -74,6 +74,13 @@ class AutomationRuntime(
         return automationEngines.values.any { it.skipCurrentManga() }
     }
 
+    fun markCurrentMangaAsRead(accountId: String? = null): Boolean {
+        if (accountId != null) {
+            return automationEngines[accountId]?.markCurrentMangaAsRead() == true
+        }
+        return automationEngines.values.any { it.markCurrentMangaAsRead() }
+    }
+
     @Synchronized
     fun stopAccount(accountId: String) {
         val runtime = runtimes.remove(accountId)
