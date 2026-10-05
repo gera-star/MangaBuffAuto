@@ -2624,6 +2624,17 @@ class MangaBuffAutomation(
                                             window.__mbScrollTimer = null;
                                         }
 
+                                        // Always stop our custom requestAnimationFrame loop first.
+                                        // Without this flag reset, a finished chapter could leave the
+                                        // previous reader loop alive until chapterDone changed state.
+                                        try {
+                                            window.__mbFastScrollRunning = false;
+                                            if (window.__mbFastScrollFrame) {
+                                                cancelAnimationFrame(window.__mbFastScrollFrame);
+                                                window.__mbFastScrollFrame = null;
+                                            }
+                                        } catch(e) {}
+
                                         // Stop MangaBuff's own autoscroll if it is running.
                                         try {
                                             var pause = document.querySelector('.reader-autoscroll-icon-pause');
@@ -3195,9 +3206,13 @@ class MangaBuffAutomation(
                                             ' postStatus=' + stateAtBottom.postStatus
                                         );
 
-                                        // Give MangaBuff a short grace period to finish its own
-                                        // addHistory/read-state update before we choose the next URL.
-                                        setTimeout(function() {
+                                        // MangaBuff can update history/read-state asynchronously and
+                                        // the server quest counter can lag by 1.5-2 chapters (ccl batching).
+                                        // NEVER use the quest counter as a per-chapter stop condition.
+                                        // Also do not stop merely because the next-chapter DOM is late.
+                                        function resolveNextChapterAfterBottom(attempt) {
+                                            if (chapterDone) return;
+
                                             var nextAfterSettle = findNextChapter();
                                             var isLastAfterSettle = isLastChapter();
                                             var candidateAfterSettle =
@@ -3207,25 +3222,60 @@ class MangaBuffAutomation(
 
                                             if (nextAfterSettle) {
                                                 var nextHref = getHref(nextAfterSettle);
-                                                AndroidReaderBridge.onLogStep('NEXT_CHAPTER_FOUND_DOM url=' + nextHref);
-                                                chapterDone = true;
-                                                finish(nextAfterSettle, false);
-                                            } else if (isLastAfterSettle) {
+                                                if (isValidNextUrl(nextHref)) {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'NEXT_CHAPTER_FOUND_DOM_RETRY attempt=' + attempt +
+                                                        ' url=' + nextHref
+                                                    );
+                                                    chapterDone = true;
+                                                    finish(nextAfterSettle, false);
+                                                    return;
+                                                }
+                                            }
+
+                                            if (isLastAfterSettle) {
                                                 AndroidReaderBridge.onLogStep('FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER');
                                                 AndroidReaderBridge.onLogStep('LAST_CHAPTER_CONFIRMED');
                                                 chapterDone = true;
                                                 finish(null, true);
-                                            } else if (candidateAfterSettle) {
+                                                return;
+                                            }
+
+                                            if (candidateAfterSettle && isValidNextUrl(candidateAfterSettle)) {
                                                 AndroidReaderBridge.onLogStep(
-                                                    'NEXT_CHAPTER_URL_FALLBACK current=' + window.location.href +
+                                                    'NEXT_CHAPTER_URL_FALLBACK_RETRY attempt=' + attempt +
+                                                    ' current=' + window.location.href +
                                                     ' candidate=' + candidateAfterSettle
                                                 );
                                                 chapterDone = true;
                                                 finishWithCandidateUrl(candidateAfterSettle);
-                                            } else {
-                                                chapterDone = true;
-                                                AndroidReaderBridge.onNextChapterUnknown();
+                                                return;
                                             }
+
+                                            // A missing quest increment is expected here. Keep the reader
+                                            // alive and give the page more time instead of turning this
+                                            // into NEXT_CHAPTER_UNKNOWN / ACCOUNT_FINISHED.
+                                            if (attempt < 15) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'NEXT_CHAPTER_DISCOVERY_RETRY attempt=' + (attempt + 1) +
+                                                    '/15 reason=DOM_NOT_READY_OR_SERVER_ACCOUNTING_DELAY'
+                                                );
+                                                setTimeout(function() {
+                                                    resolveNextChapterAfterBottom(attempt + 1);
+                                                }, 1000);
+                                                return;
+                                            }
+
+                                            AndroidReaderBridge.onLogStep(
+                                                'NEXT_CHAPTER_DISCOVERY_GIVE_UP reason=NO_VALID_NEXT_URL',
+                                                true
+                                            );
+                                            chapterDone = true;
+                                            AndroidReaderBridge.onNextChapterUnknown();
+                                        }
+
+                                        setTimeout(function() {
+                                            resolveNextChapterAfterBottom(1);
                                         }, 1200);
                                     }
 
