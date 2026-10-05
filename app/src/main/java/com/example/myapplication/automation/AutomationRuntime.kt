@@ -25,7 +25,6 @@ class AutomationRuntime(
     private val onAccountStatusUpdate: (accountId: String, statusMessage: String, isRunning: Boolean, currentTask: String, progress: Float) -> Unit,
     private val onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
-    onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     private val onWebViewAssigned: (WebView) -> Unit = {},
     private val onWebViewCleared: (WebView) -> Unit = {}
