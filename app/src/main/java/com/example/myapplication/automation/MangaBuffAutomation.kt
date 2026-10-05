@@ -1909,6 +1909,20 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun nativeRecoveryScroll(deltaPx: Int) {
+                    mainHandler.post {
+                        try {
+                            if (!webView.isAttachedToWindow) return@post
+                            val safeDelta = deltaPx.coerceIn(240, 1400)
+                            webView.scrollBy(0, safeDelta)
+                            log(account.username, "READER: NATIVE_RECOVERY_SCROLLBY delta=$safeDelta")
+                        } catch (e: Exception) {
+                            log(account.username, "READER: NATIVE_RECOVERY_SCROLLBY_ERROR " + (e.message ?: "unknown"), true)
+                        }
+                    }
+                }
+
+                @JavascriptInterface
                 fun onCurrentChapterData(
                     mangaIdStr: String,
                     chapterIdStr: String,
@@ -3694,7 +3708,38 @@ class MangaBuffAutomation(
                                                         ' remaining=' + Math.floor(after.remaining) +
                                                         ' attempt=' + swipeRecoveryAttempts
                                                     );
-                                                    setTimeout(nextSwipe, swipeRecoveryAttempts >= 3 ? 220 : 100);
+
+                                                    /*
+                                                     * A failed touch is a transport stall, never EOF.
+                                                     * After three consecutive failures use one bounded
+                                                     * native WebView scroll only as an emergency escape.
+                                                     */
+                                                    if (swipeRecoveryAttempts >= 3) {
+                                                        var recoveryDistance = Math.min(
+                                                            Math.max(360, Math.floor(after.viewport * 0.65)),
+                                                            Math.max(360, Math.floor(after.remaining - 8))
+                                                        );
+
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'READER: NATIVE_FINGER_SWIPE_RECOVERY_SCROLLBY ' +
+                                                            'delta=' + recoveryDistance +
+                                                            ' remaining=' + Math.floor(after.remaining)
+                                                        );
+
+                                                        try {
+                                                            AndroidReaderBridge.nativeRecoveryScroll(recoveryDistance);
+                                                        } catch(e) {
+                                                            AndroidReaderBridge.onLogStep(
+                                                                'READER: NATIVE_RECOVERY_SCROLLBY_CALL_ERROR ' +
+                                                                (e && e.message ? e.message : String(e))
+                                                            );
+                                                        }
+
+                                                        swipeRecoveryAttempts = 0;
+                                                        setTimeout(nextSwipe, 260);
+                                                    } else {
+                                                        setTimeout(nextSwipe, 100);
+                                                    }
                                                 } else {
                                                     swipeRecoveryAttempts = 0;
                                                     setTimeout(nextSwipe, pause);
