@@ -1621,10 +1621,49 @@ class MangaBuffAutomation(
                                 }
 
                                 function findCloseButton() {
-                                    // Current Yandex fullscreen markup:
-                                    // <div data-fullscreen-element="close">
-                                    //   <div data-survey-fullscreen-control>...</div>
-                                    // </div>
+                                    /*
+                                     * Exact live Yandex X:
+                                     * <svg width="40" height="40">
+                                     *   <path d="M32.012 10.345..."></path>
+                                     * </svg>
+                                     *
+                                     * IMPORTANT: check the exact path FIRST. The generic
+                                     * fullscreen selectors can otherwise return a visible
+                                     * wrapper that is not the actual close control.
+                                     */
+                                    var closePath = deepQuery(
+                                        "path[d^=\"M32.012 10.345a1.667a1.667\"]"
+                                    );
+
+                                    if (closePath && isVisibleElement(closePath)) {
+                                        try {
+                                            var control = closePath.closest(
+                                                "[data-survey-fullscreen-control]"
+                                            );
+                                            if (control && isVisibleElement(control)) {
+                                                return control;
+                                            }
+                                        } catch (e) {}
+
+                                        try {
+                                            var fullscreenClose = closePath.closest(
+                                                "[data-fullscreen-element=\"close\"]"
+                                            );
+                                            if (fullscreenClose && isVisibleElement(fullscreenClose)) {
+                                                return fullscreenClose;
+                                            }
+                                        } catch (e) {}
+
+                                        try {
+                                            var parent = closePath.parentElement;
+                                            if (parent && isVisibleElement(parent)) {
+                                                return parent;
+                                            }
+                                        } catch (e) {}
+
+                                        return closePath;
+                                    }
+
                                     var selectors = [
                                         "[data-fullscreen-element=\"close\"] [data-survey-fullscreen-control]",
                                         "[data-fullscreen-element=\"close\"]",
@@ -1640,34 +1679,6 @@ class MangaBuffAutomation(
                                     for (var i = 0; i < selectors.length; i++) {
                                         var el = deepQuery(selectors[i]);
                                         if (el && !el.disabled && isVisibleElement(el)) return el;
-                                    }
-
-                                    var svg = deepQuery(
-                                        "[data-fullscreen-element=\"close\"] svg"
-                                    );
-                                    if (svg && isVisibleElement(svg)) return svg;
-
-                                    // Stable fallback for the actual Yandex close X path.
-                                    // The X is rendered as an SVG <path> with this distinctive
-                                    // path prefix. Find it through deepQuery so the same-origin
-                                    // shadow/iframe traversal is preserved.
-                                    var closePath = deepQuery(
-                                        "path[d^=\"M32.012 10.345\"]"
-                                    );
-                                    if (closePath && isVisibleElement(closePath)) {
-                                        var clickable = null;
-                                        try {
-                                            clickable = closePath.closest(
-                                                "[data-survey-fullscreen-control]," +
-                                                "[data-fullscreen-element=\"close\"]," +
-                                                "button,[role=\"button\"]"
-                                            );
-                                        } catch (e) {}
-
-                                        if (clickable && isVisibleElement(clickable)) {
-                                            return clickable;
-                                        }
-                                        return closePath;
                                     }
 
                                     return null;
@@ -1819,13 +1830,13 @@ class MangaBuffAutomation(
                                      * The Yandex timer is only diagnostic now.
                                      */
                                     var adStartedAt = Date.now();
-                                    var ownWatchDurationMs = 30000;
-                                    var hardTimeoutMs = 60000;
+                                    var ownWatchDurationMs = 32000;
+                                    var hardTimeoutMs = 65000;
                                     var lastSecondLogged = -1;
 
                                     AndroidAds.onStateLog(
                                         "OUR_TIMER_STARTED",
-                                        "duration=30s"
+                                        "duration=32s"
                                     );
 
                                     watchTimer = setInterval(function() {
@@ -1881,7 +1892,7 @@ class MangaBuffAutomation(
                                                 close.click();
                                                 AndroidAds.onStateLog(
                                                     "CLOSE_CLICKED",
-                                                    "after_our_30s_timer"
+                                                    "after_our_32s_timer"
                                                 );
                                             } catch (e) {
                                                 finished = true;
@@ -1894,7 +1905,7 @@ class MangaBuffAutomation(
                                             }
 
                                             AndroidAds.onStateLog(
-                                                "AD_30S_FINISHED",
+                                                "AD_32S_FINISHED",
                                                 "elapsed=" + Math.floor(elapsed / 1000) + "s"
                                             );
 
