@@ -3308,7 +3308,7 @@ class MangaBuffAutomation(
                     }
 
                     // Opening candidate URL that turned out NOT to be a chapter page
-                    if (startUrl.isNotBlank() && startUrl != NEXT_CHAPTER_DOM_TOKEN) {
+                    if (startUrl.isNotBlank()) {
                         log(account.username, "NEXT_CHAPTER_CANDIDATE_REJECTED reason=NOT_A_VALID_CHAPTER_PAGE url=$currentUrl")
                         safeResume(ReaderResult.Failed("CANDIDATE_REJECTED"))
                     }
@@ -3316,37 +3316,6 @@ class MangaBuffAutomation(
             }
 
             when {
-                startUrl == NEXT_CHAPTER_DOM_TOKEN -> {
-                    log(account.username, "READER: OPEN_NEXT_CHAPTER_DOM_CLICK")
-                    mainHandler.postDelayed({
-                        if (!continuation.isActive) return@postDelayed
-
-                        val script = """
-                            (function() {
-                                try {
-                                    var target = document.querySelector('[data-android-next-chapter-target="1"]');
-                                    if (!target) {
-                                        AndroidReaderBridge.onLogStep('READER: NEXT_CHAPTER_DOM_TARGET_NOT_FOUND');
-                                        AndroidReaderBridge.onNextChapterUnknown();
-                                        return;
-                                    }
-
-                                    AndroidReaderBridge.onLogStep('READER: NEXT_CHAPTER_DOM_TARGET_FOUND tag=' + target.tagName + ' text="' + (target.innerText || target.textContent || '').replace(/\s+/g, ' ').trim() + '"');
-                                    try {
-                                        target.click();
-                                    } catch(e) {
-                                        AndroidReaderBridge.onNextChapterUnknown();
-                                    }
-                                } catch(e) {
-                                    AndroidReaderBridge.onNextChapterUnknown();
-                                }
-                            })();
-                        """.trimIndent()
-
-                        webView.evaluateJavascript(script, null)
-                    }, 200L)
-                }
-
                 startUrl.isNotBlank() -> {
                     val url = startUrl.substringBefore('?').substringBefore('#')
                     val valid = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+$").matches(url)
