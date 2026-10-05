@@ -1863,15 +1863,15 @@ class MangaBuffAutomation(
                 if (markUrl.isBlank()) {
                     log(account.username, "READER: MARK_READ_NO_MANGA_URL", true)
                     pendingMangaMarkAsRead = false
-                    return@activeReaderMarkRead
-                }
-                currentMangaUrl = markUrl
-                log(account.username, "READER: OPEN_MANGA_INFO_FOR_MANUAL_READ_MARK url=" + markUrl)
-                mainHandler.post {
-                    try { webView.loadUrl(markUrl) }
-                    catch (e: Exception) {
-                        pendingMangaMarkAsRead = false
-                        log(account.username, "READER: MARK_READ_NAVIGATION_ERROR error=" + (e.message ?: "unknown"), true)
+                } else {
+                    currentMangaUrl = markUrl
+                    log(account.username, "READER: OPEN_MANGA_INFO_FOR_MANUAL_READ_MARK url=" + markUrl)
+                    mainHandler.post {
+                        try { webView.loadUrl(markUrl) }
+                        catch (e: Exception) {
+                            pendingMangaMarkAsRead = false
+                            log(account.username, "READER: MARK_READ_NAVIGATION_ERROR error=" + (e.message ?: "unknown"), true)
+                        }
                     }
                 }
             }
