@@ -119,9 +119,6 @@ class MangaBuffAutomation(
 
         private const val BATTLE_COOLDOWN_MS = 2000L
 
-        private const val NEXT_CHAPTER_DOM_TOKEN =
-            "__MANGA_BUFF_DOM_NEXT_CHAPTER__"
-
         private const val BALANCE_WATCHDOG_MS = 15_000L
     }
 
@@ -2596,9 +2593,18 @@ class MangaBuffAutomation(
                                                 AndroidReaderBridge.onLogStep('READER: NEXT_CHAPTER_REAL_URL_FOUND url=' + href);
                                                 nextUrl = href;
                                             } else {
-                                                nextElement.setAttribute('data-android-next-chapter-target', '1');
-                                                AndroidReaderBridge.onLogStep('READER: NEXT_CHAPTER_DOM_CLICK_REQUIRED');
-                                                nextUrl = '$NEXT_CHAPTER_DOM_TOKEN';
+                                                // The native side refreshes /balance before opening the next chapter.
+                                                // Therefore a DOM-only target cannot be deferred across that navigation:
+                                                // the chapter DOM is gone after /balance. Prefer a deterministic real URL.
+                                                var fallbackUrl = buildCandidateNextUrl();
+                                                if (fallbackUrl && isValidNextUrl(fallbackUrl)) {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: NEXT_CHAPTER_DOM_NO_HREF_USING_FALLBACK url=' + fallbackUrl
+                                                    );
+                                                    nextUrl = fallbackUrl;
+                                                } else {
+                                                    AndroidReaderBridge.onLogStep('READER: NEXT_CHAPTER_DOM_TARGET_UNUSABLE');
+                                                }
                                             }
                                         }
 
