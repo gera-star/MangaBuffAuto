@@ -1697,6 +1697,81 @@ class MangaBuffAutomation(
                                            (t.indexOf("дост") !== -1 && t.indexOf("заверш") !== -1);
                                 }
 
+                                /*
+                                 * MangaBuff invokes Yandex Rewarded through
+                                 * Ya.Context.AdvManager.render(). The Rewarded contract
+                                 * exposes onRewarded(true) after the reward condition is met.
+                                 * Hook it as an additional completion signal and diagnostic.
+                                 * The MangaBuff server balance remains authoritative.
+                                 */
+                                function installYandexRewardHook() {
+                                    try {
+                                        if (window.__mbYandexRewardHookInstalled) return true;
+
+                                        var adv = window.Ya &&
+                                            window.Ya.Context &&
+                                            window.Ya.Context.AdvManager;
+
+                                        if (!adv || typeof adv.render !== "function") {
+                                            AndroidAds.onStateLog("YANDEX_REWARD_HOOK", "unavailable");
+                                            return false;
+                                        }
+
+                                        var originalRender = adv.render;
+                                        adv.render = function(options) {
+                                            try {
+                                                if (options && typeof options.onRewarded === "function") {
+                                                    var originalOnRewarded = options.onRewarded;
+                                                    var wrappedOptions = Object.assign({}, options);
+
+                                                    wrappedOptions.onRewarded = function(isRewarded) {
+                                                        AndroidAds.onStateLog(
+                                                            "YANDEX_REWARDED_CALLBACK",
+                                                            "isRewarded=" + !!isRewarded
+                                                        );
+
+                                                        try {
+                                                            return originalOnRewarded.apply(this, arguments);
+                                                        } finally {
+                                                            if (isRewarded) {
+                                                                setTimeout(function() {
+                                                                    try {
+                                                                        verifyReward(0);
+                                                                    } catch (e) {
+                                                                        AndroidAds.onStateLog(
+                                                                            "YANDEX_REWARD_VERIFY_ERROR",
+                                                                            "error=" + (e && e.message ? e.message : String(e))
+                                                                        );
+                                                                    }
+                                                                }, 250);
+                                                            }
+                                                        }
+                                                    };
+
+                                                    return originalRender.call(this, wrappedOptions);
+                                                }
+                                            } catch (e) {
+                                                AndroidAds.onStateLog(
+                                                    "YANDEX_REWARD_HOOK_ERROR",
+                                                    "error=" + (e && e.message ? e.message : String(e))
+                                                );
+                                            }
+
+                                            return originalRender.apply(this, arguments);
+                                        };
+
+                                        window.__mbYandexRewardHookInstalled = true;
+                                        AndroidAds.onStateLog("YANDEX_REWARD_HOOK", "installed");
+                                        return true;
+                                    } catch (e) {
+                                        AndroidAds.onStateLog(
+                                            "YANDEX_REWARD_HOOK_ERROR",
+                                            "error=" + (e && e.message ? e.message : String(e))
+                                        );
+                                        return false;
+                                    }
+                                }
+
                                 var initialButton = findWatchButton();
                                 var initialDiamond = readDiamondBalance(document);
                                 var initialButtonCount = readButtonCount(initialButton);
@@ -2243,8 +2318,24 @@ class MangaBuffAutomation(
                                         }
 
                                         /*
+                                         * If the close control is temporarily inaccessible,
+                                         * first give the Rewarded callback/automatic close a
+                                         * few seconds to finish. At 32s Yandex may already have
+                                         * completed the fullscreen session even though the open
+                                         * shadow DOM is gone from the page.
+                                         */
+                                        if (elapsed < 38000) {
+                                            AndroidAds.onStateLog(
+                                                "CLOSE_NOT_FOUND_WAIT_REWARD",
+                                                "elapsed=" + Math.floor(elapsed / 1000) +
+                                                "s waiting_for_yandex_callback"
+                                            );
+                                            return;
+                                        }
+
+                                        /*
                                          * The ad may still be closing/rendering its control.
-                                         * Keep searching after 30 seconds, but never restart
+                                         * Keep searching after 38 seconds, but never restart
                                          * the 30-second viewing timer.
                                          */
                                         if (elapsed >= hardTimeoutMs) {
@@ -2305,6 +2396,8 @@ class MangaBuffAutomation(
                                     initialButton = btn;
                                     initialButtonCount = readButtonCount(btn);
                                     initialDiamond = readDiamondBalance(document);
+
+                                    installYandexRewardHook();
 
                                     try {
                                         btn.click();
