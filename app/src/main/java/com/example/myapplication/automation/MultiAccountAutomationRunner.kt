@@ -5,6 +5,7 @@ import android.webkit.WebView
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.TaskType
 
 class MultiAccountAutomationRunner(
@@ -13,10 +14,11 @@ class MultiAccountAutomationRunner(
     onAccountStatusUpdate: (accountId: String, statusMessage: String, isRunning: Boolean, currentTask: String, progress: Float) -> Unit,
     onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
+    onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     onWebViewAssigned: (WebView) -> Unit = {},
     onWebViewCleared: (WebView) -> Unit = {}
 ) {
-    private val runtime = AutomationRuntime(context, onLog, onAccountStatusUpdate, onMangaActiveUrlUpdate, onAccountStatsUpdate, onWebViewAssigned, onWebViewCleared)
+    private val runtime = AutomationRuntime(context, onLog, onAccountStatusUpdate, onMangaActiveUrlUpdate, onAccountStatsUpdate, onDailyStatsUpdate, onWebViewAssigned, onWebViewCleared)
     suspend fun runForAccount(
         account: MangaBuffAccount,
         settings: GlobalSettings,
