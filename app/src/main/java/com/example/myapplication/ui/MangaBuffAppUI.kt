@@ -743,7 +743,7 @@ fun TasksTab(
 }
 
 @Composable
-fun LogsTab(logs: List<LogEntry>, onClearLogs: () -> Unit) {
+fun LogsTab(logs: List<LogEntry>, onClearLogs: () -> Unit, onSkipManga: () -> Unit = {}) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -774,6 +774,14 @@ fun LogsTab(logs: List<LogEntry>, onClearLogs: () -> Unit) {
         ) {
             Text("Логи (${logs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onSkipManga,
+                    enabled = logs.any { it.message.contains("CURRENT_MANGA") || it.message.contains("READER:") }
+                ) {
+                    Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Скипнуть мангу")
+                }
                 OutlinedButton(
                     onClick = onClearLogs,
                     enabled = logs.isNotEmpty()
