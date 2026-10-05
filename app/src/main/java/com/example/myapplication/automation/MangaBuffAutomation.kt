@@ -1899,11 +1899,46 @@ class MangaBuffAutomation(
 
                                     try {
                                         var text = String(timer.innerText || timer.textContent || "").trim();
-                                        var match = text.match(/(\\d{1,2})/);
-                                        if (!match) return null;
+
+                                        /*
+                                         * IMPORTANT: this is a Kotlin raw string (triple quotes),
+                                         * so the JavaScript RegExp must contain a single backslash.
+                                         * /([\\d]{1,2})/ would be a character class, while
+                                         * /(\\d{1,2})/ is the intended digit matcher.
+                                         */
+                                        var match = text.match(/(\d{1,2})/);
+                                        if (!match) {
+                                            if (window.__mbLastYandexTimerText !== text) {
+                                                window.__mbLastYandexTimerText = text;
+                                                AndroidAds.onStateLog(
+                                                    "YANDEX_TIMER",
+                                                    "text=" + JSON.stringify(text) + " parsed=?"
+                                                );
+                                            }
+                                            return null;
+                                        }
+
                                         var seconds = parseInt(match[1], 10);
-                                        return isNaN(seconds) ? null : seconds;
+                                        if (isNaN(seconds)) return null;
+
+                                        if (
+                                            window.__mbLastYandexTimerValue !== seconds ||
+                                            window.__mbLastYandexTimerText !== text
+                                        ) {
+                                            window.__mbLastYandexTimerValue = seconds;
+                                            window.__mbLastYandexTimerText = text;
+                                            AndroidAds.onStateLog(
+                                                "YANDEX_TIMER",
+                                                "text=" + JSON.stringify(text) + " seconds=" + seconds
+                                            );
+                                        }
+
+                                        return seconds;
                                     } catch (e) {
+                                        AndroidAds.onStateLog(
+                                            "YANDEX_TIMER_ERROR",
+                                            "error=" + (e && e.message ? e.message : String(e))
+                                        );
                                         return null;
                                     }
                                 }
