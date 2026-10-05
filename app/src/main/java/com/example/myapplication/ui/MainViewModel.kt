@@ -160,6 +160,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         addLog(LogEntry(username = account.username, message = "Обновление страницы и переход на главную"))
     }
 
+    fun skipCurrentManga(): Boolean {
+        val skipped = automationRunner.skipCurrentManga()
+        addLog(
+            LogEntry(
+                message = if (skipped) "READER: SKIP_MANGA_BUTTON_DISPATCHED" else "READER: SKIP_MANGA_BUTTON_NOT_AVAILABLE",
+                isError = !skipped
+            )
+        )
+        return skipped
+    }
+
     fun updateAccountTasks(
         account: MangaBuffAccount,
         reader: Boolean,
