@@ -8,6 +8,7 @@ import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.TaskType
 import com.example.myapplication.service.MangaBuffForegroundService
 import kotlinx.coroutines.CancellationException
@@ -36,6 +37,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         },
         onAccountStatsUpdate = { accountId, diamonds, cardDrop, chapters, comments ->
             updateAccountStats(accountId, diamonds, cardDrop, chapters, comments)
+        },
+        onDailyStatsUpdate = { accountId, stats ->
+            updateDailyStats(accountId, stats)
         },
         onWebViewAssigned = { webView ->
             _activeWebView.value = webView
@@ -274,6 +278,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         addLog(LogEntry(message = "STAT: STATE_UPDATED"))
         addLog(LogEntry(message = "STAT: UI_STATE_PUBLISHED"))
+    }
+
+    private fun updateDailyStats(accountId: String, stats: DailyStats) {
+        _accounts.update { list ->
+            val updated = list.map { acc ->
+                if (acc.id == accountId) {
+                    acc.copy(
+                        dailyStatsDay = stats.day,
+                        dailyBattles = stats.battles,
+                        dailyQuiz = stats.quiz,
+                        dailyAds = stats.ads,
+                        dailyMineOre = stats.mineOre,
+                        dailyMineExchangeOre = stats.mineExchangeOre,
+                        dailyMineDiamonds = stats.mineDiamonds,
+                        dailyReaderChapters = stats.readerChapters,
+                        dailyComments = stats.comments
+                    )
+                } else acc
+            }
+            repository.saveAccounts(updated)
+            updated
+        }
     }
 
     private fun updateActiveMangaUrl(accountId: String, url: String, title: String) {
