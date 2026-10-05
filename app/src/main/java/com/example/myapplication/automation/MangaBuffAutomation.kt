@@ -2239,7 +2239,7 @@ class MangaBuffAutomation(
                     log(account.username, "MINE: WATCHDOG_TIMEOUT url=${webView.url}", true)
                     safeResume(false)
                 }
-            }, 35_000L)
+            }, 190_000L)
         }
     }
 
