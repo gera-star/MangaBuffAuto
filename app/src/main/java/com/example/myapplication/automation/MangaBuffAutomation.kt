@@ -1504,8 +1504,9 @@ class MangaBuffAutomation(
 
                                     if (diamondConfirmed || buttonCountChanged) {
                                         finished = true;
+                                        window.__mbAdsRunnerActive = false;
                                         AndroidAds.onStateLog(
-                                            "REWARD_VERIFIED",
+                                            "REWARD_VERIFIED_LOCAL",
                                             "diamonds=" + (diamondNow === null ? "?" : diamondNow) +
                                             " before=" + (initialDiamond === null ? "?" : initialDiamond) +
                                             " count=" + (buttonCountNow === null ? "?" : buttonCountNow) +
@@ -1516,22 +1517,107 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
-                                    if (attempt >= 18) {
-                                        finished = true;
-                                        AndroidAds.onAdFailed(
-                                            "reward_not_confirmed diamonds=" +
-                                            (diamondNow === null ? "?" : diamondNow) +
-                                            " before=" +
-                                            (initialDiamond === null ? "?" : initialDiamond) +
-                                            " count=" +
-                                            (buttonCountNow === null ? "?" : buttonCountNow)
-                                        );
-                                        return;
-                                    }
+                                    /*
+                                     * Yandex fullscreen can finish before MangaBuff's reward
+                                     * request reaches the server. Ask /balance directly instead
+                                     * of waiting for the old DOM to refresh itself.
+                                     */
+                                    AndroidAds.onStateLog(
+                                        "REWARD_SERVER_CHECK",
+                                        "attempt=" + attempt +
+                                        " localDiamonds=" + (diamondNow === null ? "?" : diamondNow) +
+                                        " before=" + (initialDiamond === null ? "?" : initialDiamond)
+                                    );
 
-                                    rewardPoll = setTimeout(function() {
-                                        verifyReward(attempt + 1);
-                                    }, 1000);
+                                    fetch("/balance", {
+                                        method: "GET",
+                                        credentials: "include",
+                                        cache: "no-store",
+                                        headers: {
+                                            "Accept": "text/html,application/xhtml+xml"
+                                        }
+                                    }).then(function(response) {
+                                        if (!response.ok) throw new Error("balance_http_" + response.status);
+                                        return response.text();
+                                    }).then(function(html) {
+                                        if (finished) return;
+
+                                        try {
+                                            var doc = new DOMParser().parseFromString(html, "text/html");
+                                            var serverDiamond = readDiamondBalance(doc);
+                                            var serverConfirmed = initialDiamond !== null &&
+                                                serverDiamond !== null &&
+                                                serverDiamond >= initialDiamond + 7;
+
+                                            AndroidAds.onStateLog(
+                                                "REWARD_SERVER_RESULT",
+                                                "diamonds=" + (serverDiamond === null ? "?" : serverDiamond) +
+                                                " before=" + (initialDiamond === null ? "?" : initialDiamond) +
+                                                " confirmed=" + serverConfirmed
+                                            );
+
+                                            if (serverConfirmed) {
+                                                finished = true;
+                                                window.__mbAdsRunnerActive = false;
+                                                AndroidAds.onStateLog(
+                                                    "REWARD_VERIFIED",
+                                                    "source=SERVER_BALANCE diamonds=" + serverDiamond +
+                                                    " before=" + initialDiamond +
+                                                    " attempt=" + attempt
+                                                );
+                                                AndroidAds.onAdSuccess();
+                                                return;
+                                            }
+
+                                            if (attempt >= 18) {
+                                                finished = true;
+                                                window.__mbAdsRunnerActive = false;
+                                                AndroidAds.onAdFailed(
+                                                    "reward_not_confirmed serverDiamonds=" +
+                                                    (serverDiamond === null ? "?" : serverDiamond) +
+                                                    " before=" +
+                                                    (initialDiamond === null ? "?" : initialDiamond)
+                                                );
+                                                return;
+                                            }
+
+                                            rewardPoll = setTimeout(function() {
+                                                verifyReward(attempt + 1);
+                                            }, 1000);
+                                        } catch (e) {
+                                            if (attempt >= 18) {
+                                                finished = true;
+                                                window.__mbAdsRunnerActive = false;
+                                                AndroidAds.onAdFailed(
+                                                    "reward_parse_error=" + (e.message || String(e))
+                                                );
+                                                return;
+                                            }
+                                            rewardPoll = setTimeout(function() {
+                                                verifyReward(attempt + 1);
+                                            }, 1000);
+                                        }
+                                    }).catch(function(error) {
+                                        AndroidAds.onStateLog(
+                                            "REWARD_SERVER_ERROR",
+                                            "attempt=" + attempt +
+                                            " error=" + (error && error.message ? error.message : String(error))
+                                        );
+
+                                        if (attempt >= 18) {
+                                            finished = true;
+                                            window.__mbAdsRunnerActive = false;
+                                            AndroidAds.onAdFailed(
+                                                "reward_server_check_failed=" +
+                                                (error && error.message ? error.message : String(error))
+                                            );
+                                            return;
+                                        }
+
+                                        rewardPoll = setTimeout(function() {
+                                            verifyReward(attempt + 1);
+                                        }, 1000);
+                                    });
                                 }
 
                                 function startAdMonitoring() {
@@ -1592,6 +1678,7 @@ class MangaBuffAutomation(
                                         if (elapsed >= 60000) {
                                             clearInterval(watchTimer);
                                             finished = true;
+                                            window.__mbAdsRunnerActive = false;
                                             AndroidAds.onAdFailed("ad_timeout_60s");
                                         }
                                     }, 1000);
@@ -1628,6 +1715,7 @@ class MangaBuffAutomation(
 
                                     if (disabled && isDailyLimitText(label)) {
                                         finished = true;
+                                        window.__mbAdsRunnerActive = false;
                                         AndroidAds.onDailyLimit();
                                         return;
                                     }
