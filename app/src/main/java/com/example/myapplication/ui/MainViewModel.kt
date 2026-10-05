@@ -171,6 +171,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return skipped
     }
 
+    fun markCurrentMangaAsRead(): Boolean {
+        val marked = automationRunner.markCurrentMangaAsRead()
+        addLog(
+            LogEntry(
+                message = if (marked) "READER: MARK_READ_BUTTON_DISPATCHED" else "READER: MARK_READ_BUTTON_NOT_AVAILABLE",
+                isError = !marked
+            )
+        )
+        return marked
+    }
+
     fun updateAccountTasks(
         account: MangaBuffAccount,
         reader: Boolean,
