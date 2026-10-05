@@ -163,7 +163,7 @@ class MangaBuffAutomation(
             mainHandler.post { dispatchNativeTap(webView, x, y) }
             return
         }
-        if (!webView.isAttachedToWindow || webView.isDestroyed) return
+        if (!webView.isAttachedToWindow) return
 
         val density = webView.resources.displayMetrics.density.coerceAtLeast(1f)
         val px = x.coerceAtLeast(0f) * density
@@ -3445,7 +3445,7 @@ class MangaBuffAutomation(
                                         }
 
                                         function processAddHistoryRequest(url, method, bodyData) {
-                                            var currChId = (window.current_chapter && window.current_chapter.chapter_id) ? String(window.current_chapter.chapter_id) : '';
+                                            var currChId = (typeof resolveCurrentChapterId === 'function') ? resolveCurrentChapterId() : (window.__mbResolvedChapterId ? String(window.__mbResolvedChapterId) : '');
                                             window.__mbHistoryPostStarted = true;
                                             window.__mbHistoryPostStatus = 0;
                                             try {
@@ -3603,6 +3603,47 @@ class MangaBuffAutomation(
                                         }
                                     })();
 
+
+                                    function resolveCurrentChapterId() {
+                                        try {
+                                            var chapter = window.current_chapter || null;
+                                            var chapterId = chapter && chapter.chapter_id
+                                                ? String(chapter.chapter_id).trim()
+                                                : '';
+                                            var id = chapter && chapter.id
+                                                ? String(chapter.id).trim()
+                                                : '';
+                                            var cached = window.__mbResolvedChapterId
+                                                ? String(window.__mbResolvedChapterId).trim()
+                                                : '';
+                                            var resolved = chapterId || id || cached;
+                                            if (resolved) {
+                                                window.__mbResolvedChapterId = resolved;
+                                            }
+                                            return resolved;
+                                        } catch (e) {
+                                            return '';
+                                        }
+                                    }
+
+                                    function logChapterIdResolve(source) {
+                                        try {
+                                            var chapter = window.current_chapter || null;
+                                            var chapterId = chapter && chapter.chapter_id ? String(chapter.chapter_id) : '';
+                                            var id = chapter && chapter.id ? String(chapter.id) : '';
+                                            var resolved = resolveCurrentChapterId();
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: CHAPTER_ID_RESOLVE source=' + (source || '') +
+                                                ' chapter_id=' + chapterId +
+                                                ' id=' + id +
+                                                ' resolved=' + resolved
+                                            );
+                                            return resolved;
+                                        } catch (e) {
+                                            return '';
+                                        }
+                                    }
+
                                     var startMs = Date.now();
                                     var chapterDone = false;
                                     var bottomStarted = 0;
@@ -3616,13 +3657,36 @@ class MangaBuffAutomation(
                                     window.__mbHistoryPostStarted = false;
                                     window.__mbHistoryPostStatus = null;
 
-                                    var chapterId = '';
-                                    if (window.current_chapter && window.current_chapter.chapter_id) {
-                                        chapterId = String(window.current_chapter.chapter_id);
-                                    }
-
+                                    var chapterId = logChapterIdResolve('START');
                                     AndroidReaderBridge.onLogStep('READER: CHAPTER_ID=' + chapterId);
                                     AndroidReaderBridge.onLogStep('READER: CHAPTER_TIMER_STARTED chapterId=' + chapterId);
+
+                                    // MangaBuff can populate window.current_chapter after the
+                                    // initial page script. Do not permanently freeze an empty ID.
+                                    (function resolveChapterIdLate() {
+                                        var attempts = 0;
+                                        var maxAttempts = 15;
+                                        function poll() {
+                                            attempts++;
+                                            var resolved = logChapterIdResolve('POLL_' + attempts);
+                                            if (resolved) {
+                                                chapterId = resolved;
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_ID_LATE_RESOLVED id=' + chapterId +
+                                                    ' attempts=' + attempts
+                                                );
+                                                return;
+                                            }
+                                            if (attempts < maxAttempts) {
+                                                setTimeout(poll, 300);
+                                            } else {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_ID_RESOLVE_TIMEOUT attempts=' + attempts
+                                                );
+                                            }
+                                        }
+                                        if (!chapterId) setTimeout(poll, 100);
+                                    })();
                                     try {
                                         var diagScrollingElement = document.scrollingElement || document.documentElement || document.body;
                                         AndroidReaderBridge.onLogStep(
@@ -3636,9 +3700,10 @@ class MangaBuffAutomation(
 
                                     if (window.current_chapter) {
                                         var c = window.current_chapter;
+                                        var resolvedChapterId = resolveCurrentChapterId();
                                         AndroidReaderBridge.onCurrentChapterData(
-                                            String(c.id || ''),
-                                            String(c.chapter_id || ''),
+                                            String(c.manga_id || c.mangaId || c.id || ''),
+                                            resolvedChapterId,
                                             String(c.name || ''),
                                             String(c.slug || ''),
                                             String(c.volume || '1'),
@@ -4031,9 +4096,7 @@ class MangaBuffAutomation(
                                             var pool = [];
                                             try { pool = JSON.parse(localStorage.getItem('history_pool') || '[]'); } catch(e) {}
 
-                                            var currentChId = (window.current_chapter && window.current_chapter.chapter_id)
-                                                ? String(window.current_chapter.chapter_id)
-                                                : chapterId;
+                                            var currentChId = resolveCurrentChapterId() || chapterId;
 
                                             AndroidReaderBridge.onPreNextChapterState(
                                                 window.is_read === true,
@@ -4124,9 +4187,7 @@ class MangaBuffAutomation(
                                             pool = JSON.parse(localStorage.getItem('history_pool') || '[]');
                                         } catch (e) {}
 
-                                        var currentChId = (window.current_chapter && window.current_chapter.chapter_id)
-                                            ? String(window.current_chapter.chapter_id)
-                                            : chapterId;
+                                        var currentChId = resolveCurrentChapterId() || chapterId;
 
                                         var isRead = (window.is_read === true);
                                         var readSend = (window.read_status_send === true);
@@ -4200,7 +4261,7 @@ class MangaBuffAutomation(
                                     function triggerMangaBuffHistoryIfReady(reason) {
                                         try {
                                             var chapter = window.current_chapter || null;
-                                            var currentId = chapter && chapter.chapter_id ? String(chapter.chapter_id) : '';
+                                            var currentId = resolveCurrentChapterId();
                                             var mangaId = chapter && chapter.id ? String(chapter.id) : '';
                                             var isRead = (window.is_read === true);
                                             var readSend = (window.read_status_send === true);
