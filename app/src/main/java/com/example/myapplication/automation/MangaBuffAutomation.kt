@@ -3252,15 +3252,37 @@ class MangaBuffAutomation(
                                         var atAbsoluteBottom = distance <= 8;
                                         var touchStalled = stagnantChecks >= 4;
 
-                                        if (distance > 200 && !atAbsoluteBottom && !touchStalled) {
+                                        /*
+                                         * IMPORTANT:
+                                         * A stalled touch is NOT proof that the chapter is finished.
+                                         * WebView/HyperOS can temporarily stop accepting a gesture while
+                                         * the page is still thousands of pixels from the real bottom.
+                                         *
+                                         * Only enter bottom stabilization when we are actually at the
+                                         * bottom (or very close to it). If the touch stalls farther away,
+                                         * clear the stall counter and let the native swipe loop retry.
+                                         */
+                                        var nearBottom = distance <= 120;
+
+                                        if (!nearBottom) {
                                             bottomStarted = 0;
                                             unknownFinalStart = 0;
+
+                                            if (touchStalled) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: SCROLL_TOUCH_STALLED_RETRY y=' + Math.floor(metrics.y) +
+                                                    ' remaining=' + Math.floor(distance) +
+                                                    ' checks=' + stagnantChecks
+                                                );
+                                                stagnantChecks = 0;
+                                            }
+
                                             return;
                                         }
 
                                         if (touchStalled && !atAbsoluteBottom) {
                                             AndroidReaderBridge.onLogStep(
-                                                'READER: SCROLL_TOUCH_STALLED y=' + Math.floor(metrics.y) +
+                                                'READER: SCROLL_TOUCH_STALLED_NEAR_BOTTOM y=' + Math.floor(metrics.y) +
                                                 ' remaining=' + Math.floor(distance) +
                                                 ' checks=' + stagnantChecks
                                             );
@@ -3279,6 +3301,47 @@ class MangaBuffAutomation(
 
                                         var stable = Date.now() - bottomStarted;
                                         if (stable < $READER_END_STABLE_MS) return;
+
+                                        /*
+                                         * Re-read the viewport after stabilization. Never complete a
+                                         * chapter just because the scroll position stopped changing:
+                                         * the position must still be at/near the real document bottom.
+                                         */
+                                        var finalScrollTop = Math.max(
+                                            window.scrollY || 0,
+                                            window.pageYOffset || 0,
+                                            scrollingElement ? (scrollingElement.scrollTop || 0) : 0,
+                                            document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
+                                            document.body ? (document.body.scrollTop || 0) : 0
+                                        );
+                                        var finalHeight = Math.max(
+                                            scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
+                                            document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                                            document.body ? (document.body.scrollHeight || 0) : 0
+                                        );
+                                        var finalViewport = Math.max(
+                                            window.innerHeight || 0,
+                                            scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
+                                            document.documentElement ? (document.documentElement.clientHeight || 0) : 0,
+                                            document.body ? (document.body.clientHeight || 0) : 0,
+                                            1
+                                        );
+                                        var finalRemaining = Math.max(
+                                            0,
+                                            finalHeight - finalViewport - finalScrollTop
+                                        );
+
+                                        if (finalRemaining > 120) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: BOTTOM_STABILIZATION_ABORT remaining=' +
+                                                Math.floor(finalRemaining) +
+                                                ' reason=NOT_AT_BOTTOM'
+                                            );
+                                            bottomStarted = 0;
+                                            unknownFinalStart = 0;
+                                            stagnantChecks = 0;
+                                            return;
+                                        }
 
                                         if (isWaitingConfirmation || completionScheduled) return;
                                         isWaitingConfirmation = true;
