@@ -1615,9 +1615,28 @@ class MangaBuffAutomation(
                     updateReaderStatus(account)
 
                     log(account.username, "READER: CHAPTER_READ count=" + chaptersReadCount +
-                        "/" + target + " id=" + chId + " serverQuestConfirmed=true")
+                        "/" + target + " id=" + chId + " serverQuestGate=DEFERRED_CCL_ACCOUNTING")
 
                     chaptersSinceComment++
+
+                    // MangaBuff's reading quest uses batched/CCL accounting: the
+                    // visible "Главы X/75" value may advance only after several
+                    // chapters. Refresh it every 5 completed chapters for UI/
+                    // diagnostics, but NEVER make this refresh a reader gate.
+                    if (chaptersReadCount % 5 == 0) {
+                        log(account.username,
+                            "READER: PERIODIC_BALANCE_REFRESH chaptersRead=" + chaptersReadCount +
+                                " reason=5_CHAPTERS")
+                        try {
+                            fetchAndLogBalanceInfo(account, webView)
+                        } catch (e: Exception) {
+                            log(
+                                account.username,
+                                "READER: PERIODIC_BALANCE_REFRESH_FAILED ignored=true error=" + e.message,
+                                true
+                            )
+                        }
+                    }
 
                     log(account.username, "COMMENT: DECISION chaptersSinceComment=" +
                         chaptersSinceComment + " nextCommentAfter=" + nextCommentAfter)
@@ -3133,24 +3152,10 @@ class MangaBuffAutomation(
                                             );
                                         }
 
-                                        // Probe /balance without navigating away from the reader.
-                                        if (percent >= 55 && percent < 95) {
-                                            if (!window.__mbPendingQuestProbeDone) {
-                                                window.__mbPendingQuestProbeDone = {};
-                                            }
-
-                                            var probeKey = String(Math.floor(percent / 5) * 5);
-                                            if (!window.__mbPendingQuestProbeDone[probeKey]) {
-                                                window.__mbPendingQuestProbeDone[probeKey] = true;
-
-                                                AndroidReaderBridge.onLogStep(
-                                                    'READER: SERVER_QUEST_PROBE_START progress=' + percent + '%'
-                                                );
-
-                                                AndroidReaderBridge.requestServerReadQuest(percent);
-                                            }
-                                        }
-
+                                        // Do not poll /balance while scrolling.
+                                        // MangaBuff may batch the reading quest counter (CCL),
+                                        // so per-page probes only created false ERROR logs and
+                                        // were never a valid per-chapter completion signal.
                                         var maxScrollTop = Math.max(0, metrics.height - metrics.viewport);
                                         var distance = Math.max(0, maxScrollTop - metrics.y);
                                         var atAbsoluteBottom = distance <= 8;
