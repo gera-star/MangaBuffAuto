@@ -3344,9 +3344,10 @@ class MangaBuffAutomation(
                                             document.body ? (document.body.scrollTop || 0) : 0
                                         );
                                         var rawViewport = Math.max(
+                                            window.visualViewport && window.visualViewport.height
+                                                ? window.visualViewport.height
+                                                : 0,
                                             window.innerHeight || 0,
-                                            scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                            document.documentElement ? (document.documentElement.clientHeight || 0) : 0,
                                             1
                                         );
                                         var rawHeight = Math.max(
@@ -3464,10 +3465,10 @@ class MangaBuffAutomation(
                                             document.body ? (document.body.scrollHeight || 0) : 0
                                         );
                                         var finalViewport = Math.max(
+                                            window.visualViewport && window.visualViewport.height
+                                                ? window.visualViewport.height
+                                                : 0,
                                             window.innerHeight || 0,
-                                            scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                            document.documentElement ? (document.documentElement.clientHeight || 0) : 0,
-                                            document.body ? (document.body.clientHeight || 0) : 0,
                                             1
                                         );
                                         var finalRemaining = Math.max(
@@ -3688,6 +3689,17 @@ class MangaBuffAutomation(
                                                     'READER: NATIVE_FINGER_TARGET_BOTTOM remaining=' +
                                                     Math.floor(m.remaining)
                                                 );
+
+                                                /*
+                                                 * IMPORTANT:
+                                                 * The reader uses lazy-loaded images. Reaching the current
+                                                 * bottom is not necessarily the final document bottom:
+                                                 * after the last swipe, new images can increase scrollHeight.
+                                                 * Never leave the native swipe scheduler stopped here.
+                                                 * Re-measure after a short settle delay; if the document grew,
+                                                 * the next swipe will continue from the new bottom.
+                                                 */
+                                                scheduleNext(700);
                                                 return;
                                             }
 
