@@ -156,9 +156,11 @@ class MangaBuffAutomation(
         val startY = y1 * density
         val endX = x2 * density
         val endY = y2 * density
-        val safeDuration = durationMs.coerceIn(650L, 1400L)
+        // Keep the gesture fast enough to resemble a real phone swipe.
+        // The previous 650-1400 ms clamp made a long chapter take several minutes.
+        val safeDuration = durationMs.coerceIn(300L, 560L)
         val downTime = SystemClock.uptimeMillis()
-        val steps = 18
+        val steps = 14
         val stepDelay = (safeDuration / steps).coerceAtLeast(1L)
 
         MotionEvent.obtain(
@@ -3457,8 +3459,11 @@ class MangaBuffAutomation(
                                             var x1 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x));
                                             var x2 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x + xJitter));
 
-                                            var duration = 720 + Math.floor(Math.random() * 300);
-                                            var pause = 140 + Math.floor(Math.random() * 320);
+                                            // Fast but natural phone-like swipe:
+                                            // ~0.5-0.7 screen of travel, ~0.3-0.55 s gesture,
+                                            // then a short pause before the next finger movement.
+                                            var duration = 320 + Math.floor(Math.random() * 220);
+                                            var pause = 80 + Math.floor(Math.random() * 120);
 
                                             AndroidReaderBridge.onLogStep(
                                                 'READER: NATIVE_FINGER_SWIPE distance=' + Math.floor(distance) +
