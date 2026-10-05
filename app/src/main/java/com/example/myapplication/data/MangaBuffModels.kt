@@ -1,6 +1,23 @@
 package com.example.myapplication.data
 
 import java.util.UUID
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class DailyStats(
+    val day: String = "",
+    val battles: Int = 0,
+    val quiz: Int = 0,
+    val ads: Int = 0,
+    val mineOre: Int = 0,
+    val mineExchangeOre: Int = 0,
+    val mineDiamonds: Int = 0,
+    val readerChapters: Int = 0,
+    val comments: Int = 0
+)
+
+fun currentStatsDay(): String = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
 
 data class MangaBuffAccount(
     val id: String = UUID.randomUUID().toString(),
@@ -24,7 +41,16 @@ data class MangaBuffAccount(
     val diamonds: String = "0",
     val cardDrop: String = "0/10",
     val chapterProgress: String = "0/75",
-    val commentProgress: String = "0/13"
+    val commentProgress: String = "0/13",
+    val dailyStatsDay: String = "",
+    val dailyBattles: Int = 0,
+    val dailyQuiz: Int = 0,
+    val dailyAds: Int = 0,
+    val dailyMineOre: Int = 0,
+    val dailyMineExchangeOre: Int = 0,
+    val dailyMineDiamonds: Int = 0,
+    val dailyReaderChapters: Int = 0,
+    val dailyComments: Int = 0
 ) {
     fun getSafeCookiesJson(): String = cookiesJson ?: ""
     fun getSafeCsrfToken(): String = csrfToken ?: ""
