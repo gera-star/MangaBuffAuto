@@ -573,22 +573,22 @@ fun AccountCard(
                         fontWeight = FontWeight.Bold
                     )
 
-                    TaskSwitchRow("🃏 Карточные бои", account.battleEnabled) { b ->
+                    TaskSwitchRow("🃏 Карточные бои", "${account.dailyBattles} побед", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
                     }
-                    TaskSwitchRow("Квиз / Викторина", account.quizEnabled) { q ->
+                    TaskSwitchRow("Квиз / Викторина", "${account.dailyQuiz} ответов", account.quizEnabled) { q ->
                         onUpdateTasks(account.readerEnabled, q, account.advEnabled, account.mineEnabled, account.commentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("Просмотр рекламы", account.advEnabled) { a ->
+                    TaskSwitchRow("Просмотр рекламы", "${account.dailyAds} получено", account.advEnabled) { a ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, a, account.mineEnabled, account.commentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("Шахта (Авто-тапы)", account.mineEnabled) { m ->
+                    TaskSwitchRow("Шахта (Авто-тапы)", "${account.dailyMineOre} 🪨 → 💎${account.dailyMineDiamonds}", account.mineEnabled) { m ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, m, account.commentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("Ежедневное чтение", account.readerEnabled) { r ->
+                    TaskSwitchRow("Ежедневное чтение", "${account.dailyReaderChapters} глав", account.readerEnabled) { r ->
                         onUpdateTasks(r, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("Комментарии", account.commentEnabled) { c ->
+                    TaskSwitchRow("Комментарии", "${account.dailyComments} отправлено", account.commentEnabled) { c ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, c, account.battleEnabled)
                     }
                 }
@@ -598,13 +598,25 @@ fun AccountCard(
 }
 
 @Composable
-fun TaskSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+fun TaskSwitchRow(
+    label: String,
+    dailyStat: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(horizontal = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, modifier = Modifier.weight(1f))
+        Text(
+            dailyStat,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+            maxLines = 1
+        )
+        Spacer(Modifier.width(8.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange, modifier = Modifier.height(32.dp))
     }
 }
