@@ -1997,7 +1997,12 @@ class MangaBuffAutomation(
 
                                 function currentOre() {
                                     var mine = document.querySelector('.main-mine');
-                                    return mine ? (parseInt(mine.getAttribute('data-ore') || '0', 10) || 0) : 0;
+                                    if (mine) {
+                                        var value = parseInt(mine.getAttribute('data-ore') || '', 10);
+                                        if (isFinite(value)) return value;
+                                    }
+                                    var shopOre = document.querySelector('#modal-mine-shop .mine-shop__ore-count');
+                                    return numText(shopOre);
                                 }
 
                                 function waitForShop(done) {
