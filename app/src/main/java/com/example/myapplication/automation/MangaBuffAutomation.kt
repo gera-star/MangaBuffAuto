@@ -1617,6 +1617,11 @@ class MangaBuffAutomation(
                                 window.__mbAdsRunnerActive = true;
                                 window.__mbAdsRunnerStartedAt = Date.now();
 
+                                // This flag belongs to the current ad session only.
+                                // A stale value from a previous injected runner must never
+                                // suppress the native close request for the next ad.
+                                window.__mbAdsNativeCloseRequested = false;
+
                                 var finished = false;
                                 var buttonPollStarted = Date.now();
                                 var watchTimer = null;
@@ -1831,11 +1836,59 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * Yandex may render the X in a cross-origin iframe or
-                                 * closed shadow root. Page JS cannot inspect that DOM.
-                                 * The supplied X is a 40x40 fullscreen control at the
-                                 * top-right, so use Android's real WebView tap there.
+                                 * Yandex may render the X in an iframe or an open shadow root.
+                                 * IMPORTANT: getBoundingClientRect() is relative to the viewport
+                                 * of the document that owns the element. If the close control is
+                                 * inside an iframe, those coordinates must be translated through
+                                 * every frameElement before they are sent to the Android WebView.
+                                 *
+                                 * The supplied markup is a 40x40 control:
+                                 *   [data-fullscreen-element="close"]
+                                 *     [data-survey-fullscreen-control]
+                                 *       <svg width="40" height="40">...</svg>
+                                 *
+                                 * We therefore prefer the real element center, translated to the
+                                 * top-level WebView viewport, and only use the known top-right
+                                 * fallback when the element is inaccessible.
                                  */
+                                function getTopViewportRect(el) {
+                                    if (!el || !el.getBoundingClientRect) return null;
+
+                                    var rect = el.getBoundingClientRect();
+                                    var left = rect.left;
+                                    var top = rect.top;
+                                    var width = rect.width;
+                                    var height = rect.height;
+                                    var win = el.ownerDocument ? el.ownerDocument.defaultView : window;
+                                    var guard = 0;
+
+                                    while (win && win !== window && guard < 8) {
+                                        var frame = null;
+                                        try {
+                                            frame = win.frameElement;
+                                        } catch (e) {
+                                            break;
+                                        }
+
+                                        if (!frame || !frame.getBoundingClientRect) break;
+
+                                        var frameRect = frame.getBoundingClientRect();
+                                        left += frameRect.left;
+                                        top += frameRect.top;
+                                        win = frame.ownerDocument
+                                            ? frame.ownerDocument.defaultView
+                                            : window;
+                                        guard++;
+                                    }
+
+                                    return {
+                                        left: left,
+                                        top: top,
+                                        width: width,
+                                        height: height
+                                    };
+                                }
+
                                 function requestNativeCloseTap(closeElement) {
                                     var width = window.innerWidth || document.documentElement.clientWidth || 0;
                                     var height = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -1850,8 +1903,8 @@ class MangaBuffAutomation(
 
                                     try {
                                         if (closeElement && closeElement.getBoundingClientRect) {
-                                            var closeRect = closeElement.getBoundingClientRect();
-                                            if (closeRect.width > 0 && closeRect.height > 0) {
+                                            var closeRect = getTopViewportRect(closeElement);
+                                            if (closeRect && closeRect.width > 0 && closeRect.height > 0) {
                                                 tapX = closeRect.left + closeRect.width / 2;
                                                 tapY = closeRect.top + closeRect.height / 2;
                                                 AndroidAds.onStateLog(
@@ -1861,7 +1914,12 @@ class MangaBuffAutomation(
                                                 );
                                             }
                                         }
-                                    } catch (e) {}
+                                    } catch (e) {
+                                        AndroidAds.onStateLog(
+                                            "NATIVE_CLOSE_RECT_ERROR",
+                                            "error=" + (e && e.message ? e.message : String(e))
+                                        );
+                                    }
 
                                     var fullscreenVisible = false;
 
