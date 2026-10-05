@@ -172,10 +172,10 @@ class MangaBuffAutomation(
          * attached WebView bounds so density differences cannot move the tap
          * outside the actual WebView.
          */
-        val px = (x.coerceAtLeast(0f) * density)
-            .coerceIn(1f, (webView.width - 2).toFloat().coerceAtLeast(1f))
-        val py = (y.coerceAtLeast(0f) * density)
-            .coerceIn(1f, (webView.height - 2).toFloat().coerceAtLeast(1f))
+        val maxX = (webView.width - 2).coerceAtLeast(1).toFloat()
+        val maxY = (webView.height - 2).coerceAtLeast(1).toFloat()
+        val px = (x * density).coerceIn(1f, maxX)
+        val py = (y * density).coerceIn(1f, maxY)
         log(
             accountUsername,
             "ADS: NATIVE_CLOSE_TAP_DISPATCH px=" + px + " py=" + py +
