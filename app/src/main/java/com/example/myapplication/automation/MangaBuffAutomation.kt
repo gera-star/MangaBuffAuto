@@ -3612,29 +3612,37 @@ class MangaBuffAutomation(
                                         );
 
                                         function metrics() {
-                                            var scrollingElement =
-                                                document.scrollingElement ||
-                                                document.documentElement ||
-                                                document.body;
+                                            /*
+                                             * IMPORTANT:
+                                             * Do not use scrollingElement.clientHeight as the viewport.
+                                             * MangaBuff's reader CSS can make the document/HTML clientHeight
+                                             * grow together with the lazy-loaded image stack. During chapter
+                                             * 67 it became 37,000+ px, which made:
+                                             *
+                                             *   height == viewport
+                                             *   remaining == 0
+                                             *
+                                             * even though the real WebView viewport was only ~850 px.
+                                             *
+                                             * window.innerHeight is the actual visible CSS viewport of the
+                                             * WebView. Keep document scrollHeight as the content height.
+                                             */
+                                            var viewport = Math.max(
+                                                window.visualViewport && window.visualViewport.height
+                                                    ? window.visualViewport.height
+                                                    : 0,
+                                                window.innerHeight || 0,
+                                                1
+                                            );
 
                                             var y = Math.max(
                                                 window.scrollY || 0,
                                                 window.pageYOffset || 0,
-                                                scrollingElement ? (scrollingElement.scrollTop || 0) : 0,
                                                 document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
                                                 document.body ? (document.body.scrollTop || 0) : 0
                                             );
 
-                                            var viewport = Math.max(
-                                                window.innerHeight || 0,
-                                                scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                                document.documentElement ? (document.documentElement.clientHeight || 0) : 0,
-                                                document.body ? (document.body.clientHeight || 0) : 0,
-                                                1
-                                            );
-
                                             var height = Math.max(
-                                                scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
                                                 document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
                                                 document.body ? (document.body.scrollHeight || 0) : 0
                                             );
