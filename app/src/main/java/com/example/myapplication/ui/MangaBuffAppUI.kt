@@ -415,7 +415,7 @@ fun AccountCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "${account.username.ifEmpty { "U" }.take(1).uppercase()}",
+                        text = "${account.username.trim().take(2).uppercase(Locale.getDefault()).ifEmpty { "??" }}",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = if (account.isRunning) {
@@ -433,19 +433,6 @@ fun AccountCard(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "${account.username.ifEmpty { "Пользователь" }}",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable { onOpenBalance() }
-                        )
-
-                        Spacer(modifier = Modifier.width(6.dp))
-
                         Text(
                             text = "${account.getSafeStatusMessage()}",
                             fontSize = 11.sp,
