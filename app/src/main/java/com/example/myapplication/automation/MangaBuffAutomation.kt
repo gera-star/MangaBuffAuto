@@ -1996,13 +1996,14 @@ class MangaBuffAutomation(
                                 }
 
                                 function currentOre() {
+                                    var shopOre = document.querySelector('#modal-mine-shop .mine-shop__ore-count');
+                                    if (shopOre) return numText(shopOre);
                                     var mine = document.querySelector('.main-mine');
                                     if (mine) {
                                         var value = parseInt(mine.getAttribute('data-ore') || '', 10);
                                         if (isFinite(value)) return value;
                                     }
-                                    var shopOre = document.querySelector('#modal-mine-shop .mine-shop__ore-count');
-                                    return numText(shopOre);
+                                    return 0;
                                 }
 
                                 function waitForShop(done) {
