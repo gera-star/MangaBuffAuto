@@ -1955,16 +1955,16 @@ class MangaBuffAutomation(
                                             timer.getAttribute("aria-label") ||
                                             timer.getAttribute("title") ||
                                             ""
-                                        ).replace(/\\s+/g, " ").trim();
+                                        ).replace(/\s+/g, " ").trim();
 
                                         var seconds = null;
 
                                         // Handle MM:SS / HH:MM:SS first.
-                                        var clock = text.match(/(?:^|\\s)(\\d{1,2}):(\\d{2})(?:\\s|$)/);
+                                        var clock = text.match(/(?:^|\s)(\d{1,2}):(\d{2})(?:\s|$)/);
                                         if (clock) {
                                             seconds = parseInt(clock[2], 10);
                                         } else {
-                                            var match = text.match(/(\\d{1,2})/);
+                                            var match = text.match(/(\d{1,2})/);
                                             if (match) seconds = parseInt(match[1], 10);
                                         }
 
