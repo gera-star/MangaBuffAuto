@@ -134,7 +134,8 @@ fun MangaBuffAppUI(
                 2 -> LogsTab(
                     logs = logs,
                     onClearLogs = { viewModel.clearLogs() },
-                    onSkipManga = { viewModel.skipCurrentManga() }
+                    onSkipManga = { viewModel.skipCurrentManga() },
+                    onMarkMangaRead = { viewModel.markCurrentMangaAsRead() }
                 )
             }
         }
@@ -747,7 +748,12 @@ fun TasksTab(
 }
 
 @Composable
-fun LogsTab(logs: List<LogEntry>, onClearLogs: () -> Unit, onSkipManga: () -> Unit = {}) {
+fun LogsTab(
+    logs: List<LogEntry>,
+    onClearLogs: () -> Unit,
+    onSkipManga: () -> Unit = {},
+    onMarkMangaRead: () -> Unit = {}
+) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -779,12 +785,20 @@ fun LogsTab(logs: List<LogEntry>, onClearLogs: () -> Unit, onSkipManga: () -> Un
             Text("Логи (${logs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
+                    onClick = onMarkMangaRead,
+                    enabled = logs.any { it.message.contains("CURRENT_MANGA") || it.message.contains("READER:") }
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Прочитано → дальше")
+                }
+                OutlinedButton(
                     onClick = onSkipManga,
                     enabled = logs.any { it.message.contains("CURRENT_MANGA") || it.message.contains("READER:") }
                 ) {
                     Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Скипнуть мангу")
+                    Text("Скипнуть")
                 }
                 OutlinedButton(
                     onClick = onClearLogs,
