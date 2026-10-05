@@ -9,6 +9,7 @@ import androidx.webkit.WebViewFeature
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +25,8 @@ class AutomationRuntime(
     private val onAccountStatusUpdate: (accountId: String, statusMessage: String, isRunning: Boolean, currentTask: String, progress: Float) -> Unit,
     private val onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
+    onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
+    private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     private val onWebViewAssigned: (WebView) -> Unit = {},
     private val onWebViewCleared: (WebView) -> Unit = {}
 ) {
@@ -35,7 +38,7 @@ class AutomationRuntime(
     @Synchronized
     private fun getOrCreateEngine(accountId: String): MangaBuffAutomation {
         return automationEngines.getOrPut(accountId) {
-            val engine = MangaBuffAutomation(context, onLog, onAccountStatusUpdate, onMangaActiveUrlUpdate, onAccountStatsUpdate)
+            val engine = MangaBuffAutomation(context, onLog, onAccountStatusUpdate, onMangaActiveUrlUpdate, onAccountStatsUpdate, onDailyStatsUpdate)
             onLog(LogEntry(username = accountId, component = "ENGINE", message = "CREATE engineId=${engine.hashCode()}"))
             engine
         }.also {
