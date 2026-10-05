@@ -1959,8 +1959,13 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun onMineMined(oreMined: Int) {
+                    if (oreMined > 0) addDaily(account) { it.copy(mineOre = it.mineOre + oreMined) }
+                }
+
+                @JavascriptInterface
                 fun onMineExchange(oreMined: Int, oreExchanged: Int, diamondsReceived: Int, oreRemaining: Int) {
-                    addDaily(account) { it.copy(mineOre = it.mineOre + oreMined, mineExchangeOre = it.mineExchangeOre + oreExchanged, mineDiamonds = it.mineDiamonds + diamondsReceived) }
+                    addDaily(account) { it.copy(mineExchangeOre = it.mineExchangeOre + oreExchanged, mineDiamonds = it.mineDiamonds + diamondsReceived) }
                     log(account.username, "MINE: EXCHANGE_SUCCESS mined=$oreMined exchanged=$oreExchanged diamonds=+$diamondsReceived remainingOre=$oreRemaining")
                     updateStatus(account, "⛏️ Шахта • 🪨 $oreMined → 💎+$diamondsReceived", true, "Шахта", 1f)
                 }
@@ -2041,6 +2046,7 @@ class MangaBuffAutomation(
                                     }
 
                                     var minedOre = Math.max(0, currentOre() - initialOre);
+                                    AndroidMine.onMineMined(minedOre);
                                     var header = document.querySelector('.main-mine__header_score');
                                     if (!header) {
                                         AndroidMine.onMineLog('CRYSTAL_HEADER_NOT_FOUND');
