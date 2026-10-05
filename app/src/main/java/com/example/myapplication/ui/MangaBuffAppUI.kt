@@ -624,158 +624,304 @@ fun TasksTab(
     var readerChapters by remember { mutableStateOf(settings.readerChapters.toString()) }
     var battleTarget by remember { mutableStateOf(settings.battleTargetCount.toString()) }
 
+    val compactButtonPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(bottom = 12.dp)
     ) {
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Запуск задач на ВСЕХ аккаунтах (${accounts.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(12.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Задачи",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Все аккаунты • \${accounts.size}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+
+                        AssistChip(
+                            onClick = {},
+                            enabled = false,
+                            label = {
+                                Text(
+                                    if (isRunning) "Выполняются" else "Готово",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    if (isRunning) Icons.Default.PlayArrow else Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     if (isRunning) {
                         Button(
                             onClick = onStopAll,
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ),
+                            contentPadding = compactButtonPadding,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.Stop, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("ОСТАНОВИТЬ ВСЕ ЗАДАЧИ", fontWeight = FontWeight.Bold)
+                            Icon(
+                                Icons.Default.Stop,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Остановить всё", fontWeight = FontWeight.Bold)
                         }
                     } else {
                         Button(
                             onClick = { onRunAll(TaskType.ALL) },
                             enabled = accounts.isNotEmpty(),
+                            contentPadding = compactButtonPadding,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.PlayCircle, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("ЗАПУСТИТЬ ВСЕ ЗАДАЧИ")
+                            Icon(
+                                Icons.Default.PlayCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Запустить всё", fontWeight = FontWeight.Bold)
                         }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilledTonalButton(
                             onClick = { onRunAll(TaskType.BATTLE) },
                             enabled = !isRunning && accounts.isNotEmpty(),
+                            contentPadding = compactButtonPadding,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Бои")
+                            Text("⚔️ Бои")
                         }
-                        OutlinedButton(
+
+                        FilledTonalButton(
                             onClick = { onRunAll(TaskType.QUIZ) },
                             enabled = !isRunning && accounts.isNotEmpty(),
+                            contentPadding = compactButtonPadding,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Квиз")
+                            Text("🧠 Квиз")
                         }
-                    }
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
+                        FilledTonalButton(
                             onClick = { onRunAll(TaskType.ADS) },
                             enabled = !isRunning && accounts.isNotEmpty(),
+                            contentPadding = compactButtonPadding,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Реклама")
+                            Text("📺 Реклама")
                         }
-                        OutlinedButton(
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilledTonalButton(
                             onClick = { onRunAll(TaskType.MINE) },
                             enabled = !isRunning && accounts.isNotEmpty(),
+                            contentPadding = compactButtonPadding,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Шахта")
+                            Text("⛏️ Шахта")
                         }
+
+                        FilledTonalButton(
+                            onClick = { onRunAll(TaskType.READER) },
+                            enabled = !isRunning && accounts.isNotEmpty(),
+                            contentPadding = compactButtonPadding,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("📖 Чтение")
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = { onRunAll(TaskType.READER) },
-                        enabled = !isRunning && accounts.isNotEmpty(),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Чтение")
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
+                    TextButton(
                         onClick = onOpenPromoDialog,
                         enabled = !isRunning && accounts.isNotEmpty(),
-                        modifier = Modifier.fillMaxWidth()
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                     ) {
-                        Icon(Icons.Default.ConfirmationNumber, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Активировать Промокод")
+                        Icon(
+                            Icons.Default.ConfirmationNumber,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Активировать промокод")
                     }
                 }
             }
         }
 
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Параметры выполнения", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Примечание: Количество ударов в Шахте считывается автоматически с сайта (.main-mine__game-hits-left)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.height(12.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Параметры",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Сохраняются для следующих запусков",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
 
-                    OutlinedTextField(
-                        value = battleTarget,
-                        onValueChange = { battleTarget = it },
-                        label = { Text("Бои: Цель завершенных боев") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                        Text(
+                            "⛏️ авто-хиты",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    OutlinedTextField(
-                        value = quizMax,
-                        onValueChange = { quizMax = it },
-                        label = { Text("Квиз: Макс вопросов") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CompactNumberField(
+                            value = battleTarget,
+                            onValueChange = { battleTarget = it },
+                            label = "⚔️ Бои",
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactNumberField(
+                            value = quizMax,
+                            onValueChange = { quizMax = it },
+                            label = "🧠 Квиз",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    OutlinedTextField(
-                        value = adsCount,
-                        onValueChange = { adsCount = it },
-                        label = { Text("Реклама: Количество просмотров") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CompactNumberField(
+                            value = adsCount,
+                            onValueChange = { adsCount = it },
+                            label = "📺 Реклама",
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactNumberField(
+                            value = readerChapters,
+                            onValueChange = { readerChapters = it },
+                            label = "📖 Главы",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
 
-                    OutlinedTextField(
-                        value = readerChapters,
-                        onValueChange = { readerChapters = it },
-                        label = { Text("Чтение: Количество глав") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
                         onClick = {
                             onSaveSettings(
                                 settings.copy(
-                                    battleTargetCount = battleTarget.toIntOrNull() ?: settings.battleTargetCount,
-                                    quizMaxClicks = quizMax.toIntOrNull() ?: settings.quizMaxClicks,
-                                    adsCount = adsCount.toIntOrNull() ?: settings.adsCount,
-                                    readerChapters = readerChapters.toIntOrNull() ?: settings.readerChapters
+                                    battleTargetCount = battleTarget.toIntOrNull()
+                                        ?: settings.battleTargetCount,
+                                    quizMaxClicks = quizMax.toIntOrNull()
+                                        ?: settings.quizMaxClicks,
+                                    adsCount = adsCount.toIntOrNull()
+                                        ?: settings.adsCount,
+                                    readerChapters = readerChapters.toIntOrNull()
+                                        ?: settings.readerChapters
                                 )
                             )
                         },
+                        contentPadding = compactButtonPadding,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Сохранить настройки")
+                        Icon(
+                            Icons.Default.Save,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Сохранить")
                     }
+
+                    Spacer(modifier = Modifier.height(5.dp))
+
+                    Text(
+                        "Количество ударов в шахте определяется автоматически по данным MangaBuff.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        maxLines = 2
+                    )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun CompactNumberField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { valueText ->
+            if (valueText.length <= 5 && valueText.all { it.isDigit() }) {
+                onValueChange(valueText)
+            }
+        },
+        label = { Text(label, maxLines = 1) },
+        singleLine = true,
+        modifier = modifier,
+        textStyle = MaterialTheme.typography.bodyMedium,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+    )
 }
 
 @Composable
