@@ -609,6 +609,7 @@ fun TaskSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) ->
     }
 }
 
+
 @Composable
 fun TasksTab(
     accounts: List<MangaBuffAccount>,
@@ -624,39 +625,56 @@ fun TasksTab(
     var readerChapters by remember { mutableStateOf(settings.readerChapters.toString()) }
     var battleTarget by remember { mutableStateOf(settings.battleTargetCount.toString()) }
 
-    val compactButtonPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
     val actionEnabled = !isRunning && accounts.isNotEmpty()
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(bottom = 10.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+        contentPadding = PaddingValues(bottom = 8.dp)
     ) {
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Column(modifier = Modifier.padding(9.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(9.dp),
+                            color = if (isRunning) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        ) {
                             Icon(
                                 if (isRunning) Icons.Default.PlayArrow else Icons.Default.AutoAwesome,
                                 contentDescription = null,
-                                modifier = Modifier.padding(7.dp).size(18.dp),
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                modifier = Modifier.padding(6.dp).size(17.dp),
+                                tint = if (isRunning) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Spacer(Modifier.width(9.dp))
+
+                        Spacer(Modifier.width(8.dp))
+
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Задачи", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                             Text(
-                                "${accounts.size} аккаунтов • ${if (isRunning) "выполняются" else "готово"}",
+                                "Задачи",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                accounts.size.toString() + " аккаунтов • " +
+                                    if (isRunning) "выполняются" else "готово",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.outline
                             )
                         }
+
                         if (isRunning) {
                             FilledTonalButton(
                                 onClick = onStopAll,
@@ -664,55 +682,52 @@ fun TasksTab(
                                     containerColor = MaterialTheme.colorScheme.errorContainer,
                                     contentColor = MaterialTheme.colorScheme.onErrorContainer
                                 ),
-                                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 5.dp),
-                                modifier = Modifier.height(36.dp)
+                                contentPadding = PaddingValues(horizontal = 9.dp),
+                                modifier = Modifier.height(34.dp),
+                                shape = RoundedCornerShape(10.dp)
                             ) {
-                                Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
+                                Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(3.dp))
                                 Text("Стоп", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(7.dp))
 
                     if (!isRunning) {
                         Button(
                             onClick = { onRunAll(TaskType.ALL) },
                             enabled = accounts.isNotEmpty(),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                            modifier = Modifier.fillMaxWidth().height(40.dp),
-                            shape = RoundedCornerShape(12.dp)
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier.fillMaxWidth().height(38.dp),
+                            shape = RoundedCornerShape(11.dp)
                         ) {
-                            Icon(Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Запустить все задачи", fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Запустить все", fontWeight = FontWeight.Bold)
                         }
+                        Spacer(Modifier.height(6.dp))
                     }
 
-                    Spacer(Modifier.height(7.dp))
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         TaskActionButton("⚔️ Бои", { onRunAll(TaskType.BATTLE) }, actionEnabled, Modifier.weight(1f))
                         TaskActionButton("🧠 Квиз", { onRunAll(TaskType.QUIZ) }, actionEnabled, Modifier.weight(1f))
                         TaskActionButton("📺 Реклама", { onRunAll(TaskType.ADS) }, actionEnabled, Modifier.weight(1f))
                     }
 
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(5.dp))
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         TaskActionButton("⛏️ Шахта", { onRunAll(TaskType.MINE) }, actionEnabled, Modifier.weight(1f))
                         TaskActionButton("📖 Чтение", { onRunAll(TaskType.READER) }, actionEnabled, Modifier.weight(1f))
-                        TextButton(
-                            onClick = onOpenPromoDialog,
-                            enabled = actionEnabled,
-                            contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.ConfirmationNumber, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(3.dp))
-                            Text("Промокод", maxLines = 1)
-                        }
+                        TaskActionButton("🎟️ Промокод", onOpenPromoDialog, actionEnabled, Modifier.weight(1f))
                     }
                 }
             }
@@ -721,29 +736,80 @@ fun TasksTab(
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.padding(9.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Параметры", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                            Text("Настройки запуска", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                            Text(
+                                "Параметры",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Количество запусков",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
                         }
-                        Text("Авто", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                "АВТО",
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(7.dp))
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        CompactNumberField(battleTarget, { battleTarget = it }, "⚔️ Бои", Modifier.weight(1f))
-                        CompactNumberField(quizMax, { quizMax = it }, "🧠 Квиз", Modifier.weight(1f))
-                        CompactNumberField(adsCount, { adsCount = it }, "📺 Реклама", Modifier.weight(1f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactNumberField(
+                            battleTarget,
+                            { battleTarget = it },
+                            "⚔️ Бои",
+                            Modifier.weight(1f)
+                        )
+                        CompactNumberField(
+                            quizMax,
+                            { quizMax = it },
+                            "🧠 Квиз",
+                            Modifier.weight(1f)
+                        )
                     }
 
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(5.dp))
 
-                    CompactNumberField(readerChapters, { readerChapters = it }, "📖 Главы", Modifier.fillMaxWidth())
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactNumberField(
+                            adsCount,
+                            { adsCount = it },
+                            "📺 Реклама",
+                            Modifier.weight(1f)
+                        )
+                        CompactNumberField(
+                            readerChapters,
+                            { readerChapters = it },
+                            "📖 Главы",
+                            Modifier.weight(1f)
+                        )
+                    }
 
                     Spacer(Modifier.height(7.dp))
 
@@ -758,22 +824,22 @@ fun TasksTab(
                                 )
                             )
                         },
-                        contentPadding = compactButtonPadding,
-                        modifier = Modifier.fillMaxWidth().height(38.dp),
-                        shape = RoundedCornerShape(11.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
-                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text("Сохранить настройки")
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Сохранить")
                     }
 
                     Spacer(Modifier.height(3.dp))
 
                     Text(
-                        "Удары шахты определяются автоматически по данным MangaBuff.",
+                        "Шахта определяет количество ударов автоматически.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline,
-                        maxLines = 2
+                        maxLines = 1
                     )
                 }
             }
