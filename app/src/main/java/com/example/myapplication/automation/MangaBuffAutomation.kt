@@ -2202,7 +2202,6 @@ class MangaBuffAutomation(
                     }
                 }
             }
-            }
 
             try { webView.removeJavascriptInterface("AndroidReaderBridge") } catch (_: Exception) {}
             webView.addJavascriptInterface(ReaderBridge(), "AndroidReaderBridge")
