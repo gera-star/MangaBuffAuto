@@ -3477,8 +3477,7 @@ class MangaBuffAutomation(
                                             } catch(e) {
                                                 AndroidReaderBridge.onLogStep(
                                                     'READER: NATIVE_FINGER_SWIPE_ERROR ' +
-                                                    (e && e.message ? e.message : String(e)),
-                                                    true
+                                                    (e && e.message ? e.message : String(e))
                                                 );
                                                 /*
                                                  * Safety fallback: if the View-layer touch path is
