@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -51,25 +52,26 @@ class MainActivity : ComponentActivity() {
                     val activeWebView by viewModel.activeWebView.collectAsState()
 
                     Box(modifier = Modifier.fillMaxSize()) {
+                        // The automation WebView must have a real viewport even while running
+                        // in the background. A 1dp WebView makes window.innerHeight collapse to
+                        // ~1px and breaks reader end-of-page detection and touch swipe geometry.
+                        // Keep it attached, full-size and invisible behind the actual Compose UI.
+                        activeWebView?.let { webView ->
+                            key(webView) {
+                                AndroidView(
+                                    factory = { webView },
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .alpha(0f)
+                                )
+                            }
+                        }
+
                         // Главный UI приложения
                         MangaBuffAppUI(
                             viewModel = viewModel,
                             webViewContainer = activeWebView
                         )
-
-                        // Гарантированное постоянное прикрепление активного WebView к оконному иерархическому дереву
-                        // независимо от того, какая вкладка открыта в данный момент.
-                        activeWebView?.let { webView ->
-                            // IMPORTANT: AndroidView(factory=...) is not recreated just because
-                            // the StateFlow value changes. key() forces the old WebView to be
-                            // detached and the selected account's WebView to be attached.
-                            key(webView) {
-                                AndroidView(
-                                    factory = { webView },
-                                    modifier = Modifier.size(1.dp)
-                                )
-                            }
-                        }
                     }
                 }
             }
