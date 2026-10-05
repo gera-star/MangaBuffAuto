@@ -131,7 +131,11 @@ fun MangaBuffAppUI(
                     onSaveSettings = { newSettings -> viewModel.saveSettings(newSettings) },
                     onOpenPromoDialog = { viewModel.setShowPromoDialog(true) }
                 )
-                2 -> LogsTab(logs = logs, onClearLogs = { viewModel.clearLogs() })
+                2 -> LogsTab(
+                    logs = logs,
+                    onClearLogs = { viewModel.clearLogs() },
+                    onSkipManga = { viewModel.skipCurrentManga() }
+                )
             }
         }
     }
