@@ -1390,7 +1390,7 @@ class MangaBuffAutomation(
                 }
             }
 
-            try { webView.removeJavascriptInterface("AndroidAds") } catch (_: Exception) {}
+            // Keep the bridge registered across the balance navigation.
             webView.addJavascriptInterface(AdsBridge(), "AndroidAds")
 
             val script = """
@@ -1914,33 +1914,45 @@ class MangaBuffAutomation(
                         })();
                     """.trimIndent()
 
+            var pageFinishedSeen = false
+            var recoveryReloadUsed = false
+
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/balance") != true) return
+                    pageFinishedSeen = true
                     log(account.username, "ADS: BALANCE_READY url=$url")
-                    view?.evaluateJavascript(script) { value ->
-                        log(account.username, "ADS: RUNNER_INJECTED result=$value")
+
+                    view?.evaluateJavascript("typeof AndroidAds") { bridgeType ->
+                        log(account.username, "ADS: BRIDGE_CHECK type=$bridgeType")
+                        if (bridgeType == "\"object\"" || bridgeType == "\"function\"") {
+                            view.evaluateJavascript(script) { value ->
+                                log(account.username, "ADS: RUNNER_INJECTED result=$value")
+                            }
+                        } else if (!recoveryReloadUsed) {
+                            recoveryReloadUsed = true
+                            log(account.username, "ADS: BRIDGE_MISSING -> RELOAD", true)
+                            view.reload()
+                        } else {
+                            log(account.username, "ADS: BRIDGE_MISSING_AFTER_RELOAD", true)
+                            safeResume(false)
+                        }
                     }
                 }
             }
 
-            // Android WebView exposes a newly added JavascriptInterface to the
-            // document after a navigation/reload. The previous implementation
-            // injected into an already loaded /balance document, where
-            // typeof AndroidAds was "undefined". Always navigate/reload after
-            // installing the bridge.
             val balanceAlreadyOpen = webView.url?.contains("/balance") == true
             log(account.username, "ADS: NAVIGATE_BALANCE alreadyOpen=$balanceAlreadyOpen bridgeInstalled=true")
-            if (balanceAlreadyOpen) {
-                webView.reload()
-            } else {
-                webView.loadUrl("https://mangabuff.ru/balance")
-            }
+            if (balanceAlreadyOpen) webView.reload()
+            else webView.loadUrl("https://mangabuff.ru/balance")
 
-            // If the navigation callback is lost, reload once. Do not inject into
-            // the old document because that document cannot see the new bridge.
             mainHandler.postDelayed({
-                if (continuation.isActive && webView.url?.contains("/balance") == true) {
+                if (continuation.isActive &&
+                    !pageFinishedSeen &&
+                    webView.url?.contains("/balance") == true &&
+                    !recoveryReloadUsed
+                ) {
+                    recoveryReloadUsed = true
                     log(account.username, "ADS: PAGE_FALLBACK_RELOAD")
                     webView.reload()
                 }
@@ -2021,7 +2033,7 @@ class MangaBuffAutomation(
                 fun onMineComplete() { safeResume(true) }
             }
 
-            try { webView.removeJavascriptInterface("AndroidMine") } catch (_: Exception) {}
+            // Keep AndroidMine registered across the /mine navigation.
             webView.addJavascriptInterface(MineBridge(), "AndroidMine")
 
             webView.webViewClient = object : WebViewClient() {
@@ -2029,6 +2041,14 @@ class MangaBuffAutomation(
                     if (url?.contains("/mine") != true) return
                     if (view == null) { safeResume(false); return }
                     log(account.username, "MINE: PAGE_READY url=$url")
+
+                    view.evaluateJavascript("typeof AndroidMine") { bridgeType ->
+                        log(account.username, "MINE: BRIDGE_CHECK type=$bridgeType")
+                        if (bridgeType != "\"object\"" && bridgeType != "\"function\"") {
+                            log(account.username, "MINE: BRIDGE_MISSING", true)
+                            safeResume(false)
+                            return@evaluateJavascript
+                        }
 
                     val script = """
                         (function() {
@@ -2222,7 +2242,8 @@ class MangaBuffAutomation(
                         })();
                     """.trimIndent()
 
-                    view.evaluateJavascript(script, null)
+                        view.evaluateJavascript(script, null)
+                    }
                 }
             }
 
