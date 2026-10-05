@@ -166,8 +166,20 @@ class MangaBuffAutomation(
         if (!webView.isAttachedToWindow) return
 
         val density = webView.resources.displayMetrics.density.coerceAtLeast(1f)
-        val px = x.coerceAtLeast(0f) * density
-        val py = y.coerceAtLeast(0f) * density
+        /*
+         * JS coordinates are CSS pixels. Convert first, then clamp to the real
+         * attached WebView bounds so density differences cannot move the tap
+         * outside the actual WebView.
+         */
+        val px = (x.coerceAtLeast(0f) * density)
+            .coerceIn(1f, (webView.width - 2).coerceAtLeast(1))
+        val py = (y.coerceAtLeast(0f) * density)
+            .coerceIn(1f, (webView.height - 2).coerceAtLeast(1))
+        log(
+            account.username,
+            "ADS: NATIVE_CLOSE_TAP_DISPATCH px=" + px + " py=" + py +
+                " webView=" + webView.width + "x" + webView.height + " density=" + density
+        )
         val down = SystemClock.uptimeMillis()
 
         MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, px, py, 0).also { event ->
@@ -1755,12 +1767,19 @@ class MangaBuffAutomation(
                                         });
                                     } catch (e) {}
 
+                                    /*
+                                     * The ad is already known to be active because this code runs
+                                     * from the dedicated ad runner after the hard 32s viewing time.
+                                     * Do not require a DOM fullscreen marker here: Yandex can put
+                                     * the fullscreen layer in a cross-origin iframe / closed shadow
+                                     * root, which makes the marker invisible to page JS.
+                                     */
                                     if (!fullscreenVisible) {
                                         AndroidAds.onStateLog(
-                                            "NATIVE_CLOSE_SKIP",
-                                            "fullscreen_not_detected viewport=" + width + "x" + height
+                                            "NATIVE_CLOSE_FALLBACK",
+                                            "fullscreen_marker_not_visible; tapping known top-right X area anyway viewport=" +
+                                                width + "x" + height
                                         );
-                                        return false;
                                     }
 
                                     var x = Math.max(1, width - 20);
