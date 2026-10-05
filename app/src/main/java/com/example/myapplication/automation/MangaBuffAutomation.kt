@@ -925,7 +925,10 @@ class MangaBuffAutomation(
                 val elapsed = SystemClock.elapsedRealtime() - start
 
                 when (result) {
-                    is TaskResult.Success -> log(account.username, "BATTLE: TASK_SUCCESS elapsed=${elapsed}ms")
+                    is TaskResult.Success -> {
+                        addDaily(account) { it.copy(battles = it.battles + settings.battleTargetCount.coerceAtLeast(0)) }
+                        log(account.username, "BATTLE: TASK_SUCCESS elapsed=${elapsed}ms")
+                    }
                     is TaskResult.Failed -> log(account.username, "BATTLE: TASK_FAILED reason=${result.reason}", true)
                     is TaskResult.Cancelled -> log(account.username, "BATTLE: TASK_CANCELLED")
                     else -> log(account.username, "BATTLE: TASK_FINISHED elapsed=${elapsed}ms")
@@ -1243,6 +1246,7 @@ class MangaBuffAutomation(
             if (!success) break
 
             clicksDone++
+            addDaily(account) { it.copy(quiz = it.quiz + 1) }
             log(account.username, "QUIZ: ANSWERED question=$clicksDone/${settings.quizMaxClicks}")
             delay(QUIZ_NEXT_QUESTION_DELAY_MS)
         }
@@ -1954,6 +1958,7 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onMineExchange(oreMined: Int, oreExchanged: Int, diamondsReceived: Int, oreRemaining: Int) {
+                    addDaily(account) { it.copy(mineOre = it.mineOre + oreMined, mineExchangeOre = it.mineExchangeOre + oreExchanged, mineDiamonds = it.mineDiamonds + diamondsReceived) }
                     log(account.username, "MINE: EXCHANGE_SUCCESS mined=$oreMined exchanged=$oreExchanged diamonds=+$diamondsReceived remainingOre=$oreRemaining")
                     updateStatus(account, "⛏️ Шахта • 🪨 $oreMined → 💎+$diamondsReceived", true, "Шахта", 1f)
                 }
@@ -2364,6 +2369,7 @@ class MangaBuffAutomation(
                             val success = runCommentOnCurrentChapter(account, webView, targetCommentUrl)
                             if (success) {
                                 dailyCommentCount++
+                                addDaily(account) { it.copy(comments = it.comments + 1) }
                                 chaptersSinceComment = 0
                                 nextCommentAfter = (5..15).random()
                                 log(account.username, "COMMENT: SUCCESS dailyCount=" +
