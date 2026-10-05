@@ -182,6 +182,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return marked
     }
 
+    /**
+     * Marks the currently reading manga as "Прочитано" (folder 3) and
+     * lets the reader runtime continue with the normal catalog flow:
+     * /manga?hide_read=1 -> choose another manga -> start reading.
+     */
+    fun changeCurrentManga(accountId: String): Boolean {
+        val marked = automationRunner.markCurrentMangaAsRead(accountId)
+        addLog(
+            LogEntry(
+                username = accountId,
+                message = if (marked) {
+                    "READER: CHANGE_MANGA_REQUESTED action=MARK_READ_THEN_CATALOG"
+                } else {
+                    "READER: CHANGE_MANGA_NOT_AVAILABLE"
+                },
+                isError = !marked
+            )
+        )
+        return marked
+    }
+
     fun updateAccountTasks(
         account: MangaBuffAccount,
         reader: Boolean,
