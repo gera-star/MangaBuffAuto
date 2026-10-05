@@ -1397,7 +1397,7 @@ class MangaBuffAutomation(
                             try {
                                 var existingRunner = !!window.__mbAdsRunnerActive;
                                 var runnerStartedAt = Number(window.__mbAdsRunnerStartedAt || 0);
-                                var runnerAge = runnerStartedAt > 0 ? (Date.now() - runnerStartedAt) : 0;
+                                var runnerAge = runnerStartedAt > 0 ? (Date.now() - runnerStartedAt) : Number.MAX_SAFE_INTEGER;
 
                                 if (existingRunner && runnerAge < 15000) {
                                     try {
@@ -1550,38 +1550,60 @@ class MangaBuffAutomation(
                                     return null;
                                 }
 
+                                function isVisibleElement(el) {
+                                    if (!el || !el.getBoundingClientRect) return false;
+
+                                    try {
+                                        var rect = el.getBoundingClientRect();
+                                        var style = getComputedStyle(el);
+                                        return (
+                                            rect.width > 0 &&
+                                            rect.height > 0 &&
+                                            style.display !== "none" &&
+                                            style.visibility !== "hidden" &&
+                                            style.opacity !== "0"
+                                        );
+                                    } catch (e) {
+                                        return false;
+                                    }
+                                }
+
                                 function findTimer() {
+                                    // Current Yandex fullscreen markup:
+                                    // <div data-fullscreen-element="timer">...</div>
                                     return deepQuery(
-                                        "[data-fullscreen-element=\\"timer\\"]," +
-                                        "[data-fullscreen-element-name=\\"timer\\"]," +
-                                        "[class*=\\"timer\\"]"
+                                        "[data-fullscreen-element=\"timer\"]," +
+                                        "[data-fullscreen-element-name=\"timer\"]," +
+                                        "[class*=\"timer\"]"
                                     );
                                 }
 
                                 function findCloseButton() {
-                                    // Current Yandex/MangaBuff markup:
-                                    // <div data-fullscreen-element="close">...</div>
+                                    // Current Yandex fullscreen markup:
+                                    // <div data-fullscreen-element="close">
+                                    //   <div data-survey-fullscreen-control>...</div>
+                                    // </div>
                                     var selectors = [
-                                        "[data-fullscreen-element=\\"close\\"] [data-survey-fullscreen-control]",
-                                        "[data-fullscreen-element=\\"close\\"]",
-                                        "[data-fullscreen-element-name=\\"close\\"]",
-                                        "[data-fullscreen-element=\\"close-btn\\"]",
-                                        "[data-fullscreen-element-name=\\"close-btn\\"]",
+                                        "[data-fullscreen-element=\"close\"] [data-survey-fullscreen-control]",
+                                        "[data-fullscreen-element=\"close\"]",
+                                        "[data-fullscreen-element-name=\"close\"]",
+                                        "[data-fullscreen-element=\"close-btn\"]",
+                                        "[data-fullscreen-element-name=\"close-btn\"]",
                                         ".close-btn",
-                                        "button[class*=\\"close\\"]",
-                                        "[aria-label*=\\"close\\" i]",
-                                        "[aria-label*=\\"закры\\" i]"
+                                        "button[class*=\"close\"]",
+                                        "[aria-label*=\"close\" i]",
+                                        "[aria-label*=\"закры\" i]"
                                     ];
 
                                     for (var i = 0; i < selectors.length; i++) {
                                         var el = deepQuery(selectors[i]);
-                                        if (el && !el.disabled) return el;
+                                        if (el && !el.disabled && isVisibleElement(el)) return el;
                                     }
 
-                                    // Last fallback for the exact SVG shown in the supplied DOM.
-                                    return deepQuery(
-                                        "[data-fullscreen-element=\\"close\\"] svg"
+                                    var svg = deepQuery(
+                                        "[data-fullscreen-element=\"close\"] svg"
                                     );
+                                    return svg && isVisibleElement(svg) ? svg : null;
                                 }
 
                                 function verifyReward(attempt) {
@@ -1728,13 +1750,12 @@ class MangaBuffAutomation(
                                         var timerText = timer ? textOf(timer) : "";
                                         var timerValue = timer ? parseNumber(timerText) : null;
                                         var close = findCloseButton();
-                                        var fullscreenTimerVisible = !!(
-                                            timer &&
-                                            timer.getBoundingClientRect &&
-                                            timer.getBoundingClientRect().width > 0 &&
-                                            timer.getBoundingClientRect().height > 0
-                                        );
-                                        var adContainer = document.querySelector(
+                                        var fullscreenTimerVisible = isVisibleElement(timer);
+                                        var closeVisible = isVisibleElement(close);
+
+                                        // Use the same ShadowRoot/iframe-aware lookup for
+                                        // the fullscreen container.
+                                        var adContainer = deepQuery(
                                             "[data-fullscreen-element]," +
                                             "[data-fullscreen-element-name]," +
                                             "[data-fullscreen]," +
@@ -1745,22 +1766,47 @@ class MangaBuffAutomation(
                                             "AD_TIMER",
                                             "visible=" + fullscreenTimerVisible +
                                             " value=" + (timerValue === null ? "?" : timerValue) +
-                                            " text=" + timerText
+                                            " text=" + timerText +
+                                            " closeVisible=" + closeVisible
                                         );
 
+                                        if (timer && fullscreenTimerVisible) {
+                                            AndroidAds.onStateLog(
+                                                "AD_CONTROLS",
+                                                "timerFound=true timerValue=" +
+                                                (timerValue === null ? "?" : timerValue) +
+                                                " closeFound=" + !!close +
+                                                " closeVisible=" + closeVisible
+                                            );
+                                        }
+
+                                        // The close button may appear before the countdown
+                                        // reaches zero. Do not treat its presence alone as
+                                        // successful completion.
                                         if ((fullscreenTimerVisible && timerValue !== null && timerValue <= 0) ||
-                                            (close && adContainer && elapsed >= 30000)) {
+                                            (closeVisible && adContainer && elapsed >= 30000)) {
                                             clearInterval(watchTimer);
 
-                                            if (close) {
-                                                try { close.click(); } catch (e) {}
+                                            if (closeVisible) {
+                                                try {
+                                                    close.click();
+                                                    AndroidAds.onStateLog(
+                                                        "CLOSE_CLICKED",
+                                                        "fullscreen close control"
+                                                    );
+                                                } catch (e) {
+                                                    AndroidAds.onStateLog(
+                                                        "CLOSE_CLICK_ERROR",
+                                                        String(e && e.message ? e.message : e)
+                                                    );
+                                                }
                                             }
 
                                             AndroidAds.onStateLog(
                                                 "AD_FINISHED",
                                                 "elapsed=" + Math.floor(elapsed / 1000) +
                                                 "s timer=" + (timerValue === null ? "?" : timerValue) +
-                                                " close=" + !!close
+                                                " close=" + closeVisible
                                             );
 
                                             // Give MangaBuff time to finish its reward request after
@@ -1775,7 +1821,7 @@ class MangaBuffAutomation(
                                             window.__mbAdsRunnerActive = false;
                                             AndroidAds.onAdFailed("ad_timeout_60s");
                                         }
-                                    }, 1000);
+
                                 }
 
                                 function tryFindAndClick() {
