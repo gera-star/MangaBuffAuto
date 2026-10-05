@@ -1604,7 +1604,32 @@ class MangaBuffAutomation(
                                     var svg = deepQuery(
                                         "[data-fullscreen-element=\"close\"] svg"
                                     );
-                                    return svg && isVisibleElement(svg) ? svg : null;
+                                    if (svg && isVisibleElement(svg)) return svg;
+
+                                    // Stable fallback for the actual Yandex close X path.
+                                    // The X is rendered as an SVG <path> with this distinctive
+                                    // path prefix. Find it through deepQuery so the same-origin
+                                    // shadow/iframe traversal is preserved.
+                                    var closePath = deepQuery(
+                                        "path[d^=\"M32.012 10.345\"]"
+                                    );
+                                    if (closePath && isVisibleElement(closePath)) {
+                                        var clickable = null;
+                                        try {
+                                            clickable = closePath.closest(
+                                                "[data-survey-fullscreen-control]," +
+                                                "[data-fullscreen-element=\"close\"]," +
+                                                "button,[role=\"button\"]"
+                                            );
+                                        } catch (e) {}
+
+                                        if (clickable && isVisibleElement(clickable)) {
+                                            return clickable;
+                                        }
+                                        return closePath;
+                                    }
+
+                                    return null;
                                 }
 
                                 function verifyReward(attempt) {
@@ -1991,17 +2016,20 @@ class MangaBuffAutomation(
                 }
             }, 2500L)
 
-            // Never leave the task suspended forever when WebView/Yandex fails to
-            // execute JavaScript. The next task can continue normally.
+            // This is an ad-session watchdog, not an injection watchdog.
+            // The runner intentionally waits 30s before closing the fullscreen ad,
+            // then can spend up to ~18s confirming the reward on /balance.
+            // A 20s timeout used to abort the coroutine while OUR_TIMER was still
+            // counting down, which navigated away and physically interrupted the ad.
             mainHandler.postDelayed({
                 if (continuation.isActive) {
-                    log(account.username, "ADS: INJECTION_TIMEOUT url=${webView.url}", true)
+                    log(account.username, "ADS: SESSION_TIMEOUT url=${webView.url}", true)
                     try {
                         webView.evaluateJavascript("window.__mbAdsRunnerActive=false;", null)
                     } catch (_: Exception) {}
                     safeResume(false)
                 }
-            }, 20_000L)
+            }, 90_000L)
         }
     }
 
