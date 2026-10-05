@@ -2658,6 +2658,15 @@ class MangaBuffAutomation(
                                             window.__mbScrollTimer = null;
                                         }
 
+                                        // Stop the native phone-like swipe scheduler as well.
+                                        try {
+                                            window.__mbNativeFingerRunning = false;
+                                            if (window.__mbNativeFingerTimer) {
+                                                clearTimeout(window.__mbNativeFingerTimer);
+                                                window.__mbNativeFingerTimer = null;
+                                            }
+                                        } catch(e) {}
+
                                         // Always stop our custom requestAnimationFrame loop first.
                                         // Without this flag reset, a finished chapter could leave the
                                         // previous reader loop alive until chapterDone changed state.
