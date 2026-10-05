@@ -67,6 +67,13 @@ class AutomationRuntime(
         return prepareAccount(toAccount)
     }
 
+    fun skipCurrentManga(accountId: String? = null): Boolean {
+        if (accountId != null) {
+            return automationEngines[accountId]?.skipCurrentManga() == true
+        }
+        return automationEngines.values.any { it.skipCurrentManga() }
+    }
+
     @Synchronized
     fun stopAccount(accountId: String) {
         val runtime = runtimes.remove(accountId)
