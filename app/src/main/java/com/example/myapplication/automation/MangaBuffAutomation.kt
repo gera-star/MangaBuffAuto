@@ -6,6 +6,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -133,7 +135,13 @@ class MangaBuffAutomation(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /** Sends a native touch swipe through the WebView View layer without blocking the UI thread. */
+    /**
+     * Performs a short synthetic finger gesture and then uses WebView's native
+     * fling path. This follows Android's touch/velocity model instead of
+     * scheduling a long series of delayed MotionEvents.
+     *
+     * WebView.flingScroll() must run on the WebView's creation thread (main).
+     */
     private fun dispatchNativeSwipe(
         webView: WebView,
         x1: Float,
@@ -149,80 +157,92 @@ class MangaBuffAutomation(
             return
         }
 
-        if (!webView.isAttachedToWindow) return
+        if (!webView.isAttachedToWindow || webView.isShown.not()) return
 
         val density = webView.resources.displayMetrics.density.coerceAtLeast(1f)
         val startX = x1 * density
         val startY = y1 * density
         val endX = x2 * density
         val endY = y2 * density
-        // Keep the gesture fast enough to resemble a real phone swipe.
-        // The previous 650-1400 ms clamp made a long chapter take several minutes.
-        val safeDuration = durationMs.coerceIn(300L, 560L)
-        val downTime = SystemClock.uptimeMillis()
-        val steps = 14
-        val stepDelay = (safeDuration / steps).coerceAtLeast(1L)
 
-        MotionEvent.obtain(
-            downTime,
-            downTime,
-            MotionEvent.ACTION_DOWN,
-            startX,
-            startY,
-            0
-        ).also { event ->
-            try {
-                webView.dispatchTouchEvent(event)
-            } finally {
-                event.recycle()
+        // The JS side describes the intended finger travel. Keep the actual
+        // touch gesture short; the remaining motion is produced by flingScroll.
+        val safeDuration = durationMs.coerceIn(180L, 360L)
+        val downTime = SystemClock.uptimeMillis()
+        val tracker = VelocityTracker.obtain()
+        val steps = 6
+
+        fun send(action: Int, eventTime: Long, x: Float, y: Float) {
+            MotionEvent.obtain(
+                downTime,
+                eventTime,
+                action,
+                x,
+                y,
+                0
+            ).also { event ->
+                try {
+                    tracker.addMovement(event)
+                    webView.dispatchTouchEvent(event)
+                } finally {
+                    event.recycle()
+                }
             }
         }
 
-        for (i in 1..steps) {
-            val fraction = i.toFloat() / steps
-            val currentX = startX + (endX - startX) * fraction
-            val currentY = startY + (endY - startY) * fraction
-            val eventTime = downTime + (safeDuration * fraction).toLong()
-            val delayFromNow = (stepDelay * i).coerceAtLeast(1L)
+        try {
+            send(MotionEvent.ACTION_DOWN, downTime, startX, startY)
 
-            mainHandler.postDelayed({
-                if (!webView.isAttachedToWindow) return@postDelayed
+            for (i in 1 until steps) {
+                val fraction = i.toFloat() / steps.toFloat()
+                // Slight ease-out, matching a finger that accelerates then
+                // releases into the native fling.
+                val eased = 1f - ((1f - fraction) * (1f - fraction))
+                val eventTime = downTime + (safeDuration * fraction).toLong()
+                val currentX = startX + ((endX - startX) * eased)
+                val currentY = startY + ((endY - startY) * eased)
+                send(MotionEvent.ACTION_MOVE, eventTime, currentX, currentY)
+            }
 
-                MotionEvent.obtain(
-                    downTime,
-                    eventTime,
-                    MotionEvent.ACTION_MOVE,
-                    currentX,
-                    currentY,
-                    0
-                ).also { event ->
-                    try {
-                        webView.dispatchTouchEvent(event)
-                    } finally {
-                        event.recycle()
-                    }
-                }
+            val upTime = downTime + safeDuration
+            send(MotionEvent.ACTION_UP, upTime, endX, endY)
 
-                if (i == steps) {
-                    val upTime = SystemClock.uptimeMillis()
-                    MotionEvent.obtain(
-                        downTime,
-                        upTime,
-                        MotionEvent.ACTION_UP,
-                        endX,
-                        endY,
-                        0
-                    ).also { event ->
-                        try {
-                            webView.dispatchTouchEvent(event)
-                        } finally {
-                            event.recycle()
-                        }
-                    }
-                }
-            }, delayFromNow)
+            tracker.computeCurrentVelocity(1000)
+            val velocityY = tracker.yVelocity
+            val minFlingVelocity = ViewConfiguration.get(webView.context).scaledMinimumFlingVelocity
+            val maxFlingVelocity = ViewConfiguration.get(webView.context).scaledMaximumFlingVelocity
+            val clampedVelocityY = velocityY.coerceIn(
+                -maxFlingVelocity.toFloat(),
+                maxFlingVelocity.toFloat()
+            )
+
+            if (kotlin.math.abs(clampedVelocityY) >= minFlingVelocity) {
+                // Android's ScrollView/WebView convention uses the finger's
+                // velocity sign: upward finger motion is negative and scrolls
+                // the content downward.
+                webView.flingScroll(0, clampedVelocityY.toInt())
+            } else {
+                // Keep very short/slow gestures moving even if they do not
+                // reach Android's minimum fling threshold.
+                webView.scrollBy(0, (endY - startY).toInt())
+            }
+        } catch (e: Exception) {
+            logSwipeFailure(webView, e)
+        } finally {
+            tracker.recycle()
         }
     }
+
+    private fun logSwipeFailure(webView: WebView, error: Exception) {
+        try {
+            webView.post {
+                // Intentionally empty: the caller logs the bridge exception.
+            }
+        } catch (_: Exception) {
+            // no-op
+        }
+    }
+
     private val skippedMangaUrls = mutableSetOf<String>()
     private val completedMangaIds = mutableSetOf<String>()
     private val completedChapterIds = mutableSetOf<String>()
