@@ -901,6 +901,7 @@ class MangaBuffAutomation(
     ) {
         coroutineContext.ensureActive()
 
+        initDailyStats(account)
         log(account.username, "TASK: ACCOUNT_START type=${taskType.title}")
         updateStatus(account, "Обновление статистики...", true, taskType.title, 0.05f)
 
