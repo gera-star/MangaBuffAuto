@@ -157,7 +157,7 @@ class MangaBuffAutomation(
             return
         }
 
-        if (!webView.isAttachedToWindow || webView.isShown.not()) return
+        if (!webView.isAttachedToWindow) return
 
         val density = webView.resources.displayMetrics.density.coerceAtLeast(1f)
         val startX = x1 * density
