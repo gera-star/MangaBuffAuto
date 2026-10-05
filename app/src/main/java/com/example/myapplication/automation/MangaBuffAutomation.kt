@@ -1274,30 +1274,38 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ) {
+        /*
+         * MangaBuff currently pays 3 ad rewards per day. Keep the user setting,
+         * but never drive the site past its real daily limit.
+         */
+        val target = settings.adsCount.coerceAtLeast(0).coerceAtMost(3)
         var adsDone = 0
-        log(account.username, "TASK: ADS_START target_count=${settings.adsCount}")
 
-        while (adsDone < settings.adsCount) {
+        log(account.username, "TASK: ADS_START requested=${settings.adsCount} target=$target dailyLimit=3")
+
+        while (adsDone < target) {
             coroutineContext.ensureActive()
 
             val success = watchSingleAd(account, webView) { step ->
                 updateStatus(
                     account,
-                    "📺 Реклама ($adsDone/${settings.adsCount}): $step",
+                    "📺 Реклама ($adsDone/$target): $step",
                     true,
                     "Реклама",
-                    if (settings.adsCount > 0) adsDone.toFloat() / settings.adsCount else 1f
+                    if (target > 0) adsDone.toFloat() / target else 1f
                 )
             }
 
             if (!success) break
 
             adsDone++
-            log(account.username, "TASK: ADS_COMPLETED_COUNT ad=$adsDone/${settings.adsCount}")
-            delay(ADS_NEXT_DELAY_MS)
+            log(account.username, "TASK: ADS_COMPLETED_COUNT ad=$adsDone/$target")
+            if (adsDone < target) {
+                delay(ADS_NEXT_DELAY_MS)
+            }
         }
 
-        log(account.username, "TASK: ADS_END successCount=$adsDone")
+        log(account.username, "TASK: ADS_END successCount=$adsDone target=$target")
     }
 
     private suspend fun watchSingleAd(
@@ -1323,13 +1331,22 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
-                fun onAdSuccess() { safeResume(true) }
+                fun onAdSuccess() {
+                    log(account.username, "ADS: REWARD_CONFIRMED")
+                    safeResume(true)
+                }
 
                 @JavascriptInterface
-                fun onAdFailed(reason: String) { safeResume(false) }
+                fun onAdFailed(reason: String) {
+                    log(account.username, "ADS: FAILED reason=$reason", true)
+                    safeResume(false)
+                }
 
                 @JavascriptInterface
-                fun onDailyLimit() { safeResume(false) }
+                fun onDailyLimit() {
+                    log(account.username, "ADS: DAILY_LIMIT_REACHED")
+                    safeResume(false)
+                }
             }
 
             try { webView.removeJavascriptInterface("AndroidAds") } catch (_: Exception) {}
@@ -1342,57 +1359,262 @@ class MangaBuffAutomation(
                     val script = """
                         (function() {
                             try {
-                                var btn = document.querySelector('.wallet-panel__action.user-quest__watch-ads-btn');
-                                if (!btn) {
-                                    AndroidAds.onAdFailed('watch_button_not_found');
-                                    return;
+                                if (window.__mbAdsRunnerActive) return;
+                                window.__mbAdsRunnerActive = true;
+
+                                var finished = false;
+                                var buttonPollStarted = Date.now();
+                                var watchTimer = null;
+                                var rewardPoll = null;
+
+                                function textOf(el) {
+                                    return (el && (el.innerText || el.textContent) || "")
+                                        .replace(/\s+/g, " ")
+                                        .trim();
                                 }
 
-                                var count = parseInt(btn.getAttribute('data-count') || '0', 10);
-                                if (count >= 3) {
-                                    AndroidAds.onDailyLimit();
-                                    return;
+                                function findWatchButton() {
+                                    var direct = document.querySelector(
+                                        ".wallet-panel__action.user-quest__watch-ads-btn"
+                                    );
+                                    if (direct) return direct;
+
+                                    var candidates = Array.from(
+                                        document.querySelectorAll(
+                                            "button, a, [role=\"button\"], .wallet-panel__action"
+                                        )
+                                    );
+
+                                    return candidates.find(function(el) {
+                                        var t = textOf(el).toLowerCase();
+                                        var cls = String(el.className || "").toLowerCase();
+                                        return (
+                                            t.indexOf("реклам") !== -1 ||
+                                            t.indexOf("advert") !== -1 ||
+                                            cls.indexOf("watch-ads") !== -1 ||
+                                            cls.indexOf("watch_ads") !== -1 ||
+                                            cls.indexOf("advert") !== -1
+                                        );
+                                    }) || null;
                                 }
 
-                                if (btn.disabled) {
-                                    AndroidAds.onAdFailed('watch_button_disabled');
-                                    return;
+                                function parseNumber(value) {
+                                    if (value === null || value === undefined) return null;
+                                    var m = String(value).replace(/[^0-9]/g, "");
+                                    if (!m) return null;
+                                    var n = parseInt(m, 10);
+                                    return isNaN(n) ? null : n;
                                 }
 
-                                AndroidAds.onStateLog('WATCH_BUTTON_FOUND', 'count=' + count);
-                                btn.click();
-                                AndroidAds.onStateLog('WATCH_CLICKED', 'Клик по кнопке рекламы');
+                                function readDiamondBalance(root) {
+                                    var scope = root || document;
+                                    var heads = Array.from(
+                                        scope.querySelectorAll(".wallet-panel__stat-head")
+                                    );
 
-                                var elapsed = 0;
-                                var timer = setInterval(function() {
-                                    elapsed += 1000;
-                                    var timerElem = document.querySelector('[data-fullscreen-element="timer"]');
-                                    var finished = false;
+                                    for (var i = 0; i < heads.length; i++) {
+                                        var label = textOf(heads[i].querySelector("span")).toLowerCase();
+                                        var value = textOf(heads[i].querySelector("b"));
+                                        if (label.indexOf("алмаз") !== -1) return parseNumber(value);
+                                    }
 
-                                    if (timerElem) {
-                                        var value = parseInt((timerElem.innerText || '').replace(/\D+/g, ''), 10);
-                                        if (!isNaN(value) && value <= 0) finished = true;
-                                    } else if (elapsed >= 10000) {
+                                    var body = textOf(scope.body || scope.documentElement);
+                                    var match = body.match(/алмаз[^0-9]{0,80}([0-9][0-9\s]*)/i);
+                                    return match ? parseNumber(match[1]) : null;
+                                }
+
+                                function buttonFingerprint(btn) {
+                                    if (!btn) return "";
+                                    return [
+                                        btn.getAttribute("data-count") || "",
+                                        textOf(btn),
+                                        btn.disabled ? "disabled" : "enabled"
+                                    ].join("|");
+                                }
+
+                                function isDailyLimitText(text) {
+                                    var t = String(text || "").toLowerCase();
+                                    return t.indexOf("лимит") !== -1 ||
+                                           (t.indexOf("дост") !== -1 && t.indexOf("заверш") !== -1);
+                                }
+
+                                var initialButton = findWatchButton();
+                                var initialDiamond = readDiamondBalance(document);
+                                var initialFingerprint = buttonFingerprint(initialButton);
+
+                                AndroidAds.onStateLog(
+                                    "BALANCE_READY",
+                                    "button=" + !!initialButton +
+                                    " diamonds=" + (initialDiamond === null ? "?" : initialDiamond) +
+                                    " fingerprint=" + initialFingerprint
+                                );
+
+                                function findTimer() {
+                                    return document.querySelector(
+                                        "[data-fullscreen-element=\"timer\"]," +
+                                        "[data-fullscreen-element-name=\"timer\"]," +
+                                        "[class*=\"timer\"]"
+                                    );
+                                }
+
+                                function findCloseButton() {
+                                    var selectors = [
+                                        "[data-fullscreen-element-name=\"close-btn\"]",
+                                        "[data-fullscreen-element=\"close-btn\"]",
+                                        ".close-btn",
+                                        "button[class*=\"close\"]",
+                                        "[aria-label*=\"close\" i]",
+                                        "[aria-label*=\"закры\" i]"
+                                    ];
+
+                                    for (var i = 0; i < selectors.length; i++) {
+                                        var el = document.querySelector(selectors[i]);
+                                        if (el && !el.disabled) return el;
+                                    }
+                                    return null;
+                                }
+
+                                function verifyReward(attempt) {
+                                    if (finished) return;
+
+                                    var diamondNow = readDiamondBalance(document);
+                                    var btnNow = findWatchButton();
+                                    var fingerprintNow = buttonFingerprint(btnNow);
+                                    var diamondConfirmed = initialDiamond !== null &&
+                                        diamondNow !== null && diamondNow >= initialDiamond + 7;
+                                    var buttonChanged = !!initialFingerprint && !!fingerprintNow &&
+                                        fingerprintNow !== initialFingerprint;
+
+                                    if (diamondConfirmed || buttonChanged) {
                                         finished = true;
+                                        AndroidAds.onStateLog(
+                                            "REWARD_VERIFIED",
+                                            "diamonds=" + (diamondNow === null ? "?" : diamondNow) +
+                                            " before=" + (initialDiamond === null ? "?" : initialDiamond) +
+                                            " buttonChanged=" + buttonChanged
+                                        );
+                                        AndroidAds.onAdSuccess();
+                                        return;
                                     }
 
-                                    if (finished) {
-                                        clearInterval(timer);
-                                        var close = document.querySelector('[data-fullscreen-element-name="close-btn"], .close-btn');
-                                        if (close) {
-                                            try { close.click(); } catch(e) {}
+                                    if (attempt >= 12) {
+                                        finished = true;
+                                        AndroidAds.onAdFailed("reward_not_confirmed diamonds=" +
+                                            (diamondNow === null ? "?" : diamondNow));
+                                        return;
+                                    }
+
+                                    rewardPoll = setTimeout(function() {
+                                        verifyReward(attempt + 1);
+                                    }, 1000);
+                                }
+
+                                function startAdMonitoring() {
+                                    var adStartedAt = Date.now();
+
+                                    watchTimer = setInterval(function() {
+                                        if (finished) {
+                                            clearInterval(watchTimer);
+                                            return;
                                         }
-                                        setTimeout(function() { AndroidAds.onAdSuccess(); }, 1500);
+
+                                        var elapsed = Date.now() - adStartedAt;
+                                        var timer = findTimer();
+                                        var timerValue = timer ? parseNumber(textOf(timer)) : null;
+                                        var close = findCloseButton();
+
+                                        if ((timerValue !== null && timerValue <= 0) ||
+                                            (close && elapsed >= 10000)) {
+                                            clearInterval(watchTimer);
+
+                                            if (close) {
+                                                try { close.click(); } catch (e) {}
+                                            }
+
+                                            AndroidAds.onStateLog(
+                                                "AD_FINISHED",
+                                                "elapsed=" + Math.floor(elapsed / 1000) +
+                                                "s timer=" + (timerValue === null ? "?" : timerValue)
+                                            );
+
+                                            setTimeout(function() { verifyReward(0); }, 1500);
+                                            return;
+                                        }
+
+                                        if (elapsed >= 60000) {
+                                            clearInterval(watchTimer);
+                                            finished = true;
+                                            AndroidAds.onAdFailed("ad_timeout_60s");
+                                        }
+                                    }, 1000);
+                                }
+
+                                function tryFindAndClick() {
+                                    if (finished) return;
+
+                                    var btn = findWatchButton();
+                                    if (!btn) {
+                                        if (Date.now() - buttonPollStarted >= 20000) {
+                                            finished = true;
+                                            AndroidAds.onAdFailed("watch_button_timeout");
+                                            return;
+                                        }
+                                        AndroidAds.onStateLog(
+                                            "WATCH_BUTTON_WAIT",
+                                            "elapsed=" + Math.floor((Date.now() - buttonPollStarted) / 1000) + "s"
+                                        );
+                                        setTimeout(tryFindAndClick, 500);
+                                        return;
                                     }
 
-                                    if (elapsed >= 45000) {
-                                        clearInterval(timer);
-                                        AndroidAds.onAdFailed('ad_timeout');
+                                    var disabled = !!btn.disabled;
+                                    var label = textOf(btn);
+                                    var rawCount = btn.getAttribute("data-count");
+
+                                    AndroidAds.onStateLog(
+                                        "WATCH_BUTTON_FOUND",
+                                        "count=" + (rawCount || "?") +
+                                        " disabled=" + disabled +
+                                        " text=" + label
+                                    );
+
+                                    if (disabled && isDailyLimitText(label)) {
+                                        finished = true;
+                                        AndroidAds.onDailyLimit();
+                                        return;
                                     }
-                                }, 1000);
+
+                                    if (disabled) {
+                                        if (Date.now() - buttonPollStarted >= 20000) {
+                                            finished = true;
+                                            AndroidAds.onAdFailed("watch_button_disabled_timeout");
+                                            return;
+                                        }
+                                        setTimeout(tryFindAndClick, 500);
+                                        return;
+                                    }
+
+                                    initialButton = btn;
+                                    initialFingerprint = buttonFingerprint(btn);
+                                    initialDiamond = readDiamondBalance(document);
+
+                                    try {
+                                        btn.click();
+                                    } catch (e) {
+                                        finished = true;
+                                        AndroidAds.onAdFailed("watch_click_exception=" + (e.message || e));
+                                        return;
+                                    }
+
+                                    AndroidAds.onStateLog("WATCH_CLICKED", "Клик по кнопке рекламы");
+                                    startAdMonitoring();
+                                }
+
+                                tryFindAndClick();
 
                             } catch(e) {
-                                AndroidAds.onAdFailed('exception=' + e.message);
+                                window.__mbAdsRunnerActive = false;
+                                AndroidAds.onAdFailed("script_exception=" + (e.message || String(e)));
                             }
                         })();
                     """.trimIndent()
