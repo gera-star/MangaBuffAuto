@@ -334,6 +334,21 @@ class MangaBuffAutomation(
     @Volatile
     private var adSessionActive = false
 
+    /**
+     * Hard wall during the actual fullscreen viewing window.
+     * Until this timestamp no page refresh/navigation is allowed, because any
+     * reload destroys the Yandex fullscreen ad and can cancel the reward.
+     */
+    @Volatile
+    private var adViewingLockedUntilElapsed = 0L
+
+    private fun isAdViewingLocked(): Boolean =
+        adViewingLockedUntilElapsed > SystemClock.elapsedRealtime()
+
+    private fun clearAdViewingLock() {
+        adViewingLockedUntilElapsed = 0L
+    }
+
     @Volatile
     private var lastBalanceSummary = "💎 0  🃏 0/10  📖 0/75  💬 0/13"
 
@@ -555,7 +570,7 @@ class MangaBuffAutomation(
                 }
             }
 
-            if (adSessionActive) {
+            if (adSessionActive || isAdViewingLocked()) {
                 log(
                     account.username,
                     "STAT: REFRESH_BLOCKED_DURING_AD url=" + webView.url.orEmpty(),
@@ -1426,6 +1441,7 @@ class MangaBuffAutomation(
                 }
             }
         } finally {
+            clearAdViewingLock()
             adSessionActive = false
             log(
                 account.username,
@@ -1456,23 +1472,36 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun onStateLog(state: String, details: String) {
                     log(account.username, "ADS: $state $details")
+
+                    if (state == "WATCH_CLICKED") {
+                        // The fullscreen viewing window starts only after the ad
+                        // button was actually clicked. From this moment until the
+                        // 32s deadline the WebView must remain untouched.
+                        adViewingLockedUntilElapsed =
+                            SystemClock.elapsedRealtime() + 32_000L
+                        log(account.username, "ADS: VIEWING_LOCK_ACQUIRED until=32s")
+                    }
+
                     onStep(details)
                 }
 
                 @JavascriptInterface
                 fun onAdSuccess() {
+                    clearAdViewingLock()
                     log(account.username, "ADS: REWARD_CONFIRMED")
                     safeResume(true)
                 }
 
                 @JavascriptInterface
                 fun onAdFailed(reason: String) {
+                    clearAdViewingLock()
                     log(account.username, "ADS: FAILED reason=$reason", true)
                     safeResume(false)
                 }
 
                 @JavascriptInterface
                 fun onDailyLimit() {
+                    clearAdViewingLock()
                     log(account.username, "ADS: DAILY_LIMIT_REACHED")
                     safeResume(false)
                 }
@@ -2197,7 +2226,51 @@ class MangaBuffAutomation(
             var recoveryReloadUsed = false
 
             webView.webViewClient = object : WebViewClient() {
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+                    if (isAdViewingLocked()) {
+                        log(
+                            account.username,
+                            "ADS: NAVIGATION_BLOCKED_DURING_VIEW url=" +
+                                (request?.url?.toString().orEmpty()),
+                            true
+                        )
+                        return true
+                    }
+                    return super.shouldOverrideUrlLoading(view, request)
+                }
+
+                override fun onPageStarted(
+                    view: WebView?,
+                    url: String?,
+                    favicon: Bitmap?
+                ) {
+                    super.onPageStarted(view, url, favicon)
+
+                    if (isAdViewingLocked()) {
+                        log(
+                            account.username,
+                            "ADS: PAGE_LOAD_BLOCKED_DURING_VIEW url=" + url.orEmpty(),
+                            true
+                        )
+                        view?.stopLoading()
+                        return
+                    }
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
+                    if (isAdViewingLocked()) {
+                        log(
+                            account.username,
+                            "ADS: PAGE_FINISHED_IGNORED_DURING_VIEW url=" + url.orEmpty(),
+                            true
+                        )
+                        return
+                    }
+
                     if (url?.contains("/balance") != true) return
                     pageFinishedSeen = true
                     log(account.username, "ADS: BALANCE_READY url=$url")
