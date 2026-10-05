@@ -2498,7 +2498,7 @@ class MangaBuffAutomation(
                                             ' scrollHeight=' + (diagScrollingElement ? (diagScrollingElement.scrollHeight || 0) : 0)
                                         );
                                     } catch(e) {}
-                                    AndroidReaderBridge.onLogStep('READER: SCROLL_MODE=MANGABUFF_NATIVE_AUTOSCROLL');
+                                    AndroidReaderBridge.onLogStep('READER: SCROLL_MODE=NATIVE_FINGER_SWIPE');
 
                                     if (window.current_chapter) {
                                         var c = window.current_chapter;
@@ -3363,30 +3363,26 @@ class MangaBuffAutomation(
                                     function humanScroll() {
                                         if (chapterDone) return;
 
-                                        // MangaBuff's native autoscroll is intentionally not used for the
-                                        // actual reader motion: its maximum practical speed is too slow
-                                        // (about 330 px/s on long chapters). Use one smooth native
-                                        // requestAnimationFrame loop instead. This keeps continuous
-                                        // scrolling without large jumps and still lets checkEnd() observe
-                                        // the dynamically growing document.
+                                        /*
+                                         * Real touch-like reader motion:
+                                         * JS scrollBy() moves the page programmatically and looks like a
+                                         * continuous motor. Instead we send actual MotionEvent DOWN/MOVE/UP
+                                         * sequences through the Android WebView View layer.
+                                         *
+                                         * One swipe is followed by a short, slightly random pause, then
+                                         * the next swipe starts. The distance/duration vary inside a narrow
+                                         * range so the motion resembles repeated finger swipes on a phone.
+                                         */
                                         try { stopScroll(); } catch(e) {}
 
-                                        var speedPxPerSecond = 950;
-                                        var lastFrame = performance.now();
-                                        window.__mbFastScrollRunning = true;
+                                        window.__mbNativeFingerRunning = true;
+                                        window.__mbNativeFingerTimer = null;
 
                                         AndroidReaderBridge.onLogStep(
-                                            'READER: FAST_SMOOTH_SCROLL_STARTED speed=' + speedPxPerSecond
+                                            'READER: NATIVE_FINGER_SCROLL_STARTED mode=TOUCH_SWIPE'
                                         );
 
-                                        function tick(now) {
-                                            if (chapterDone || !window.__mbFastScrollRunning) {
-                                                return;
-                                            }
-
-                                            var dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
-                                            lastFrame = now;
-
+                                        function metrics() {
                                             var scrollingElement =
                                                 document.scrollingElement ||
                                                 document.documentElement ||
@@ -3409,24 +3405,90 @@ class MangaBuffAutomation(
                                                 document.body ? (document.body.scrollHeight || 0) : 0
                                             );
 
-                                            var remaining = Math.max(0, height - viewport - y);
-
-                                            // Slow down only in the final viewport so the existing
-                                            // bottom-stabilization logic can reliably settle.
-                                            var currentSpeed = remaining < viewport * 1.5
-                                                ? Math.max(450, speedPxPerSecond * (remaining / (viewport * 1.5)))
-                                                : speedPxPerSecond;
-
-                                            if (remaining > 2) {
-                                                window.scrollBy(0, currentSpeed * dt);
-                                            }
-
-                                            window.__mbFastScrollFrame = requestAnimationFrame(tick);
+                                            return {
+                                                y: y,
+                                                viewport: viewport,
+                                                height: height,
+                                                remaining: Math.max(0, height - viewport - y)
+                                            };
                                         }
 
-                                        window.__mbFastScrollFrame = requestAnimationFrame(tick);
-                                    }
+                                        function nextSwipe() {
+                                            if (chapterDone || !window.__mbNativeFingerRunning) return;
 
+                                            var m = metrics();
+                                            if (m.remaining <= 8) {
+                                                return;
+                                            }
+
+                                            /*
+                                             * Typical phone gesture:
+                                             * finger starts around 76-82% of the viewport,
+                                             * moves upward to roughly 22-30%.
+                                             */
+                                            var startY = m.viewport * (0.76 + Math.random() * 0.06);
+                                            var endY = m.viewport * (0.22 + Math.random() * 0.08);
+
+                                            var distance = startY - endY;
+                                            var maxDistance = Math.max(220, m.remaining - 4);
+                                            if (distance > maxDistance) {
+                                                startY = Math.min(m.viewport * 0.84, endY + maxDistance);
+                                                distance = startY - endY;
+                                            }
+
+                                            var x = Math.max(
+                                                12,
+                                                Math.min(
+                                                    Math.max(12, (window.innerWidth || 384) - 12),
+                                                    (window.innerWidth || 384) * (0.46 + (Math.random() - 0.5) * 0.08)
+                                                )
+                                            );
+
+                                            var xJitter = (Math.random() - 0.5) * 18;
+                                            var x1 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x));
+                                            var x2 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x + xJitter));
+
+                                            var duration = 720 + Math.floor(Math.random() * 300);
+                                            var pause = 140 + Math.floor(Math.random() * 320);
+
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: NATIVE_FINGER_SWIPE distance=' + Math.floor(distance) +
+                                                ' duration=' + duration +
+                                                ' pause=' + pause
+                                            );
+
+                                            try {
+                                                AndroidReaderBridge.nativeSwipe(
+                                                    x1,
+                                                    startY,
+                                                    x2,
+                                                    endY,
+                                                    duration
+                                                );
+                                            } catch(e) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NATIVE_FINGER_SWIPE_ERROR ' +
+                                                    (e && e.message ? e.message : String(e)),
+                                                    true
+                                                );
+                                                /*
+                                                 * Safety fallback: if the View-layer touch path is
+                                                 * unavailable on a particular WebView build, keep the
+                                                 * reader moving instead of stopping the chapter.
+                                                 */
+                                                try {
+                                                    window.scrollBy(0, Math.max(180, distance * 0.9));
+                                                } catch(ignore) {}
+                                            }
+
+                                            window.__mbNativeFingerTimer = setTimeout(
+                                                nextSwipe,
+                                                duration + pause
+                                            );
+                                        }
+
+                                        nextSwipe();
+                                    }
                                     var interval = setInterval(function() {
                                         checkEnd();
 
