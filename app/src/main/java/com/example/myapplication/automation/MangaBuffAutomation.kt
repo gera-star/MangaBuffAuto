@@ -2810,29 +2810,42 @@ class MangaBuffAutomation(
                                         AndroidReaderBridge.onLogStep('READER: FINAL_UI_CHECK');
                                         AndroidReaderBridge.onLogStep('NEXT_CHAPTER_DOM_SCAN');
 
+                                        // IMPORTANT: do not block the reader on the local
+                                        // is_read/history_pool/addHistory signals. Those are
+                                        // client-side hints and may be absent even when the server
+                                        // accepts the reading event. The native side verifies the
+                                        // authoritative daily reading quest by reloading /balance.
+                                        var stateAtBottom = checkMangaBuffReadState();
+                                        logReadState(stateAtBottom);
+                                        AndroidReaderBridge.onLogStep(
+                                            'READER: SERVER_BALANCE_WILL_VERIFY_LOCAL_STATE isRead=' +
+                                            stateAtBottom.isRead +
+                                            ' historyContainsCurrent=' +
+                                            stateAtBottom.containsCurrent +
+                                            ' postStatus=' + stateAtBottom.postStatus
+                                        );
+
                                         var next = findNextChapter();
                                         var isLast = isLastChapter();
                                         var candidateUrl = (!next && !isLast) ? buildCandidateNextUrl() : '';
 
-                                        waitForMangaBuffConfirmation(function() {
-                                            chapterDone = true;
-                                            unknownFinalStart = 0;
+                                        chapterDone = true;
+                                        unknownFinalStart = 0;
 
-                                            if (next) {
-                                                var nextHref = getHref(next);
-                                                AndroidReaderBridge.onLogStep('NEXT_CHAPTER_FOUND_DOM url=' + nextHref);
-                                                finish(next, false);
-                                            } else if (isLast) {
-                                                AndroidReaderBridge.onLogStep('FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER');
-                                                AndroidReaderBridge.onLogStep('LAST_CHAPTER_CONFIRMED');
-                                                finish(null, true);
-                                            } else if (candidateUrl) {
-                                                AndroidReaderBridge.onLogStep('NEXT_CHAPTER_URL_FALLBACK current=' + window.location.href + ' candidate=' + candidateUrl);
-                                                finishWithCandidateUrl(candidateUrl);
-                                            } else {
-                                                AndroidReaderBridge.onNextChapterUnknown();
-                                            }
-                                        });
+                                        if (next) {
+                                            var nextHref = getHref(next);
+                                            AndroidReaderBridge.onLogStep('NEXT_CHAPTER_FOUND_DOM url=' + nextHref);
+                                            finish(next, false);
+                                        } else if (isLast) {
+                                            AndroidReaderBridge.onLogStep('FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER');
+                                            AndroidReaderBridge.onLogStep('LAST_CHAPTER_CONFIRMED');
+                                            finish(null, true);
+                                        } else if (candidateUrl) {
+                                            AndroidReaderBridge.onLogStep('NEXT_CHAPTER_URL_FALLBACK current=' + window.location.href + ' candidate=' + candidateUrl);
+                                            finishWithCandidateUrl(candidateUrl);
+                                        } else {
+                                            AndroidReaderBridge.onNextChapterUnknown();
+                                        }
                                     }
 
                                     function humanScroll() {
