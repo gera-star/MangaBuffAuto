@@ -3323,22 +3323,68 @@ class MangaBuffAutomation(
                                     function humanScroll() {
                                         if (chapterDone) return;
 
-                                        configureMangaBuffAutoscroll(function(ok) {
-                                            if (!ok || chapterDone) {
-                                                if (!chapterDone) {
-                                                    AndroidReaderBridge.onNextChapterUnknown();
-                                                }
+                                        // MangaBuff's native autoscroll is intentionally not used for the
+                                        // actual reader motion: its maximum practical speed is too slow
+                                        // (about 330 px/s on long chapters). Use one smooth native
+                                        // requestAnimationFrame loop instead. This keeps continuous
+                                        // scrolling without large jumps and still lets checkEnd() observe
+                                        // the dynamically growing document.
+                                        try { stopScroll(); } catch(e) {}
+
+                                        var speedPxPerSecond = 950;
+                                        var lastFrame = performance.now();
+                                        window.__mbFastScrollRunning = true;
+
+                                        AndroidReaderBridge.onLogStep(
+                                            'READER: FAST_SMOOTH_SCROLL_STARTED speed=' + speedPxPerSecond
+                                        );
+
+                                        function tick(now) {
+                                            if (chapterDone || !window.__mbFastScrollRunning) {
                                                 return;
                                             }
 
-                                            AndroidReaderBridge.onLogStep(
-                                                'READER: MANGABUFF_AUTOSCROLL_MONITORING speed=900'
+                                            var dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+                                            lastFrame = now;
+
+                                            var scrollingElement =
+                                                document.scrollingElement ||
+                                                document.documentElement ||
+                                                document.body;
+
+                                            var y = Math.max(
+                                                window.scrollY || 0,
+                                                scrollingElement ? (scrollingElement.scrollTop || 0) : 0
                                             );
 
-                                            // MangaBuff now owns the actual scrolling. Our interval below
-                                            // only observes the dynamically growing document and detects
-                                            // the stable bottom; it does not generate competing touch events.
-                                        });
+                                            var viewport = Math.max(
+                                                window.innerHeight || 0,
+                                                scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
+                                                1
+                                            );
+
+                                            var height = Math.max(
+                                                scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
+                                                document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                                                document.body ? (document.body.scrollHeight || 0) : 0
+                                            );
+
+                                            var remaining = Math.max(0, height - viewport - y);
+
+                                            // Slow down only in the final viewport so the existing
+                                            // bottom-stabilization logic can reliably settle.
+                                            var currentSpeed = remaining < viewport * 1.5
+                                                ? Math.max(450, speedPxPerSecond * (remaining / (viewport * 1.5)))
+                                                : speedPxPerSecond;
+
+                                            if (remaining > 2) {
+                                                window.scrollBy(0, currentSpeed * dt);
+                                            }
+
+                                            window.__mbFastScrollFrame = requestAnimationFrame(tick);
+                                        }
+
+                                        window.__mbFastScrollFrame = requestAnimationFrame(tick);
                                     }
 
                                     var interval = setInterval(function() {
