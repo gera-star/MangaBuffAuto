@@ -1812,14 +1812,55 @@ class MangaBuffAutomation(
              * __mbAdsRunnerActive protection, so a normal onPageFinished +
              * fallback pair cannot start two ad sessions.
              */
-            webView.loadUrl("https://mangabuff.ru/balance")
+            var injectionScheduled = false
 
+            fun injectAdsScript(reason: String) {
+                if (!continuation.isActive) return
+                val currentUrl = webView.url.orEmpty()
+                if (!currentUrl.contains("/balance")) return
+                if (injectionScheduled) return
+                injectionScheduled = true
+
+                log(account.username, "ADS: INJECT_ATTEMPT reason=$reason url=$currentUrl")
+                webView.evaluateJavascript(script) { _ ->
+                    log(account.username, "ADS: INJECTED reason=$reason")
+                }
+
+                mainHandler.postDelayed({
+                    injectionScheduled = false
+                }, 250L)
+            }
+
+            val alreadyOnBalance = webView.url?.contains("/balance") == true
+
+            if (alreadyOnBalance) {
+                // Critical path: /balance is already loaded. Do not call loadUrl()
+                // and wait for a navigation callback that may never arrive.
+                injectAdsScript("ALREADY_ON_BALANCE")
+            } else {
+                webView.loadUrl("https://mangabuff.ru/balance")
+            }
+
+            // Safety fallback for both cases: if no WebView callback was delivered,
+            // try the current /balance document again.
             mainHandler.postDelayed({
                 if (continuation.isActive &&
                     webView.url?.contains("/balance") == true) {
-                    webView.evaluateJavascript(script, null)
+                    injectAdsScript("FALLBACK_700MS")
                 }
             }, 700L)
+
+            // Never leave the task suspended forever when WebView/Yandex fails to
+            // execute JavaScript. The next task can continue normally.
+            mainHandler.postDelayed({
+                if (continuation.isActive) {
+                    log(account.username, "ADS: INJECTION_TIMEOUT url=${webView.url}", true)
+                    try {
+                        webView.evaluateJavascript("window.__mbAdsRunnerActive=false;", null)
+                    } catch (_: Exception) {}
+                    safeResume(false)
+                }
+            }, 20_000L)
         }
     }
 
