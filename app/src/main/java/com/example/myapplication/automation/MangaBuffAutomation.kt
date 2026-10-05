@@ -1738,7 +1738,29 @@ class MangaBuffAutomation(
                                 }
 
                                 function startAdMonitoring() {
+                                    /*
+                                     * Do not depend on Yandex's internal countdown.
+                                     * MangaBuff/Yandex markup changes frequently, while
+                                     * the required viewing window is 30 seconds.
+                                     *
+                                     * Our flow is deliberately simple:
+                                     *   WATCH_CLICKED
+                                     *       -> own 30s timer
+                                     *       -> find close button
+                                     *       -> click close
+                                     *       -> verify reward
+                                     *
+                                     * The Yandex timer is only diagnostic now.
+                                     */
                                     var adStartedAt = Date.now();
+                                    var ownWatchDurationMs = 30000;
+                                    var hardTimeoutMs = 60000;
+                                    var lastSecondLogged = -1;
+
+                                    AndroidAds.onStateLog(
+                                        "OUR_TIMER_STARTED",
+                                        "duration=30s"
+                                    );
 
                                     watchTimer = setInterval(function() {
                                         if (finished) {
@@ -1747,82 +1769,93 @@ class MangaBuffAutomation(
                                         }
 
                                         var elapsed = Date.now() - adStartedAt;
-                                        var timer = findTimer();
-                                        var timerText = timer ? textOf(timer) : "";
-                                        var timerValue = timer ? parseNumber(timerText) : null;
-                                        var close = findCloseButton();
-                                        var fullscreenTimerVisible = isVisibleElement(timer);
-                                        var closeVisible = isVisibleElement(close);
+                                        var remainingMs = Math.max(0, ownWatchDurationMs - elapsed);
+                                        var remainingSec = Math.ceil(remainingMs / 1000);
 
-                                        // Use the same ShadowRoot/iframe-aware lookup for
-                                        // the fullscreen container.
-                                        var adContainer = deepQuery(
-                                            "[data-fullscreen-element]," +
-                                            "[data-fullscreen-element-name]," +
-                                            "[data-fullscreen]," +
-                                            ".fullscreen, .advert, [class*=\"advert\"]"
-                                        );
+                                        // Log only when the displayed second changes.
+                                        if (remainingSec !== lastSecondLogged) {
+                                            lastSecondLogged = remainingSec;
 
-                                        AndroidAds.onStateLog(
-                                            "AD_TIMER",
-                                            "visible=" + fullscreenTimerVisible +
-                                            " value=" + (timerValue === null ? "?" : timerValue) +
-                                            " text=" + timerText +
-                                            " closeVisible=" + closeVisible
-                                        );
-
-                                        if (timer && fullscreenTimerVisible) {
-                                            AndroidAds.onStateLog(
-                                                "AD_CONTROLS",
-                                                "timerFound=true timerValue=" +
-                                                (timerValue === null ? "?" : timerValue) +
-                                                " closeFound=" + !!close +
-                                                " closeVisible=" + closeVisible
-                                            );
+                                            if (remainingSec > 0) {
+                                                AndroidAds.onStateLog(
+                                                    "OUR_TIMER",
+                                                    "remaining=" + remainingSec + "s"
+                                                );
+                                            } else {
+                                                AndroidAds.onStateLog(
+                                                    "OUR_TIMER",
+                                                    "remaining=0s close_search=true"
+                                                );
+                                            }
                                         }
 
-                                        // The close button may appear before the countdown
-                                        // reaches zero. Do not treat its presence alone as
-                                        // successful completion.
-                                        if ((fullscreenTimerVisible && timerValue !== null && timerValue <= 0) ||
-                                            (closeVisible && adContainer && elapsed >= 30000)) {
-                                            clearInterval(watchTimer);
-
-                                            if (closeVisible) {
-                                                try {
-                                                    close.click();
-                                                    AndroidAds.onStateLog(
-                                                        "CLOSE_CLICKED",
-                                                        "fullscreen close control"
-                                                    );
-                                                } catch (e) {
-                                                    AndroidAds.onStateLog(
-                                                        "CLOSE_CLICK_ERROR",
-                                                        String(e && e.message ? e.message : e)
-                                                    );
-                                                }
-                                            }
-
-                                            AndroidAds.onStateLog(
-                                                "AD_FINISHED",
-                                                "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s timer=" + (timerValue === null ? "?" : timerValue) +
-                                                " close=" + closeVisible
-                                            );
-
-                                            // Give MangaBuff time to finish its reward request after
-                                            // the fullscreen control is closed.
-                                            setTimeout(function() { verifyReward(0); }, 1800);
+                                        /*
+                                         * Before 30 seconds we intentionally do not click
+                                         * anything, even if Yandex already exposes the close
+                                         * control. This is our hard minimum viewing period.
+                                         */
+                                        if (elapsed < ownWatchDurationMs) {
                                             return;
                                         }
 
-                                        if (elapsed >= 60000) {
+                                        var close = findCloseButton();
+                                        var closeVisible = isVisibleElement(close);
+
+                                        AndroidAds.onStateLog(
+                                            "CLOSE_SEARCH",
+                                            "elapsed=" + Math.floor(elapsed / 1000) +
+                                            "s found=" + !!close +
+                                            " visible=" + closeVisible
+                                        );
+
+                                        if (closeVisible) {
+                                            clearInterval(watchTimer);
+
+                                            try {
+                                                close.click();
+                                                AndroidAds.onStateLog(
+                                                    "CLOSE_CLICKED",
+                                                    "after_our_30s_timer"
+                                                );
+                                            } catch (e) {
+                                                finished = true;
+                                                window.__mbAdsRunnerActive = false;
+                                                AndroidAds.onAdFailed(
+                                                    "close_click_exception=" +
+                                                    (e && e.message ? e.message : String(e))
+                                                );
+                                                return;
+                                            }
+
+                                            AndroidAds.onStateLog(
+                                                "AD_30S_FINISHED",
+                                                "elapsed=" + Math.floor(elapsed / 1000) + "s"
+                                            );
+
+                                            /*
+                                             * Closing the fullscreen ad does not necessarily
+                                             * mean MangaBuff has already received the reward.
+                                             * Give the page a moment, then use the existing
+                                             * local + /balance verification.
+                                             */
+                                            setTimeout(function() {
+                                                verifyReward(0);
+                                            }, 1800);
+                                            return;
+                                        }
+
+                                        /*
+                                         * The ad may still be closing/rendering its control.
+                                         * Keep searching after 30 seconds, but never restart
+                                         * the 30-second viewing timer.
+                                         */
+                                        if (elapsed >= hardTimeoutMs) {
                                             clearInterval(watchTimer);
                                             finished = true;
                                             window.__mbAdsRunnerActive = false;
-                                            AndroidAds.onAdFailed("ad_timeout_60s");
+                                            AndroidAds.onAdFailed("close_button_timeout_60s");
                                         }
-
+                                    }, 250);
                                 }
 
                                 function tryFindAndClick() {
