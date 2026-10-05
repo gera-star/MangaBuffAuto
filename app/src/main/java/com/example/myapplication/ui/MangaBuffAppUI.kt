@@ -815,7 +815,6 @@ private fun CompactNumberField(
         singleLine = true,
         modifier = modifier.height(56.dp),
         textStyle = MaterialTheme.typography.bodyMedium,
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 7.dp),
         shape = RoundedCornerShape(10.dp)
     )
 }
