@@ -140,7 +140,7 @@ fun MangaBuffAppUI(
         }
     }
 
-    // ДИАЛОГ ПРОСМОТРА БАЛАНСА НА САЙТЕ ПО КЛИКУ НА НИКНЕЙМ
+    // ДИАЛОГ ПРОСМОТРА БАЛАНСА НА САЙТЕ ПО КЛИКУ НА АВАТАР
     if (selectedBalanceAccount != null) {
         val acc = selectedBalanceAccount!!
         Dialog(
@@ -390,6 +390,14 @@ fun AccountCard(
     onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val accountInitials = remember(account.username) {
+        account.username
+            .trim()
+            .replace(Regex("\\s+"), "")
+            .take(2)
+            .uppercase(Locale.getDefault())
+            .ifEmpty { "??" }
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -415,7 +423,7 @@ fun AccountCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "${account.username.trim().take(2).uppercase(Locale.getDefault()).ifEmpty { "??" }}",
+                        text = accountInitials,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = if (account.isRunning) {
