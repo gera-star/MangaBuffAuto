@@ -26,7 +26,18 @@ class AccountRepository(context: Context) {
                 } else {
                     rawStatus
                 }
+                val day = currentStatsDay()
+                val statsFresh = acc.dailyStatsDay == day
                 acc.copy(
+                    dailyStatsDay = if (statsFresh) acc.dailyStatsDay else day,
+                    dailyBattles = if (statsFresh) acc.dailyBattles else 0,
+                    dailyQuiz = if (statsFresh) acc.dailyQuiz else 0,
+                    dailyAds = if (statsFresh) acc.dailyAds else 0,
+                    dailyMineOre = if (statsFresh) acc.dailyMineOre else 0,
+                    dailyMineExchangeOre = if (statsFresh) acc.dailyMineExchangeOre else 0,
+                    dailyMineDiamonds = if (statsFresh) acc.dailyMineDiamonds else 0,
+                    dailyReaderChapters = if (statsFresh) acc.dailyReaderChapters else 0,
+                    dailyComments = if (statsFresh) acc.dailyComments else 0,
                     isRunning = false, // При перезапуске приложения статус выполнения всегда сбрасывается в false
                     taskProgress = 0f,
                     statusMessage = cleanStatus,
