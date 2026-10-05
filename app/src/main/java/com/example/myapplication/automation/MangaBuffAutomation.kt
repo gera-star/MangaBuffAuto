@@ -1321,6 +1321,7 @@ class MangaBuffAutomation(
         var adsDone = 0
 
         log(account.username, "TASK: ADS_START requested=${settings.adsCount} target=$target dailyLimit=3")
+        updateStatus(account, "📺 Реклама (0/$target): подготовка", true, "Реклама", 0f)
 
         while (adsDone < target) {
             coroutineContext.ensureActive()
@@ -1916,69 +1917,34 @@ class MangaBuffAutomation(
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/balance") != true) return
-                    view?.evaluateJavascript(script, null)
-                }
-            }
-
-            /*
-             * Do not rely only on onPageFinished().
-             *
-             * /balance is frequently already the current WebView URL when the
-             * Ads task starts. In that case Android/WebView can reuse the loaded
-             * document and the Ads WebViewClient callback may not arrive for the
-             * navigation we just requested. The old implementation then waited
-             * forever with no ADS:* logs at all.
-             *
-             * Inject once after the navigation as a fallback. The JS runner has
-             * __mbAdsRunnerActive protection, so a normal onPageFinished +
-             * fallback pair cannot start two ad sessions.
-             */
-            var injectionScheduled = false
-
-            fun injectAdsScript(reason: String) {
-                if (!continuation.isActive) return
-                val currentUrl = webView.url.orEmpty()
-                if (!currentUrl.contains("/balance")) return
-                if (injectionScheduled) return
-                injectionScheduled = true
-
-                log(account.username, "ADS: INJECT_ATTEMPT reason=$reason url=$currentUrl")
-                webView.evaluateJavascript(script) { value ->
-                    log(account.username, "ADS: INJECTED reason=$reason result=$value")
-
-                    // This probe is deliberately independent from the ad runner. It tells us
-                    // whether JavaScript actually executed, whether the Android bridge is
-                    // visible to JS, and whether a previous runner flag survived.
-                    webView.evaluateJavascript(
-                        "(function(){try{return JSON.stringify({href:location.href,ready:document.readyState,bridge:typeof AndroidAds,active:!!window.__mbAdsRunnerActive,startedAt:Number(window.__mbAdsRunnerStartedAt||0)});}catch(e){return JSON.stringify({probeError:String(e&&e.message||e)});}})()"
-                    ) { probe ->
-                        log(account.username, "ADS: PROBE reason=$reason result=$probe")
+                    log(account.username, "ADS: BALANCE_READY url=$url")
+                    view?.evaluateJavascript(script) { value ->
+                        log(account.username, "ADS: RUNNER_INJECTED result=$value")
                     }
                 }
-
-                mainHandler.postDelayed({
-                    injectionScheduled = false
-                }, 250L)
             }
 
-            val alreadyOnBalance = webView.url?.contains("/balance") == true
-
-            if (alreadyOnBalance) {
-                // Critical path: /balance is already loaded. Do not call loadUrl()
-                // and wait for a navigation callback that may never arrive.
-                injectAdsScript("ALREADY_ON_BALANCE")
+            // Android WebView exposes a newly added JavascriptInterface to the
+            // document after a navigation/reload. The previous implementation
+            // injected into an already loaded /balance document, where
+            // typeof AndroidAds was "undefined". Always navigate/reload after
+            // installing the bridge.
+            val balanceAlreadyOpen = webView.url?.contains("/balance") == true
+            log(account.username, "ADS: NAVIGATE_BALANCE alreadyOpen=$balanceAlreadyOpen bridgeInstalled=true")
+            if (balanceAlreadyOpen) {
+                webView.reload()
             } else {
                 webView.loadUrl("https://mangabuff.ru/balance")
             }
 
-            // Safety fallback for both cases: if no WebView callback was delivered,
-            // try the current /balance document again.
+            // If the navigation callback is lost, reload once. Do not inject into
+            // the old document because that document cannot see the new bridge.
             mainHandler.postDelayed({
-                if (continuation.isActive &&
-                    webView.url?.contains("/balance") == true) {
-                    injectAdsScript("FALLBACK_700MS")
+                if (continuation.isActive && webView.url?.contains("/balance") == true) {
+                    log(account.username, "ADS: PAGE_FALLBACK_RELOAD")
+                    webView.reload()
                 }
-            }, 700L)
+            }, 2500L)
 
             // Never leave the task suspended forever when WebView/Yandex fails to
             // execute JavaScript. The next task can continue normally.
@@ -2004,8 +1970,14 @@ class MangaBuffAutomation(
         webView: WebView
     ) {
         log(account.username, "MINE: START")
-        executeMiningInWebView(account, settings, webView)
-        log(account.username, "MINE: COMPLETED")
+        updateStatus(account, "⛏️ Шахта: подготовка", true, "Шахта", 0f)
+        val success = executeMiningInWebView(account, settings, webView)
+        if (success) {
+            log(account.username, "MINE: COMPLETED")
+        } else {
+            log(account.username, "MINE: FAILED", true)
+            updateStatus(account, "❌ Шахта: не запущена", true, "Шахта", 0f)
+        }
     }
 
     private suspend fun executeMiningInWebView(
@@ -2054,7 +2026,9 @@ class MangaBuffAutomation(
 
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
+                    if (url?.contains("/mine") != true) return
                     if (view == null) { safeResume(false); return }
+                    log(account.username, "MINE: PAGE_READY url=$url")
 
                     val script = """
                         (function() {
@@ -2252,7 +2226,20 @@ class MangaBuffAutomation(
                 }
             }
 
-            webView.loadUrl("https://mangabuff.ru/mine")
+            val mineAlreadyOpen = webView.url?.contains("/mine") == true
+            log(account.username, "MINE: NAVIGATE_MINE alreadyOpen=$mineAlreadyOpen bridgeInstalled=true")
+            if (mineAlreadyOpen) {
+                webView.reload()
+            } else {
+                webView.loadUrl("https://mangabuff.ru/mine")
+            }
+
+            mainHandler.postDelayed({
+                if (continuation.isActive) {
+                    log(account.username, "MINE: WATCHDOG_TIMEOUT url=${webView.url}", true)
+                    safeResume(false)
+                }
+            }, 35_000L)
         }
     }
 
