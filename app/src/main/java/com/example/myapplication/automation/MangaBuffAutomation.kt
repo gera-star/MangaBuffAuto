@@ -1352,11 +1352,7 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidAds") } catch (_: Exception) {}
             webView.addJavascriptInterface(AdsBridge(), "AndroidAds")
 
-            webView.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    if (url?.contains("/balance") != true) return
-
-                    val script = """
+            val script = """
                         (function() {
                             try {
                                 if (window.__mbAdsRunnerActive) return;
@@ -1796,6 +1792,11 @@ class MangaBuffAutomation(
                         })();
                     """.trimIndent()
 
+                    view?.evaluateJavascript(script, null)
+
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    if (url?.contains("/balance") != true) return
                     view?.evaluateJavascript(script, null)
                 }
             }
