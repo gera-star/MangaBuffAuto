@@ -3051,6 +3051,61 @@ class MangaBuffAutomation(
                                         };
                                     }
 
+                                    function triggerMangaBuffHistoryIfReady(reason) {
+                                        try {
+                                            var chapter = window.current_chapter || null;
+                                            var currentId = chapter && chapter.chapter_id ? String(chapter.chapter_id) : '';
+                                            var mangaId = chapter && chapter.id ? String(chapter.id) : '';
+                                            var isRead = (window.is_read === true);
+                                            var readSend = (window.read_status_send === true);
+                                            var pool = [];
+                                            try {
+                                                pool = JSON.parse(localStorage.getItem('history_pool') || '[]');
+                                            } catch(e) {
+                                                pool = [];
+                                            }
+
+                                            var alreadyInPool = pool.some(function(item) {
+                                                return item &&
+                                                    String(item.manga_id) === mangaId &&
+                                                    String(item.chapter_id) === currentId;
+                                            });
+
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: HISTORY_TRIGGER_CHECK reason=' + reason +
+                                                ' isRead=' + isRead +
+                                                ' readStatusSend=' + readSend +
+                                                ' poolSize=' + pool.length +
+                                                ' currentInPool=' + alreadyInPool +
+                                                ' ccl=' + Number(window.ccl || 0)
+                                            );
+
+                                            // This is the site's own mechanism:
+                                            // addHistory() -> pushChapterHistory() -> /addHistory?r=702.
+                                            // Never fake the POST and never reset read_status_send just to
+                                            // force a request. MangaBuff itself owns the CCL=2 batching.
+                                            if (isRead && !readSend && typeof window.addHistory === 'function') {
+                                                window.addHistory();
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: HISTORY_TRIGGERED_NATIVE_ADDHISTORY chapterId=' + currentId
+                                                );
+                                            } else if (readSend) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: HISTORY_ALREADY_SENT_OR_QUEUED chapterId=' + currentId
+                                                );
+                                            } else {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: HISTORY_NOT_TRIGGERED reason=SITE_FUNCTION_UNAVAILABLE_OR_NOT_READ'
+                                                );
+                                            }
+                                        } catch(e) {
+                                            // History reporting is non-fatal. Reader must continue.
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: HISTORY_TRIGGER_ERROR_IGNORED error=' + (e.message || String(e))
+                                            );
+                                        }
+                                    }
+
                                     function logReadState(state) {
                                         AndroidReaderBridge.onLogStep('READER: MB_READ_STATE chapterId=' + state.chapterId);
                                         AndroidReaderBridge.onLogStep('READER: MB_IS_READ=' + state.isRead);
@@ -3218,6 +3273,12 @@ class MangaBuffAutomation(
                                         // only and must never stop the reader per chapter.
                                         var stateAtBottom = checkMangaBuffReadState();
                                         logReadState(stateAtBottom);
+
+                                        // Explicitly invoke MangaBuff's own history routine at chapter
+                                        // completion. With ccl=2 the site batches chapters in history_pool
+                                        // and posts /addHistory?r=702 only when its batch is full.
+                                        // This is intentionally NOT a completion gate.
+                                        triggerMangaBuffHistoryIfReady('CHAPTER_BOTTOM');
                                         AndroidReaderBridge.onLogStep(
                                             'READER: SERVER_QUEST_DIAGNOSTIC isRead=' +
                                             stateAtBottom.isRead +
