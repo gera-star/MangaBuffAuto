@@ -650,7 +650,7 @@ fun TasksTab(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                "Все аккаунты • \${accounts.size}",
+                                "Все аккаунты • ${accounts.size}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.outline
                             )
