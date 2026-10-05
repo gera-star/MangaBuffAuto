@@ -120,6 +120,7 @@ fun MangaBuffAppUI(
                     onRefresh = { account -> viewModel.reloadAccount(account) },
                     onOpenBalance = { account -> selectedBalanceAccount = account },
                     onOpenAddAccount = { viewModel.setShowAddAccountDialog(true) },
+                    onChangeManga = { account -> viewModel.changeCurrentManga(account.id) },
                     onUpdateTasks = { account, r, q, a, m, c, b -> viewModel.updateAccountTasks(account, r, q, a, m, c, b) }
                 )
                 1 -> TasksTab(
@@ -133,9 +134,7 @@ fun MangaBuffAppUI(
                 )
                 2 -> LogsTab(
                     logs = logs,
-                    onClearLogs = { viewModel.clearLogs() },
-                    onSkipManga = { viewModel.skipCurrentManga() },
-                    onMarkMangaRead = { viewModel.markCurrentMangaAsRead() }
+                    onClearLogs = { viewModel.clearLogs() }
                 )
             }
         }
@@ -330,6 +329,7 @@ fun AccountsTab(
     onRefresh: (MangaBuffAccount) -> Unit,
     onOpenBalance: (MangaBuffAccount) -> Unit,
     onOpenAddAccount: () -> Unit,
+    onChangeManga: (MangaBuffAccount) -> Unit,
     onUpdateTasks: (MangaBuffAccount, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     if (accounts.isEmpty()) {
@@ -370,6 +370,7 @@ fun AccountsTab(
                     onDelete = { onDelete(account) },
                     onRefresh = { onRefresh(account) },
                     onOpenBalance = { onOpenBalance(account) },
+                    onChangeManga = { onChangeManga(account) },
                     onUpdateTasks = { r, q, a, m, c, b -> onUpdateTasks(account, r, q, a, m, c, b) }
                 )
             }
@@ -385,6 +386,7 @@ fun AccountCard(
     onDelete: () -> Unit,
     onRefresh: () -> Unit,
     onOpenBalance: () -> Unit,
+    onChangeManga: () -> Unit,
     onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -510,6 +512,16 @@ fun AccountCard(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
+                    }
+                    IconButton(
+                        onClick = onChangeManga,
+                        enabled = account.isRunning
+                    ) {
+                        Text(
+                            text = "🔄",
+                            fontSize = 18.sp,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Default.Refresh, contentDescription = "Обновить и на главную", tint = MaterialTheme.colorScheme.primary)
@@ -750,9 +762,7 @@ fun TasksTab(
 @Composable
 fun LogsTab(
     logs: List<LogEntry>,
-    onClearLogs: () -> Unit,
-    onSkipManga: () -> Unit = {},
-    onMarkMangaRead: () -> Unit = {}
+    onClearLogs: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     val context = LocalContext.current
@@ -784,22 +794,6 @@ fun LogsTab(
         ) {
             Text("Логи (${logs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onMarkMangaRead,
-                    enabled = logs.any { it.message.contains("CURRENT_MANGA") || it.message.contains("READER:") }
-                ) {
-                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Прочитано → следующая")
-                }
-                OutlinedButton(
-                    onClick = onSkipManga,
-                    enabled = logs.any { it.message.contains("CURRENT_MANGA") || it.message.contains("READER:") }
-                ) {
-                    Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Скипнуть → следующая")
-                }
                 OutlinedButton(
                     onClick = onClearLogs,
                     enabled = logs.isNotEmpty()
