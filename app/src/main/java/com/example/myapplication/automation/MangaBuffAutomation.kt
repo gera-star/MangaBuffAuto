@@ -1792,8 +1792,6 @@ class MangaBuffAutomation(
                         })();
                     """.trimIndent()
 
-                    view?.evaluateJavascript(script, null)
-
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/balance") != true) return
