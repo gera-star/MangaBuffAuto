@@ -1,4 +1,5 @@
 package com.example.myapplication.automation
+        initDailyStats(account)
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -16,6 +17,8 @@ import android.webkit.WebViewClient
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.data.DailyStats
+import com.example.myapplication.data.currentStatsDay
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -113,7 +116,8 @@ class MangaBuffAutomation(
         cardDrop: String,
         chapters: String,
         comments: String
-    ) -> Unit = { _, _, _, _, _ -> }
+    ) -> Unit = { _, _, _, _, _ -> },
+    private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> }
 ) {
 
     companion object {
@@ -236,6 +240,37 @@ class MangaBuffAutomation(
         } finally {
             tracker.recycle()
         }
+    }
+
+    private var dailyStats = DailyStats(day = currentStatsDay())
+
+    private fun initDailyStats(account: MangaBuffAccount) {
+        dailyStats = if (account.dailyStatsDay == currentStatsDay()) {
+            DailyStats(
+                day = account.dailyStatsDay,
+                battles = account.dailyBattles,
+                quiz = account.dailyQuiz,
+                ads = account.dailyAds,
+                mineOre = account.dailyMineOre,
+                mineExchangeOre = account.dailyMineExchangeOre,
+                mineDiamonds = account.dailyMineDiamonds,
+                readerChapters = account.dailyReaderChapters,
+                comments = account.dailyComments
+            )
+        } else {
+            DailyStats(day = currentStatsDay())
+        }
+        onDailyStatsUpdate(account.id, dailyStats)
+    }
+
+    private fun publishDailyStats(account: MangaBuffAccount) {
+        dailyStats = dailyStats.copy(day = currentStatsDay())
+        onDailyStatsUpdate(account.id, dailyStats)
+    }
+
+    private fun addDaily(account: MangaBuffAccount, update: (DailyStats) -> DailyStats) {
+        dailyStats = update(dailyStats).copy(day = currentStatsDay())
+        publishDailyStats(account)
     }
 
     private val skippedMangaUrls = mutableSetOf<String>()
@@ -5305,4 +5340,4 @@ class MangaBuffAutomation(
             webView.loadUrl("https://mangabuff.ru/battle")
         }
     }
-}
+    }
