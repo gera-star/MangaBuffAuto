@@ -155,12 +155,13 @@ class MangaBuffAutomation(
      * hidden from page JavaScript by a cross-origin iframe or closed shadow root.
      */
     private fun dispatchNativeTap(
+        accountUsername: String,
         webView: WebView,
         x: Float,
         y: Float
     ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { dispatchNativeTap(webView, x, y) }
+            mainHandler.post { dispatchNativeTap(accountUsername, webView, x, y) }
             return
         }
         if (!webView.isAttachedToWindow) return
@@ -172,11 +173,11 @@ class MangaBuffAutomation(
          * outside the actual WebView.
          */
         val px = (x.coerceAtLeast(0f) * density)
-            .coerceIn(1f, (webView.width - 2).coerceAtLeast(1))
+            .coerceIn(1f, (webView.width - 2).toFloat().coerceAtLeast(1f))
         val py = (y.coerceAtLeast(0f) * density)
-            .coerceIn(1f, (webView.height - 2).coerceAtLeast(1))
+            .coerceIn(1f, (webView.height - 2).toFloat().coerceAtLeast(1f))
         log(
-            account.username,
+            accountUsername,
             "ADS: NATIVE_CLOSE_TAP_DISPATCH px=" + px + " py=" + py +
                 " webView=" + webView.width + "x" + webView.height + " density=" + density
         )
@@ -1478,7 +1479,7 @@ class MangaBuffAutomation(
                     )
                     mainHandler.post {
                         try {
-                            dispatchNativeTap(webView, x, y)
+                            dispatchNativeTap(account.username, webView, x, y)
                         } catch (e: Exception) {
                             log(
                                 account.username,
