@@ -1592,10 +1592,6 @@ class MangaBuffAutomation(
                     val chId = result.chapterId
                     val chUrl = result.chapterUrl
                     nextChapterUrlToOpen = result.nextChapterUrl
-                    // Use the baseline captured when this exact chapter opened.
-                    val chapterQuestBefore = activeChapterContext?.readQuestBefore
-                        ?.takeIf { it.isNotBlank() }
-                        ?: lastKnownReadQuest
 
                     val duplicate = (chId.isNotBlank() && chId in completedChapterIds) ||
                             (chUrl.isNotBlank() && chUrl in readChapterUrlsInRun)
@@ -1605,85 +1601,30 @@ class MangaBuffAutomation(
                         break
                     }
 
-                    // The current chapter becomes pending. Its server quest
-                    // increment is checked non-destructively while the NEXT
-                    // chapter is being read.
-                    if (pendingReadQuestBefore != null) {
-                        val questAfter = if (pendingReadQuestConfirmedValue.isNotBlank()) {
-                            pendingReadQuestConfirmedValue
-                        } else {
-                            lastKnownReadQuest
-                        }
+                    if (chId.isNotBlank()) completedChapterIds.add(chId)
+                    if (chUrl.isNotBlank()) readChapterUrlsInRun.add(chUrl)
 
-                        log(
-                            account.username,
-                            "READER: PENDING_SERVER_CHECK chapterId=$pendingReadChapterId " +
-                                "questBefore=$pendingReadQuestBefore confirmed=$pendingReadQuestConfirmed " +
-                                "questAfter=$questAfter"
-                        )
+                    chaptersReadCount++
+                    currentSessionChaptersRead = chaptersReadCount
+                    updateReaderStatus(account)
 
-                        if (!pendingReadQuestConfirmed) {
-                            log(
-                                account.username,
-                                "READER: PREVIOUS_CHAPTER_NOT_SERVER_CONFIRMED " +
-                                    "chapterId=$pendingReadChapterId questBefore=$pendingReadQuestBefore",
-                                true
-                            )
-                            break
-                        }
+                    log(account.username, "READER: CHAPTER_READ count=" + chaptersReadCount +
+                        "/" + target + " id=" + chId + " serverQuestConfirmed=true")
 
-                        if (pendingReadChapterId.isNotBlank()) {
-                            completedChapterIds.add(pendingReadChapterId)
-                        }
-                        if (pendingReadChapterUrl.isNotBlank()) {
-                            readChapterUrlsInRun.add(pendingReadChapterUrl)
-                        }
+                    chaptersSinceComment++
 
-                        chaptersReadCount++
-                        currentSessionChaptersRead = chaptersReadCount
-                        updateReaderStatus(account)
+                    log(account.username, "COMMENT: DECISION chaptersSinceComment=" +
+                        chaptersSinceComment + " nextCommentAfter=" + nextCommentAfter)
 
-                        log(
-                            account.username,
-                            "READER: CHAPTER_READ count=$chaptersReadCount/$target " +
-                                "id=$pendingReadChapterId " +
-                                "serverQuest=$pendingReadQuestBefore->$questAfter"
-                        )
-
-                        chaptersSinceComment++
-
-                        pendingReadQuestBefore = null
-                        pendingReadQuestConfirmed = false
-                        pendingReadQuestConfirmedValue = ""
-                        pendingReadChapterId = ""
-                        pendingReadChapterUrl = ""
-                    }
-
-                    pendingReadQuestBefore = chapterQuestBefore
-                    pendingReadQuestConfirmed = false
-                    pendingReadQuestConfirmedValue = ""
-                    pendingReadChapterId = chId
-                    pendingReadChapterUrl = chUrl
-
-                    log(
-                        account.username,
-                        "READER: CHAPTER_PENDING_SERVER_CONFIRM chapterId=$chId " +
-                            "questBefore=$chapterQuestBefore"
-                    )
-
-                    log(
-                        account.username,
-                        "COMMENT: DECISION chaptersSinceComment=$chaptersSinceComment nextCommentAfter=$nextCommentAfter"
-                    )
-
-                    if (
-                        account.commentEnabled &&
+                    if (account.commentEnabled &&
                         chaptersSinceComment >= nextCommentAfter &&
                         dailyCommentCount < settings.commentCount
                     ) {
-                        val targetCommentUrl = activeChapterContext?.actualChapterUrl?.ifBlank { null }
-                            ?: lastFinishedChapterUrl.ifBlank { null }
-                            ?: currentMangaUrl.ifBlank { null }
+                        val targetCommentUrl = chUrl.ifBlank {
+                            activeChapterContext?.actualChapterUrl?.ifBlank { null }
+                                ?: lastFinishedChapterUrl.ifBlank { null }
+                                ?: currentMangaUrl.ifBlank { null }
+                        }
 
                         if (!targetCommentUrl.isNullOrBlank()) {
                             val success = runCommentOnCurrentChapter(account, webView, targetCommentUrl)
@@ -1691,10 +1632,9 @@ class MangaBuffAutomation(
                                 dailyCommentCount++
                                 chaptersSinceComment = 0
                                 nextCommentAfter = (5..15).random()
-                                log(
-                                    account.username,
-                                    "COMMENT: SUCCESS dailyCount=$dailyCommentCount/${settings.commentCount} nextThreshold=$nextCommentAfter"
-                                )
+                                log(account.username, "COMMENT: SUCCESS dailyCount=" +
+                                    dailyCommentCount + "/" + settings.commentCount +
+                                    " nextThreshold=" + nextCommentAfter)
                                 delay(COMMENT_DELAY_MS)
                             }
                         }
@@ -1709,71 +1649,12 @@ class MangaBuffAutomation(
                 }
 
                 is ReaderResult.MangaCompleted -> {
-                    log(account.username, "READER: MANGA_COMPLETED title='${result.title}'")
+                    log(account.username, "READER: MANGA_COMPLETED title='" + result.title + "'")
 
-                    val chId = lastFinishedChapterId
-                    val chUrl = lastFinishedChapterUrl
-                    // The last chapter also carries its own immutable baseline.
-                    val chapterQuestBefore = activeChapterContext?.readQuestBefore
-                        ?.takeIf { it.isNotBlank() }
-                        ?: lastKnownReadQuest
-                    val duplicate = (chId.isNotBlank() && chId in completedChapterIds) ||
-                            (chUrl.isNotBlank() && chUrl in readChapterUrlsInRun)
+                    if (lastFinishedChapterId.isNotBlank()) completedChapterIds.add(lastFinishedChapterId)
+                    if (lastFinishedChapterUrl.isNotBlank()) readChapterUrlsInRun.add(lastFinishedChapterUrl)
 
-                    // The last chapter can still confirm the PREVIOUS chapter
-                    // through the same mid-chapter /balance probe. Count that
-                    // previous chapter before leaving the manga.
-                    if (pendingReadQuestBefore != null && pendingReadQuestConfirmed) {
-                        val questAfter = if (pendingReadQuestConfirmedValue.isNotBlank()) {
-                            pendingReadQuestConfirmedValue
-                        } else {
-                            lastKnownReadQuest
-                        }
-
-                        if (pendingReadChapterId.isNotBlank()) {
-                            completedChapterIds.add(pendingReadChapterId)
-                        }
-                        if (pendingReadChapterUrl.isNotBlank()) {
-                            readChapterUrlsInRun.add(pendingReadChapterUrl)
-                        }
-
-                        chaptersReadCount++
-                        currentSessionChaptersRead = chaptersReadCount
-                        updateReaderStatus(account)
-
-                        log(
-                            account.username,
-                            "READER: CHAPTER_READ count=$chaptersReadCount/$target " +
-                                "id=$pendingReadChapterId " +
-                                "serverQuest=$pendingReadQuestBefore->$questAfter"
-                        )
-
-                        pendingReadQuestBefore = null
-                        pendingReadQuestConfirmed = false
-                        pendingReadQuestConfirmedValue = ""
-                        pendingReadChapterId = ""
-                        pendingReadChapterUrl = ""
-                    }
-
-                    if (!duplicate && (chId.isNotBlank() || chUrl.isNotBlank())) {
-                        // There is no following chapter to trigger the observed
-                        // server-side transition, so leave the last chapter pending
-                        // instead of falsely counting it.
-                        pendingReadQuestBefore = chapterQuestBefore
-                        pendingReadQuestConfirmed = false
-                        pendingReadQuestConfirmedValue = ""
-                        pendingReadChapterId = chId
-                        pendingReadChapterUrl = chUrl
-                        log(
-                            account.username,
-                            "READER: LAST_CHAPTER_LEFT_PENDING_NO_NEXT_CHAPTER " +
-                                "chapterId=$chId questBefore=$chapterQuestBefore"
-                        )
-                    }
-
-                    if (currentMangaUrl.isNotBlank()) {
-                        skippedMangaUrls.add(currentMangaUrl)
-                    }
+                    if (currentMangaUrl.isNotBlank()) skippedMangaUrls.add(currentMangaUrl)
 
                     currentMangaUrl = ""
                     nextChapterUrlToOpen = ""
@@ -1805,6 +1686,63 @@ class MangaBuffAutomation(
         activeChapterContext = null
         log(account.username, "READER: STOP_CLEANUP_COMPLETE")
         log(account.username, "READER: FINISHED totalRead=$chaptersReadCount/$target")
+    }
+
+    /**
+     * Authoritative chapter completion gate.
+     * Local reader state (/addHistory, is_read, history_pool) is only a hint.
+     * A chapter is accepted only when /balance reports a larger reading-quest counter.
+     */
+    private suspend fun verifyChapterServerQuestIncrement(
+        account: MangaBuffAccount,
+        webView: WebView,
+        chapterId: String,
+        questBefore: String,
+        maxAttempts: Int = 3
+    ): Pair<Boolean, String> {
+        val beforeNum = questBefore.substringBefore('/').toIntOrNull() ?: 0
+        var lastQuest = lastKnownReadQuest.ifBlank { questBefore }
+
+        log(account.username, "READER: SERVER_QUEST_VERIFY_START chapterId=" + chapterId +
+            " before=" + questBefore + " attempts=" + maxAttempts)
+
+        repeat(maxAttempts) { index ->
+            coroutineContext.ensureActive()
+            val attempt = index + 1
+            log(account.username, "READER: SERVER_QUEST_REFRESH attempt=" + attempt +
+                "/" + maxAttempts + " before=" + questBefore)
+
+            try {
+                fetchAndLogBalanceInfo(account, webView)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log(account.username, "READER: SERVER_QUEST_REFRESH_ERROR attempt=" +
+                    attempt + " error=" + (e.message ?: "unknown"), true)
+            }
+
+            lastQuest = lastKnownReadQuest.ifBlank { questBefore }
+            val afterNum = lastQuest.substringBefore('/').toIntOrNull() ?: beforeNum
+            val delta = afterNum - beforeNum
+            val deltaText = if (delta >= 0) "+$delta" else delta.toString()
+
+            log(account.username, "READER: SERVER_QUEST_VERIFY attempt=" + attempt +
+                "/" + maxAttempts + " before=" + questBefore +
+                " after=" + lastQuest + " delta=" + deltaText)
+
+            if (afterNum > beforeNum) {
+                log(account.username, "READER: SERVER_QUEST_INCREMENT_CONFIRMED " +
+                    questBefore + "->" + lastQuest)
+                return true to lastQuest
+            }
+
+            if (attempt < maxAttempts) delay(1500L)
+        }
+
+        log(account.username, "READER: SERVER_QUEST_INCREMENT_NOT_CONFIRMED chapterId=" +
+            chapterId + " before=" + questBefore + " after=" + lastQuest +
+            " attempts=" + maxAttempts, true)
+        return false to lastQuest
     }
 
     // =========================================================
@@ -2214,39 +2152,56 @@ class MangaBuffAutomation(
                         lastFinishedMangaTitle = cleanMangaTitle(title)
                     }
 
-                    log(account.username, "READ: CHAPTER_READER_FINISHED elapsed=${elapsedMs}ms")
+                    val questBefore = ctx?.readQuestBefore
+                        ?.takeIf { it.isNotBlank() }
+                        ?: lastKnownReadQuest
+
+                    log(account.username, "READ: CHAPTER_READER_FINISHED elapsed=" + elapsedMs + "ms")
                     log(account.username, "READ: CHAPTER_END_REACHED chapter=$number")
                     log(account.username, "READER: COMPLETION_ACCEPTED chapterId=$chapterId")
+                    log(account.username, "READER: CHAPTER_PENDING_SERVER_CONFIRM chapterId=$chapterId questBefore=$questBefore")
 
-                    if (isRealLastChapter) {
-                        log(account.username, "READER: LAST_CHAPTER_CONFIRMED")
-                        pendingMangaMarkAsRead = true
-                        val chapterCanonical = ensureCanonicalMangaUrl(chapterUrl)
-                        val slug = chapterCanonical.substringAfter("/manga/").substringBefore("/")
+                    CoroutineScope(Dispatchers.Main.immediate).launch {
+                        val (confirmed, questAfter) = verifyChapterServerQuestIncrement(
+                            account, webView, chapterId, questBefore, 3
+                        )
 
-                        currentMangaUrl = if (slug.isNotBlank()) {
-                            "https://mangabuff.ru/manga/$slug"
-                        } else {
-                            currentMangaUrl
+                        if (!confirmed) {
+                            log(account.username,
+                                "READER: NEXT_CHAPTER_BLOCKED_SERVER_NOT_CONFIRMED " +
+                                    "chapterId=$chapterId questBefore=$questBefore questAfter=$questAfter", true)
+                            safeResume(ReaderResult.Failed("SERVER_QUEST_NOT_CONFIRMED"))
+                            return@launch
                         }
 
-                        log(account.username, "READER: OPEN_MANGA_INFO_FOR_READ_MARK url=$currentMangaUrl")
-                        webView.loadUrl(currentMangaUrl)
-                    } else {
-                        if (nextChapterUrl.isBlank()) {
-                            safeResume(ReaderResult.Failed("NEXT_CHAPTER_UNKNOWN"))
+                        log(account.username, "READER: CHAPTER_SERVER_CONFIRMED chapterId=$chapterId " +
+                            "quest=$questBefore->$questAfter")
+
+                        if (isRealLastChapter) {
+                            log(account.username, "READER: LAST_CHAPTER_CONFIRMED")
+                            pendingMangaMarkAsRead = true
+                            val chapterCanonical = ensureCanonicalMangaUrl(chapterUrl)
+                            val slug = chapterCanonical.substringAfter("/manga/").substringBefore("/")
+
+                            currentMangaUrl = if (slug.isNotBlank()) {
+                                "https://mangabuff.ru/manga/$slug"
+                            } else {
+                                currentMangaUrl
+                            }
+
+                            log(account.username, "READER: OPEN_MANGA_INFO_FOR_READ_MARK url=$currentMangaUrl")
+                            webView.loadUrl(currentMangaUrl)
                         } else {
-                            safeResume(
-                                ReaderResult.ChapterRead(
-                                    giftsFound,
-                                    chapterUrl,
-                                    chapterId,
-                                    nextChapterUrl
-                                )
-                            )
+                            if (nextChapterUrl.isBlank()) {
+                                safeResume(ReaderResult.Failed("NEXT_CHAPTER_UNKNOWN"))
+                            } else {
+                                log(account.username, "READER: OPEN_NEXT_CHAPTER_AFTER_SERVER_CONFIRM url=$nextChapterUrl")
+                                safeResume(ReaderResult.ChapterRead(giftsFound, chapterUrl, chapterId, nextChapterUrl))
+                            }
                         }
                     }
                 }
+            }
             }
 
             try { webView.removeJavascriptInterface("AndroidReaderBridge") } catch (_: Exception) {}
