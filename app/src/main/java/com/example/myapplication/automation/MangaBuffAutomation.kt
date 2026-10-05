@@ -2377,6 +2377,9 @@ class MangaBuffAutomation(
                                     var bottomStarted = 0;
                                     var lastProgress = -1;
                                     var unknownFinalStart = 0;
+                                    var lastObservedScrollY = -1;
+                                    var stagnantChecks = 0;
+                                    var completionScheduled = false;
 
                                     window.__mbHistoryPostStarted = false;
                                     window.__mbHistoryPostStatus = null;
@@ -2388,6 +2391,15 @@ class MangaBuffAutomation(
 
                                     AndroidReaderBridge.onLogStep('READER: CHAPTER_ID=' + chapterId);
                                     AndroidReaderBridge.onLogStep('READER: CHAPTER_TIMER_STARTED chapterId=' + chapterId);
+                                    try {
+                                        var diagScrollingElement = document.scrollingElement || document.documentElement || document.body;
+                                        AndroidReaderBridge.onLogStep(
+                                            'READER: VIEWPORT_DIAG width=' + (window.innerWidth || 0) +
+                                            ' height=' + (window.innerHeight || 0) +
+                                            ' clientHeight=' + (diagScrollingElement ? (diagScrollingElement.clientHeight || 0) : 0) +
+                                            ' scrollHeight=' + (diagScrollingElement ? (diagScrollingElement.scrollHeight || 0) : 0)
+                                        );
+                                    } catch(e) {}
                                     AndroidReaderBridge.onLogStep('READER: SCROLL_MODE=NATIVE_TOUCH_SWIPE');
 
                                     if (window.current_chapter) {
@@ -2772,29 +2784,84 @@ class MangaBuffAutomation(
                                     function checkEnd() {
                                         if (chapterDone) return;
 
+                                        var scrollingElement = document.scrollingElement || document.documentElement || document.body;
+                                        var rawY = Math.max(
+                                            window.scrollY || 0,
+                                            window.pageYOffset || 0,
+                                            scrollingElement ? (scrollingElement.scrollTop || 0) : 0,
+                                            document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
+                                            document.body ? (document.body.scrollTop || 0) : 0
+                                        );
+                                        var rawViewport = Math.max(
+                                            window.innerHeight || 0,
+                                            scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
+                                            document.documentElement ? (document.documentElement.clientHeight || 0) : 0,
+                                            1
+                                        );
+                                        var rawHeight = Math.max(
+                                            scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
+                                            document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                                            document.body ? (document.body.scrollHeight || 0) : 0
+                                        );
+
                                         var metrics = {
-                                            y: window.scrollY || window.pageYOffset || 0,
-                                            viewport: window.innerHeight || 1,
-                                            height: Math.max(document.documentElement.scrollHeight || 0, document.body.scrollHeight || 0)
+                                            y: rawY,
+                                            viewport: rawViewport,
+                                            height: rawHeight
                                         };
 
-                                        var percent = Math.min(100, Math.floor(((metrics.y + metrics.viewport) / metrics.height) * 100));
+                                        if (lastObservedScrollY >= 0) {
+                                            if (Math.abs(metrics.y - lastObservedScrollY) < 2) {
+                                                stagnantChecks++;
+                                            } else {
+                                                stagnantChecks = 0;
+                                            }
+                                        } else {
+                                            stagnantChecks = 0;
+                                        }
+                                        lastObservedScrollY = metrics.y;
+
+                                        var percent = metrics.height > 0
+                                            ? Math.min(100, Math.floor(((metrics.y + metrics.viewport) / metrics.height) * 100))
+                                            : 100;
 
                                         if (percent !== lastProgress && (percent === 25 || percent === 50 || percent === 75 || percent === 90 || percent === 100)) {
                                             lastProgress = percent;
-                                            AndroidReaderBridge.onLogStep('READER: SCROLL_PROGRESS y=' + Math.floor(metrics.y) + ' height=' + metrics.height + ' progress=' + percent + '% elapsed=' + Math.floor((Date.now() - startMs) / 1000) + 's');
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: SCROLL_PROGRESS y=' + Math.floor(metrics.y) +
+                                                ' height=' + metrics.height +
+                                                ' viewport=' + Math.floor(metrics.viewport) +
+                                                ' progress=' + percent +
+                                                '% elapsed=' + Math.floor((Date.now() - startMs) / 1000) + 's'
+                                            );
                                         }
 
-                                        var distance = Math.max(0, metrics.height - (metrics.y + metrics.viewport));
-                                        if (distance > 200) {
+                                        var maxScrollTop = Math.max(0, metrics.height - metrics.viewport);
+                                        var distance = Math.max(0, maxScrollTop - metrics.y);
+                                        var atAbsoluteBottom = distance <= 8;
+                                        var touchStalled = stagnantChecks >= 4;
+
+                                        if (distance > 200 && !atAbsoluteBottom && !touchStalled) {
                                             bottomStarted = 0;
                                             unknownFinalStart = 0;
                                             return;
                                         }
 
+                                        if (touchStalled && !atAbsoluteBottom) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: SCROLL_TOUCH_STALLED y=' + Math.floor(metrics.y) +
+                                                ' remaining=' + Math.floor(distance) +
+                                                ' checks=' + stagnantChecks
+                                            );
+                                        }
+
                                         if (bottomStarted === 0) {
                                             bottomStarted = Date.now();
-                                            AndroidReaderBridge.onLogStep('READER: END_CANDIDATE');
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: END_CANDIDATE remaining=' + Math.floor(distance) +
+                                                ' atAbsoluteBottom=' + atAbsoluteBottom +
+                                                ' touchStalled=' + touchStalled
+                                            );
                                             AndroidReaderBridge.onLogStep('READER: BOTTOM_STABILIZATION_STARTED');
                                             return;
                                         }
@@ -2802,19 +2869,18 @@ class MangaBuffAutomation(
                                         var stable = Date.now() - bottomStarted;
                                         if (stable < $READER_END_STABLE_MS) return;
 
-                                        if (isWaitingConfirmation) return;
+                                        if (isWaitingConfirmation || completionScheduled) return;
                                         isWaitingConfirmation = true;
+                                        completionScheduled = true;
 
                                         AndroidReaderBridge.onLogStep('READER: BOTTOM_STABILIZATION_CHECK');
                                         AndroidReaderBridge.onLogStep('READER: BOTTOM_STABLE elapsed=' + stable);
                                         AndroidReaderBridge.onLogStep('READER: FINAL_UI_CHECK');
                                         AndroidReaderBridge.onLogStep('NEXT_CHAPTER_DOM_SCAN');
 
-                                        // IMPORTANT: do not block the reader on the local
-                                        // is_read/history_pool/addHistory signals. Those are
-                                        // client-side hints and may be absent even when the server
-                                        // accepts the reading event. The native side verifies the
-                                        // authoritative daily reading quest by reloading /balance.
+                                        // IMPORTANT: local is_read/history_pool/addHistory signals are only
+                                        // hints. The authoritative acceptance remains the /balance quest
+                                        // increment checked on the native side.
                                         var stateAtBottom = checkMangaBuffReadState();
                                         logReadState(stateAtBottom);
                                         AndroidReaderBridge.onLogStep(
@@ -2825,27 +2891,38 @@ class MangaBuffAutomation(
                                             ' postStatus=' + stateAtBottom.postStatus
                                         );
 
-                                        var next = findNextChapter();
-                                        var isLast = isLastChapter();
-                                        var candidateUrl = (!next && !isLast) ? buildCandidateNextUrl() : '';
+                                        // Give MangaBuff a short grace period to finish its own
+                                        // addHistory/read-state update before the native /balance check.
+                                        setTimeout(function() {
+                                            var nextAfterSettle = findNextChapter();
+                                            var isLastAfterSettle = isLastChapter();
+                                            var candidateAfterSettle =
+                                                (!nextAfterSettle && !isLastAfterSettle)
+                                                    ? buildCandidateNextUrl()
+                                                    : '';
 
-                                        chapterDone = true;
-                                        unknownFinalStart = 0;
-
-                                        if (next) {
-                                            var nextHref = getHref(next);
-                                            AndroidReaderBridge.onLogStep('NEXT_CHAPTER_FOUND_DOM url=' + nextHref);
-                                            finish(next, false);
-                                        } else if (isLast) {
-                                            AndroidReaderBridge.onLogStep('FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER');
-                                            AndroidReaderBridge.onLogStep('LAST_CHAPTER_CONFIRMED');
-                                            finish(null, true);
-                                        } else if (candidateUrl) {
-                                            AndroidReaderBridge.onLogStep('NEXT_CHAPTER_URL_FALLBACK current=' + window.location.href + ' candidate=' + candidateUrl);
-                                            finishWithCandidateUrl(candidateUrl);
-                                        } else {
-                                            AndroidReaderBridge.onNextChapterUnknown();
-                                        }
+                                            if (nextAfterSettle) {
+                                                var nextHref = getHref(nextAfterSettle);
+                                                AndroidReaderBridge.onLogStep('NEXT_CHAPTER_FOUND_DOM url=' + nextHref);
+                                                chapterDone = true;
+                                                finish(nextAfterSettle, false);
+                                            } else if (isLastAfterSettle) {
+                                                AndroidReaderBridge.onLogStep('FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER');
+                                                AndroidReaderBridge.onLogStep('LAST_CHAPTER_CONFIRMED');
+                                                chapterDone = true;
+                                                finish(null, true);
+                                            } else if (candidateAfterSettle) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'NEXT_CHAPTER_URL_FALLBACK current=' + window.location.href +
+                                                    ' candidate=' + candidateAfterSettle
+                                                );
+                                                chapterDone = true;
+                                                finishWithCandidateUrl(candidateAfterSettle);
+                                            } else {
+                                                chapterDone = true;
+                                                AndroidReaderBridge.onNextChapterUnknown();
+                                            }
+                                        }, 1200);
                                     }
 
                                     function humanScroll() {
