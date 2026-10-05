@@ -1863,7 +1863,7 @@ class MangaBuffAutomation(
                 if (markUrl.isBlank()) {
                     log(account.username, "READER: MARK_READ_NO_MANGA_URL", true)
                     pendingMangaMarkAsRead = false
-                    return@let
+                    return@activeReaderMarkRead
                 }
                 currentMangaUrl = markUrl
                 log(account.username, "READER: OPEN_MANGA_INFO_FOR_MANUAL_READ_MARK url=" + markUrl)
