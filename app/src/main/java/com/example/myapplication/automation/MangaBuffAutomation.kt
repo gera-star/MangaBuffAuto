@@ -1890,7 +1890,25 @@ class MangaBuffAutomation(
 
                             } catch(e) {
                                 window.__mbAdsRunnerActive = false;
-                                AndroidAds.onAdFailed("script_exception=" + (e.message || String(e)));
+                                window.__mbAdsRunnerStartedAt = 0;
+
+                                var errorText = String(e && (e.stack || e.message) || e);
+
+                                // Never let a missing Android bridge hide the real JS error.
+                                try {
+                                    if (typeof AndroidAds !== "undefined" && AndroidAds.onStateLog) {
+                                        AndroidAds.onStateLog("RUNNER_EXCEPTION", errorText);
+                                    }
+                                    if (typeof AndroidAds !== "undefined" && AndroidAds.onAdFailed) {
+                                        AndroidAds.onAdFailed("script_exception=" + errorText);
+                                    }
+                                } catch (bridgeError) {
+                                    try {
+                                        window.__mbAdsLastError = errorText +
+                                            " | bridgeError=" +
+                                            String(bridgeError && (bridgeError.message || bridgeError));
+                                    } catch (_) {}
+                                }
                             }
                         })();
                     """.trimIndent()
@@ -1925,8 +1943,17 @@ class MangaBuffAutomation(
                 injectionScheduled = true
 
                 log(account.username, "ADS: INJECT_ATTEMPT reason=$reason url=$currentUrl")
-                webView.evaluateJavascript(script) { _ ->
-                    log(account.username, "ADS: INJECTED reason=$reason")
+                webView.evaluateJavascript(script) { value ->
+                    log(account.username, "ADS: INJECTED reason=$reason result=$value")
+
+                    // This probe is deliberately independent from the ad runner. It tells us
+                    // whether JavaScript actually executed, whether the Android bridge is
+                    // visible to JS, and whether a previous runner flag survived.
+                    webView.evaluateJavascript(
+                        "(function(){try{return JSON.stringify({href:location.href,ready:document.readyState,bridge:typeof AndroidAds,active:!!window.__mbAdsRunnerActive,startedAt:Number(window.__mbAdsRunnerStartedAt||0)});}catch(e){return JSON.stringify({probeError:String(e&&e.message||e)});}})()"
+                    ) { probe ->
+                        log(account.username, "ADS: PROBE reason=$reason result=$probe")
+                    }
                 }
 
                 mainHandler.postDelayed({
