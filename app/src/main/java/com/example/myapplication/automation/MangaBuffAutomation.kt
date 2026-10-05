@@ -767,50 +767,6 @@ class MangaBuffAutomation(
     }
 
 
-    /**
-     * Reload /balance after a chapter and use the server-side reading quest as
-     * the source of truth. Local is_read/history_pool state is not enough.
-     */
-    private suspend fun verifyServerReadQuestIncrement(
-        account: MangaBuffAccount,
-        webView: WebView,
-        beforeQuest: String
-    ): Boolean {
-        val beforeNum = beforeQuest.substringBefore('/').toIntOrNull() ?: 0
-        val beforeTotal = beforeQuest.substringAfter('/').toIntOrNull() ?: 75
-
-        if (beforeNum >= beforeTotal && beforeTotal > 0) {
-            log(account.username, "[READQUEST_DIAG] SERVER_QUEST_ALREADY_COMPLETE before=$beforeQuest")
-            fetchAndLogBalanceInfo(account, webView)
-            return true
-        }
-
-        repeat(3) { attempt ->
-            coroutineContext.ensureActive()
-            log(account.username, "[READQUEST_DIAG] SERVER_QUEST_REFRESH attempt=${attempt + 1}/3 before=$beforeQuest")
-            fetchAndLogBalanceInfo(account, webView)
-
-            val afterQuest = lastKnownReadQuest
-            val afterNum = afterQuest.substringBefore('/').toIntOrNull() ?: beforeNum
-            val delta = afterNum - beforeNum
-            log(account.username, "[READQUEST_DIAG] SERVER_QUEST_VERIFY before=$beforeQuest after=$afterQuest delta=${if (delta >= 0) "+$delta" else "$delta"}")
-
-            if (afterNum > beforeNum) {
-                log(account.username, "[READQUEST_DIAG] SERVER_QUEST_INCREMENT_CONFIRMED $beforeQuest->$afterQuest")
-                return true
-            }
-
-            if (afterNum >= beforeTotal && beforeTotal > 0) {
-                log(account.username, "[READQUEST_DIAG] SERVER_QUEST_ALREADY_COMPLETE after=$afterQuest")
-                return true
-            }
-
-            if (attempt < 2) delay(1500L)
-        }
-
-        log(account.username, "[READQUEST_DIAG] SERVER_QUEST_INCREMENT_NOT_CONFIRMED before=$beforeQuest after=$lastKnownReadQuest", true)
-        return false
-    }
     // =========================================================
     // CSRF
     // =========================================================
