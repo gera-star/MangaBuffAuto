@@ -181,14 +181,79 @@ class MangaBuffAutomation(
             "ADS: NATIVE_CLOSE_TAP_DISPATCH px=" + px + " py=" + py +
                 " webView=" + webView.width + "x" + webView.height + " density=" + density
         )
-        val down = SystemClock.uptimeMillis()
+        val downTime = SystemClock.uptimeMillis()
 
-        MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, px, py, 0).also { event ->
-            try { webView.dispatchTouchEvent(event) } finally { event.recycle() }
+        // Do not send DOWN+UP back-to-back. Chromium/WebView can drop a synthetic
+        // tap when both events are dispatched in the same main-thread turn. Keep
+        // the full motion set alive for a short, realistic finger press.
+        val downEvent = MotionEvent.obtain(
+            downTime,
+            downTime,
+            MotionEvent.ACTION_DOWN,
+            px,
+            py,
+            0
+        ).apply {
+            source = android.view.InputDevice.SOURCE_TOUCHSCREEN
         }
-        MotionEvent.obtain(down, down + 80L, MotionEvent.ACTION_UP, px, py, 0).also { event ->
-            try { webView.dispatchTouchEvent(event) } finally { event.recycle() }
+
+        val downConsumed = try {
+            webView.dispatchTouchEvent(downEvent)
+        } finally {
+            downEvent.recycle()
         }
+
+        log(
+            accountUsername,
+            "ADS: NATIVE_CLOSE_DOWN consumed=$downConsumed source=TOUCHSCREEN"
+        )
+
+        mainHandler.postDelayed({
+            if (!webView.isAttachedToWindow) {
+                log(accountUsername, "ADS: NATIVE_CLOSE_UP_SKIPPED webview_detached", true)
+                return@postDelayed
+            }
+
+            val moveTime = SystemClock.uptimeMillis()
+            val moveEvent = MotionEvent.obtain(
+                downTime,
+                moveTime,
+                MotionEvent.ACTION_MOVE,
+                px,
+                py,
+                0
+            ).apply {
+                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            }
+            try {
+                webView.dispatchTouchEvent(moveEvent)
+            } finally {
+                moveEvent.recycle()
+            }
+
+            val upTime = SystemClock.uptimeMillis()
+            val upEvent = MotionEvent.obtain(
+                downTime,
+                upTime,
+                MotionEvent.ACTION_UP,
+                px,
+                py,
+                0
+            ).apply {
+                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            }
+            val upConsumed = try {
+                webView.dispatchTouchEvent(upEvent)
+            } finally {
+                upEvent.recycle()
+            }
+
+            log(
+                accountUsername,
+                "ADS: NATIVE_CLOSE_UP consumed=$upConsumed elapsed=" +
+                    (upTime - downTime) + "ms source=TOUCHSCREEN"
+            )
+        }, 120L)
     }
 
     private fun dispatchNativeSwipe(
