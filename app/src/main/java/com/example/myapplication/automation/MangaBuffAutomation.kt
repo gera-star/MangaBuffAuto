@@ -1912,18 +1912,19 @@ class MangaBuffAutomation(
         mainHandler.post {
             class MineBridge {
                 @JavascriptInterface
-                fun onMineProgress(clicks: Int, total: Int) {
-                    updateStatus(
-                        account,
-                        "⛏️ Шахта ($clicks/$total)",
-                        true,
-                        "Шахта",
-                        if (total > 0) clicks.toFloat() / total else 1f
-                    )
+                fun onMineProgress(clicks: Int, total: Int, ore: Int) {
+                    updateStatus(account, "⛏️ Шахта ($clicks/$total) • 🪨 $ore", true, "Шахта",
+                        if (total > 0) clicks.toFloat() / total else 1f)
                 }
 
                 @JavascriptInterface
-                fun onMineLog(msg: String) { log(account.username, msg) }
+                fun onMineExchange(oreMined: Int, oreExchanged: Int, diamondsReceived: Int, oreRemaining: Int) {
+                    log(account.username, "MINE: EXCHANGE_SUCCESS mined=$oreMined exchanged=$oreExchanged diamonds=+$diamondsReceived remainingOre=$oreRemaining")
+                    updateStatus(account, "⛏️ Шахта • 🪨 $oreMined → 💎+$diamondsReceived", true, "Шахта", 1f)
+                }
+
+                @JavascriptInterface
+                fun onMineLog(msg: String) { log(account.username, "MINE: $msg") }
 
                 @JavascriptInterface
                 fun onMineComplete() { safeResume(true) }
@@ -1934,60 +1935,194 @@ class MangaBuffAutomation(
 
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
+                    if (view == null) { safeResume(false); return }
+
                     val script = """
                         (function() {
                             try {
+                                var startedAt = Date.now();
+                                var maxRuntime = 180000;
                                 var clicks = 0;
+                                var root = document.querySelector('.main-mine');
+                                var initialOre = root ? (parseInt(root.getAttribute('data-ore') || '0', 10) || 0) : 0;
                                 var hits = document.querySelector('.main-mine__game-hits-left');
-                                var initialHits = hits ? parseInt(hits.innerText.trim(), 10) || 0 : 0;
+                                var initialHits = hits ? parseInt((hits.innerText || '').trim(), 10) || 0 : 0;
 
-                                if (initialHits <= 0) {
-                                    finish();
-                                    return;
+                                function numText(el) {
+                                    if (!el) return 0;
+                                    var n = parseInt((el.innerText || el.textContent || '').replace(/\s/g, ''), 10);
+                                    return isFinite(n) ? n : 0;
+                                }
+
+                                function currentOre() {
+                                    var mine = document.querySelector('.main-mine');
+                                    return mine ? (parseInt(mine.getAttribute('data-ore') || '0', 10) || 0) : 0;
+                                }
+
+                                function waitForShop(done) {
+                                    var started = Date.now();
+                                    function poll() {
+                                        var modal = document.querySelector('#modal-mine-shop');
+                                        var exchange = document.querySelector('#modal-mine-shop .mine-shop__ore-change-btn');
+                                        if (modal && exchange) { done(); return; }
+                                        if (Date.now() - started >= 10000) {
+                                            AndroidMine.onMineLog('SHOP_NOT_OPEN');
+                                            AndroidMine.onMineComplete();
+                                            return;
+                                        }
+                                        setTimeout(poll, 200);
+                                    }
+                                    poll();
+                                }
+
+                                function waitForOreChange(beforeOre, done) {
+                                    var started = Date.now();
+                                    function poll() {
+                                        var now = currentOre();
+                                        if (now !== beforeOre || Date.now() - started >= 5000) { done(now); return; }
+                                        setTimeout(poll, 200);
+                                    }
+                                    poll();
+                                }
+
+                                function finish() {
+                                    if (Date.now() - startedAt > maxRuntime) {
+                                        AndroidMine.onMineLog('TIMEOUT');
+                                        AndroidMine.onMineComplete();
+                                        return;
+                                    }
+
+                                    var minedOre = Math.max(0, currentOre() - initialOre);
+                                    var header = document.querySelector('.main-mine__header_score');
+                                    if (!header) {
+                                        AndroidMine.onMineLog('CRYSTAL_HEADER_NOT_FOUND');
+                                        AndroidMine.onMineComplete();
+                                        return;
+                                    }
+
+                                    header.click();
+                                    waitForShop(function() { runShop(minedOre); });
+                                }
+
+                                function runShop(minedOre) {
+                                    var beforeOre = currentOre();
+                                    var beforeDiamonds = numText(document.querySelector('.main-mine__header_score-count, .js-score'));
+
+                                    function exchange() {
+                                        var slider = document.querySelector('#modal-mine-shop .mine-shop__exchange-slider');
+                                        var exchangeButton = document.querySelector('#modal-mine-shop .mine-shop__ore-change-btn');
+
+                                        if (!slider || !exchangeButton) {
+                                            AndroidMine.onMineLog('EXCHANGE_CONTROLS_NOT_FOUND');
+                                            AndroidMine.onMineComplete();
+                                            return;
+                                        }
+
+                                        var max = parseInt(slider.getAttribute('max') || '0', 10) || 0;
+                                        if (max <= 0) {
+                                            AndroidMine.onMineLog('NO_EXCHANGE_AVAILABLE');
+                                            AndroidMine.onMineComplete();
+                                            return;
+                                        }
+
+                                        slider.value = String(max);
+                                        slider.dispatchEvent(new Event('input', { bubbles: true }));
+                                        slider.dispatchEvent(new Event('change', { bubbles: true }));
+
+                                        setTimeout(function() {
+                                            var diamonds = numText(document.querySelector('#modal-mine-shop .mine-shop__exchange-diamonds'));
+                                            var oreCost = numText(document.querySelector('#modal-mine-shop .mine-shop__exchange-ore'));
+
+                                            if (diamonds <= 0 || oreCost <= 0 || oreCost !== diamonds * 100) {
+                                                AndroidMine.onMineLog('EXCHANGE_VALIDATION_FAILED diamonds=' + diamonds + ' ore=' + oreCost);
+                                                AndroidMine.onMineComplete();
+                                                return;
+                                            }
+
+                                            exchangeButton.click();
+
+                                            var started = Date.now();
+                                            function verify() {
+                                                var afterOre = currentOre();
+                                                var afterDiamonds = numText(document.querySelector('.main-mine__header_score-count, .js-score'));
+
+                                                if (afterOre !== beforeOre || afterDiamonds !== beforeDiamonds) {
+                                                    var exchanged = Math.max(0, beforeOre - afterOre);
+                                                    var received = Math.max(0, afterDiamonds - beforeDiamonds);
+                                                    if (exchanged === oreCost && received === diamonds) {
+                                                        AndroidMine.onMineExchange(minedOre, exchanged, received, afterOre);
+                                                        AndroidMine.onMineComplete();
+                                                        return;
+                                                    }
+                                                }
+
+                                                if (Date.now() - started >= 8000) {
+                                                    AndroidMine.onMineLog('EXCHANGE_VERIFY_TIMEOUT beforeOre=' + beforeOre +
+                                                        ' afterOre=' + afterOre + ' beforeDiamonds=' + beforeDiamonds +
+                                                        ' afterDiamonds=' + afterDiamonds);
+                                                    AndroidMine.onMineComplete();
+                                                    return;
+                                                }
+                                                setTimeout(verify, 250);
+                                            }
+                                            verify();
+                                        }, 250);
+                                    }
+
+                                    if (\${settings.mineAutoUpgrade}) {
+                                        var upgrade = document.querySelector('#modal-mine-shop .mine-shop__upgrade-btn');
+                                        var priceText = upgrade && upgrade.parentElement ? upgrade.parentElement.innerText : '';
+                                        var priceMatch = priceText.match(/Цена:\s*([0-9\s]+)\s*руды/i);
+                                        var upgradePrice = priceMatch ? parseInt(priceMatch[1].replace(/\s/g, ''), 10) || 0 : 0;
+
+                                        if (upgrade && upgradePrice > 0 && beforeOre >= upgradePrice) {
+                                            AndroidMine.onMineLog('UPGRADE_START price=' + upgradePrice + ' ore=' + beforeOre);
+                                            upgrade.click();
+                                            waitForOreChange(beforeOre, function(afterUpgradeOre) {
+                                                AndroidMine.onMineLog('UPGRADE_RESULT ore=' + afterUpgradeOre);
+                                                exchange();
+                                            });
+                                            return;
+                                        }
+                                    }
+
+                                    exchange();
                                 }
 
                                 function tap() {
+                                    if (Date.now() - startedAt > maxRuntime) {
+                                        AndroidMine.onMineLog('TIMEOUT');
+                                        AndroidMine.onMineComplete();
+                                        return;
+                                    }
+
                                     var current = document.querySelector('.main-mine__game-hits-left');
-                                    var left = current ? parseInt(current.innerText.trim(), 10) || 0 : initialHits - clicks;
+                                    var left = current ? parseInt((current.innerText || '').trim(), 10) || 0
+                                        : Math.max(0, initialHits - clicks);
                                     var button = document.querySelector('button.main-mine__game-tap');
 
                                     if (button && left > 0) {
                                         button.click();
                                         clicks++;
                                         if (clicks % 5 === 0 || left <= 1) {
-                                            AndroidMine.onMineProgress(clicks, initialHits);
+                                            AndroidMine.onMineProgress(clicks, initialHits, currentOre());
                                         }
                                         setTimeout(tap, 1000 + Math.floor(Math.random() * 500));
                                     } else {
+                                        AndroidMine.onMineProgress(clicks, initialHits, currentOre());
                                         finish();
                                     }
                                 }
 
-                                function finish() {
-                                    if (${settings.mineAutoUpgrade}) {
-                                        var upgrade = document.querySelector('button.mine-shop__upgrade-btn');
-                                        if (upgrade) upgrade.click();
-                                    }
-
-                                    if (${settings.mineAutoExchange}) {
-                                        var exchange = document.querySelector('button.mine-shop__ore-change-btn');
-                                        if (exchange) exchange.click();
-                                    }
-
-                                    setTimeout(function() {
-                                        AndroidMine.onMineComplete();
-                                    }, $MINE_COMPLETION_DELAY_MS);
-                                }
-
-                                tap();
-
+                                if (initialHits <= 0) finish(); else tap();
                             } catch(e) {
+                                AndroidMine.onMineLog('SCRIPT_ERROR ' + (e && e.message ? e.message : e));
                                 AndroidMine.onMineComplete();
                             }
                         })();
                     """.trimIndent()
 
-                    view?.evaluateJavascript(script, null)
+                    view.evaluateJavascript(script, null)
                 }
             }
 
