@@ -1423,13 +1423,12 @@ class MangaBuffAutomation(
                                     return match ? parseNumber(match[1]) : null;
                                 }
 
-                                function buttonFingerprint(btn) {
-                                    if (!btn) return "";
-                                    return [
-                                        btn.getAttribute("data-count") || "",
-                                        textOf(btn),
-                                        btn.disabled ? "disabled" : "enabled"
-                                    ].join("|");
+                                function readButtonCount(btn) {
+                                    if (!btn) return null;
+                                    var raw = btn.getAttribute("data-count");
+                                    if (raw === null || raw === undefined || raw === "") return null;
+                                    var n = parseInt(String(raw), 10);
+                                    return isNaN(n) ? null : n;
                                 }
 
                                 function isDailyLimitText(text) {
@@ -1440,13 +1439,13 @@ class MangaBuffAutomation(
 
                                 var initialButton = findWatchButton();
                                 var initialDiamond = readDiamondBalance(document);
-                                var initialFingerprint = buttonFingerprint(initialButton);
+                                var initialButtonCount = readButtonCount(initialButton);
 
                                 AndroidAds.onStateLog(
                                     "BALANCE_READY",
                                     "button=" + !!initialButton +
                                     " diamonds=" + (initialDiamond === null ? "?" : initialDiamond) +
-                                    " fingerprint=" + initialFingerprint
+                                    " count=" + (initialButtonCount === null ? "?" : initialButtonCount)
                                 );
 
                                 function findTimer() {
@@ -1479,19 +1478,21 @@ class MangaBuffAutomation(
 
                                     var diamondNow = readDiamondBalance(document);
                                     var btnNow = findWatchButton();
-                                    var fingerprintNow = buttonFingerprint(btnNow);
+                                    var buttonCountNow = readButtonCount(btnNow);
                                     var diamondConfirmed = initialDiamond !== null &&
                                         diamondNow !== null && diamondNow >= initialDiamond + 7;
-                                    var buttonChanged = !!initialFingerprint && !!fingerprintNow &&
-                                        fingerprintNow !== initialFingerprint;
+                                    var buttonCountChanged = initialButtonCount !== null &&
+                                        buttonCountNow !== null &&
+                                        buttonCountNow !== initialButtonCount;
 
-                                    if (diamondConfirmed || buttonChanged) {
+                                    if (diamondConfirmed || buttonCountChanged) {
                                         finished = true;
                                         AndroidAds.onStateLog(
                                             "REWARD_VERIFIED",
                                             "diamonds=" + (diamondNow === null ? "?" : diamondNow) +
                                             " before=" + (initialDiamond === null ? "?" : initialDiamond) +
-                                            " buttonChanged=" + buttonChanged
+                                            " count=" + (buttonCountNow === null ? "?" : buttonCountNow) +
+                                            " initialCount=" + (initialButtonCount === null ? "?" : initialButtonCount)
                                         );
                                         AndroidAds.onAdSuccess();
                                         return;
@@ -1522,9 +1523,12 @@ class MangaBuffAutomation(
                                         var timer = findTimer();
                                         var timerValue = timer ? parseNumber(textOf(timer)) : null;
                                         var close = findCloseButton();
+                                        var adContainer = document.querySelector(
+                                            "[data-fullscreen-element], [data-fullscreen], .fullscreen, .advert, [class*=\"advert\"]"
+                                        );
 
                                         if ((timerValue !== null && timerValue <= 0) ||
-                                            (close && elapsed >= 10000)) {
+                                            (close && adContainer && elapsed >= 10000)) {
                                             clearInterval(watchTimer);
 
                                             if (close) {
@@ -1595,7 +1599,7 @@ class MangaBuffAutomation(
                                     }
 
                                     initialButton = btn;
-                                    initialFingerprint = buttonFingerprint(btn);
+                                    initialButtonCount = readButtonCount(btn);
                                     initialDiamond = readDiamondBalance(document);
 
                                     try {
