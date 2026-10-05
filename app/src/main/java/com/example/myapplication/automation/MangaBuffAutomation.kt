@@ -61,6 +61,11 @@ sealed interface ReaderResult {
         val title: String
     ) : ReaderResult
 
+    data class MangaSkipped(
+        val mangaUrl: String,
+        val title: String
+    ) : ReaderResult
+
     data object MangaAlreadyCompleted : ReaderResult
     data object NoMangaAvailable : ReaderResult
     data class Failed(val reason: String) : ReaderResult
@@ -241,6 +246,9 @@ class MangaBuffAutomation(
     @Volatile
     private var activeChapterContext: ChapterContext? = null
 
+    @Volatile
+    private var activeReaderSkip: (() -> Unit)? = null
+
     private val commentPhrases = listOf(
         "Спасибо за главу! Было интересно читать.",
         "Спасибо за перевод и новую главу!",
@@ -296,6 +304,19 @@ class MangaBuffAutomation(
     fun getCurrentMangaUrl(): String = currentMangaUrl
     fun getLastFinishedChapterId(): String = lastFinishedChapterId
     fun getLastFinishedChapterNumber(): String = lastFinishedChapterNumber
+
+    fun skipCurrentManga(): Boolean {
+        if (activeReaderSkip == null) {
+            log("SYSTEM", "READER: SKIP_MANGA_NOT_AVAILABLE")
+            return false
+        }
+        log("SYSTEM", "READER: SKIP_MANGA_REQUESTED title='$lastFinishedMangaTitle' url='$currentMangaUrl'")
+        mainHandler.post {
+            try { activeReaderSkip?.invoke() }
+            catch (e: Exception) { log("SYSTEM", "READER: SKIP_MANGA_ERROR error=" + e.message, true) }
+        }
+        return true
+    }
 
     private fun updateReaderStatus(account: MangaBuffAccount) {
         val totalStr = if (totalMangaChapters > 0) totalMangaChapters.toString() else "?"
@@ -1700,6 +1721,19 @@ class MangaBuffAutomation(
                     delay(3000L)
                 }
 
+                is ReaderResult.MangaSkipped -> {
+                    val skipUrl = ensureCanonicalMangaUrl(result.mangaUrl.ifBlank { currentMangaUrl })
+                    log(account.username, "READER: MANGA_SKIPPED title='" + result.title + "' url=" + skipUrl)
+                    if (skipUrl.isNotBlank()) skippedMangaUrls.add(skipUrl)
+                    currentMangaUrl = ""
+                    nextChapterUrlToOpen = ""
+                    totalMangaChapters = 0
+                    currentSessionChaptersRead = chaptersReadCount
+                    activeChapterContext = null
+                    onMangaActiveUrlUpdate(account.id, "", "")
+                    delay(500L)
+                }
+
                 is ReaderResult.MangaCompleted -> {
                     log(account.username, "READER: MANGA_COMPLETED title='" + result.title + "'")
 
@@ -1736,6 +1770,7 @@ class MangaBuffAutomation(
         }
 
         activeChapterContext = null
+        activeReaderSkip = null
         log(account.username, "READER: STOP_CLEANUP_COMPLETE")
         log(account.username, "READER: FINISHED totalRead=$chaptersReadCount/$target")
     }
@@ -1758,13 +1793,39 @@ class MangaBuffAutomation(
         fun safeResume(result: ReaderResult) {
             if (!resumed && continuation.isActive) {
                 resumed = true
+                activeReaderSkip = null
                 continuation.resume(result)
             }
         }
 
         continuation.invokeOnCancellation {
+            activeReaderSkip = null
             mainHandler.post {
                 try { webView.stopLoading() } catch (_: Exception) {}
+                try {
+                    webView.evaluateJavascript(
+                        "try{window.__mbNativeFingerRunning=false;if(window.__mbNativeFingerTimer){clearTimeout(window.__mbNativeFingerTimer);window.__mbNativeFingerTimer=null;}}catch(e){}",
+                        null
+                    )
+                } catch (_: Exception) {}
+            }
+        }
+
+        activeReaderSkip = {
+            if (!resumed && continuation.isActive) {
+                log(account.username, "READER: SKIP_MANGA_EXECUTED title='" + cleanMangaTitle(lastFinishedMangaTitle) + "' url='" + currentMangaUrl + "'")
+                try {
+                    webView.evaluateJavascript(
+                        "try{window.__mbNativeFingerRunning=false;if(window.__mbNativeFingerTimer){clearTimeout(window.__mbNativeFingerTimer);window.__mbNativeFingerTimer=null;}}catch(e){}",
+                        null
+                    )
+                } catch (_: Exception) {}
+                safeResume(
+                    ReaderResult.MangaSkipped(
+                        mangaUrl = currentMangaUrl,
+                        title = cleanMangaTitle(lastFinishedMangaTitle)
+                    )
+                )
             }
         }
 
@@ -3538,10 +3599,14 @@ class MangaBuffAutomation(
                                             var duration = 320 + Math.floor(Math.random() * 220);
                                             var pause = 80 + Math.floor(Math.random() * 120);
 
+                                            var beforeY = m.y;
+
                                             AndroidReaderBridge.onLogStep(
                                                 'READER: NATIVE_FINGER_SWIPE distance=' + Math.floor(distance) +
                                                 ' duration=' + duration +
-                                                ' pause=' + pause
+                                                ' pause=' + pause +
+                                                ' beforeY=' + Math.floor(beforeY) +
+                                                ' beforeRemaining=' + Math.floor(m.remaining)
                                             );
 
                                             try {
@@ -3557,20 +3622,29 @@ class MangaBuffAutomation(
                                                     'READER: NATIVE_FINGER_SWIPE_ERROR ' +
                                                     (e && e.message ? e.message : String(e))
                                                 );
-                                                /*
-                                                 * Safety fallback: if the View-layer touch path is
-                                                 * unavailable on a particular WebView build, keep the
-                                                 * reader moving instead of stopping the chapter.
-                                                 */
-                                                try {
-                                                    window.scrollBy(0, Math.max(180, distance * 0.9));
-                                                } catch(ignore) {}
                                             }
 
-                                            window.__mbNativeFingerTimer = setTimeout(
-                                                nextSwipe,
-                                                duration + pause
-                                            );
+                                            window.__mbNativeFingerTimer = setTimeout(function() {
+                                                if (chapterDone || !window.__mbNativeFingerRunning) return;
+                                                var after = metrics();
+                                                var moved = Math.abs(after.y - beforeY) >= 12;
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NATIVE_FINGER_SWIPE_RESULT moved=' + moved +
+                                                    ' beforeY=' + Math.floor(beforeY) +
+                                                    ' afterY=' + Math.floor(after.y) +
+                                                    ' deltaY=' + Math.floor(after.y - beforeY) +
+                                                    ' remaining=' + Math.floor(after.remaining)
+                                                );
+                                                if (!moved && after.remaining > 120) {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: NATIVE_FINGER_SWIPE_RETRY reason=NO_SCROLL_MOVEMENT remaining=' +
+                                                        Math.floor(after.remaining)
+                                                    );
+                                                    setTimeout(nextSwipe, 120);
+                                                } else {
+                                                    setTimeout(nextSwipe, pause);
+                                                }
+                                            }, duration + 220);
                                         }
 
                                         nextSwipe();
