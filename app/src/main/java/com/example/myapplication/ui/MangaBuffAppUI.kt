@@ -393,34 +393,30 @@ fun AccountCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // ЕДИНАЯ ГОРИЗОНТАЛЬНАЯ СТРОКА АККАУНТА:
-            // ник + текущая задача/статус + статистика.
-            HorizontalDivider(
-                modifier = Modifier.padding(bottom = 10.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
-
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
                         .background(
-                            if (account.isRunning) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.secondaryContainer
+                            if (account.isRunning) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            }
                         )
                         .clickable { onOpenBalance() },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = \u0024{account.username.ifEmpty { "U" }.take(1).uppercase()},
-                        style = MaterialTheme.typography.titleMedium,
+                        text = "${account.username.ifEmpty { "U" }.take(1).uppercase()}",
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = if (account.isRunning) {
                             MaterialTheme.colorScheme.onPrimaryContainer
@@ -430,142 +426,124 @@ fun AccountCard(
                     )
                 }
 
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = \u0024{account.username.ifEmpty { "Пользователь" }},
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                Icons.AutoMirrored.Filled.OpenInNew,
-                                contentDescription = "Открыть баланс",
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
                         Text(
-                            text = "💎 \u0024{account.diamonds}  🃏 \u0024{account.cardDrop}  📖 \u0024{account.chapterProgress}  💬 \u0024{account.commentProgress}",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1
+                            text = "${account.username.ifEmpty { "Пользователь" }}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onOpenBalance() }
                         )
-                    }
 
-                    Spacer(modifier = Modifier.height(3.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (account.isRunning) {
-                            CircularProgressIndicator(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .padding(end = 4.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(6.dp))
 
                         Text(
-                            text = \u0024{account.getSafeStatusMessage()},
-                            style = MaterialTheme.typography.bodySmall,
+                            text = "${account.getSafeStatusMessage()}",
+                            fontSize = 11.sp,
                             color = if (account.isRunning) {
                                 MaterialTheme.colorScheme.primary
                             } else {
                                 MaterialTheme.colorScheme.outline
                             },
-                            fontWeight = if (account.isRunning) FontWeight.Medium else FontWeight.Normal,
+                            fontWeight = if (account.isRunning) {
+                                FontWeight.Medium
+                            } else {
+                                FontWeight.Normal
+                            },
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        Text(
+                            text = "💎 ${account.diamonds}  🃏 ${account.cardDrop}  📖 ${account.chapterProgress}  💬 ${account.commentProgress}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
                             maxLines = 1
                         )
                     }
 
-                    // Кнопки управления — непосредственно под ником/статусом.
+                    Spacer(modifier = Modifier.height(2.dp))
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Start,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // 🎲 = сменить мангу: отметить текущую как "Прочитано"
+                        // и продолжить обычный каталог с hide_read=1.
                         IconButton(
                             onClick = onChangeManga,
                             enabled = account.isRunning,
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
                             Text(
-                                text = "🔄",
-                                fontSize = 17.sp
+                                text = "🎲",
+                                fontSize = 15.sp
                             )
                         }
 
-                        if (account.isRunning) {
-                            IconButton(
-                                onClick = onStopAccount,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Stop,
-                                    contentDescription = "Стоп",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        } else {
-                            IconButton(
-                                onClick = { onRunTask(TaskType.ALL) },
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.PlayArrow,
-                                    contentDescription = "Запустить все",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
+                        IconButton(
+                            onClick = {
+                                if (account.isRunning) onStopAccount()
+                                else onRunTask(TaskType.ALL)
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                if (account.isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                contentDescription = if (account.isRunning) "Стоп" else "Запустить все",
+                                modifier = Modifier.size(18.dp),
+                                tint = if (account.isRunning) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                }
+                            )
                         }
 
                         IconButton(
                             onClick = onRefresh,
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
                                 Icons.Default.Refresh,
-                                contentDescription = "Обновить и на главную",
+                                contentDescription = "Обновить",
+                                modifier = Modifier.size(18.dp),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
 
                         IconButton(
                             onClick = onDelete,
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
                                 Icons.Default.Delete,
                                 contentDescription = "Удалить",
+                                modifier = Modifier.size(18.dp),
                                 tint = MaterialTheme.colorScheme.error
                             )
                         }
 
                         IconButton(
                             onClick = { expanded = !expanded },
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
                                 if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = "Настройки"
+                                contentDescription = "Настройки",
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -573,76 +551,27 @@ fun AccountCard(
             }
 
             if (account.isRunning) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(12.dp).padding(end = 4.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            Text(
-                                text = account.getSafeStatusMessage(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (account.isRunning) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.outline,
-                                fontWeight = if (account.isRunning) FontWeight.Medium else FontWeight.Normal
-                            )
-                        }
-                    }
-                }
-                Row {
-                    if (account.isRunning) {
-                        IconButton(onClick = onStopAccount) {
-                            Icon(Icons.Default.Stop, contentDescription = "Стоп", tint = MaterialTheme.colorScheme.error)
-                        }
-                    } else {
-                        IconButton(onClick = { onRunTask(TaskType.ALL) }) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = "Запустить все",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    IconButton(
-                        onClick = onChangeManga,
-                        enabled = account.isRunning
-                    ) {
-                        Text(
-                            text = "🔄",
-                            fontSize = 18.sp,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                    IconButton(onClick = onRefresh) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Обновить и на главную", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.error)
-                    }
-                    IconButton(onClick = { expanded = !expanded }) {
-                        Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = "Настройки")
-                    }
-                }
-            }
-
-            if (account.isRunning) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 LinearProgressIndicator(
                     progress = { account.taskProgress },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(2.dp)),
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
             }
 
             AnimatedVisibility(visible = expanded) {
-                Column(modifier = Modifier.padding(top = 12.dp)) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
                     HorizontalDivider()
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Автоматические задачи:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Автоматические задачи:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
 
                     TaskSwitchRow("🃏 Карточные бои", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
