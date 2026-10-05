@@ -1914,8 +1914,26 @@ class MangaBuffAutomation(
                         try {
                             if (!webView.isAttachedToWindow) return@post
                             val safeDelta = deltaPx.coerceIn(240, 1400)
+
+                            // Emergency recovery only: first use the native WebView page
+                            // scrolling API. If the page is still in a transient rendering
+                            // state, pageDown() gives Chromium another native scroll request.
+                            val beforeY = webView.scrollY
                             webView.scrollBy(0, safeDelta)
-                            log(account.username, "READER: NATIVE_RECOVERY_SCROLLBY delta=$safeDelta")
+                            val afterY = webView.scrollY
+
+                            if (afterY == beforeY) {
+                                webView.pageDown(false)
+                                log(
+                                    account.username,
+                                    "READER: NATIVE_RECOVERY_PAGEDOWN delta=$safeDelta beforeY=$beforeY"
+                                )
+                            } else {
+                                log(
+                                    account.username,
+                                    "READER: NATIVE_RECOVERY_SCROLLBY delta=$safeDelta beforeY=$beforeY afterY=$afterY"
+                                )
+                            }
                         } catch (e: Exception) {
                             log(account.username, "READER: NATIVE_RECOVERY_SCROLLBY_ERROR " + (e.message ?: "unknown"), true)
                         }
@@ -3640,6 +3658,23 @@ class MangaBuffAutomation(
                                             if (window.__mbNativeFingerBusy) return;
 
                                             var m = metrics();
+
+                                            // onPageFinished/CHAPTER_PAGE_READY does not guarantee that
+                                            // the next rendered frame already contains the final DOM
+                                            // layout. WebView can briefly report a zero/viewport-only
+                                            // scroll range while the reader images are being laid out.
+                                            // Never interpret that transient state as EOF.
+                                            if (m.height <= m.viewport + 16) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NATIVE_FINGER_METRICS_NOT_READY height=' +
+                                                    Math.floor(m.height) +
+                                                    ' viewport=' + Math.floor(m.viewport) +
+                                                    ' y=' + Math.floor(m.y)
+                                                );
+                                                scheduleNext(250);
+                                                return;
+                                            }
+
                                             if (m.remaining <= 8) {
                                                 AndroidReaderBridge.onLogStep(
                                                     'READER: NATIVE_FINGER_TARGET_BOTTOM remaining=' +
@@ -3759,7 +3794,11 @@ class MangaBuffAutomation(
                                             }, duration + 450);
                                         }
 
-                                        nextSwipe();
+                                        // Give WebView one rendered frame to settle the reader
+                                        // layout before the first synthetic finger gesture. Android
+                                        // explicitly notes that onPageFinished() does not guarantee that
+                                        // the next frame already reflects the final DOM state.
+                                        scheduleNext(250);
                                     }
                                     
                                     var interval = setInterval(function() {
