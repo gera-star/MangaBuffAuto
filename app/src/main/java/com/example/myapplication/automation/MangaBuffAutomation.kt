@@ -2277,7 +2277,8 @@ class MangaBuffAutomation(
                     title: String,
                     elapsedMs: Long,
                     nextChapterUrl: String,
-                    isRealLastChapter: Boolean
+                    isRealLastChapter: Boolean,
+                    confirmationSource: String
                 ) {
                     val ctx = activeChapterContext
                     if (ctx != null && ctx.completionProcessed) {
@@ -2297,8 +2298,11 @@ class MangaBuffAutomation(
                         ?.takeIf { it.isNotBlank() }
                         ?: lastKnownReadQuest
 
+                    val confirmation = confirmationSource.ifBlank { "UNKNOWN" }
+
                     log(account.username, "READ: CHAPTER_READER_FINISHED elapsed=" + elapsedMs + "ms")
                     log(account.username, "READ: CHAPTER_END_REACHED chapter=" + number)
+                    log(account.username, "READER: CHAPTER_CONFIRMATION source=" + confirmation)
                     log(account.username, "READER: COMPLETION_ACCEPTED chapterId=" + chapterId)
 
                     /*
@@ -2317,7 +2321,7 @@ class MangaBuffAutomation(
                     if (historyAccepted) {
                         log(account.username, "READER: CHAPTER_HISTORY_SERVER_ACCEPTED chapterId=$chapterId source=ADD_HISTORY_2XX")
                     } else {
-                        log(account.username, "READER: CHAPTER_SERVER_QUEST_DEFERRED chapterId=$chapterId questBefore=$questBefore reason=CCL_BATCH_OR_ASYNC_ACCOUNTING")
+                        log(account.username, "READER: CHAPTER_HISTORY_CONFIRMED_LOCAL chapterId=$chapterId source=$confirmation questBefore=$questBefore")
                     }
 
                     if (isRealLastChapter) {
@@ -3066,7 +3070,7 @@ class MangaBuffAutomation(
                                         } catch(e) {}
                                     }
 
-                                    function finish(nextElement, isLast) {
+                                    function finish(nextElement, isLast, confirmationSource) {
                                         stopScroll();
                                         var elapsed = Date.now() - startMs;
                                         var titleElement = document.querySelector('.reader__controls-name, h1');
@@ -3110,11 +3114,12 @@ class MangaBuffAutomation(
                                             title,
                                             elapsed,
                                             nextUrl,
-                                            isLast
+                                            isLast,
+                                            confirmationSource || 'UNKNOWN'
                                         );
                                     }
 
-                                    function finishWithCandidateUrl(candidateUrl) {
+                                    function finishWithCandidateUrl(candidateUrl, confirmationSource) {
                                         stopScroll();
                                         var elapsed = Date.now() - startMs;
                                         var titleElement = document.querySelector('.reader__controls-name, h1');
@@ -3132,7 +3137,8 @@ class MangaBuffAutomation(
                                             title,
                                             elapsed,
                                             candidateUrl,
-                                            false
+                                            false,
+                                            confirmationSource || 'UNKNOWN'
                                         );
                                     }
 
@@ -3307,25 +3313,40 @@ class MangaBuffAutomation(
                                         logReadState(state);
 
                                         if (state.confirmed) {
-                                            AndroidReaderBridge.onLogStep('READER: MB_READ_CONFIRMED chapterId=' + state.chapterId);
-                                            onSuccess();
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: MB_READ_CONFIRMED chapterId=' + state.chapterId +
+                                                ' source=' + state.confirmSource
+                                            );
+                                            onSuccess(state.confirmSource || 'UNKNOWN');
                                             return;
                                         }
 
-                                        if (!state.isRead) {
+                                        // If MangaBuff already marks the chapter as read but the
+                                        // history request is still pending, let the site's own
+                                        // addHistory routine run. We never synthesize the request.
+                                        if (state.isRead && !state.postStarted && !state.containsCurrent) {
+                                            triggerMangaBuffHistoryIfReady('CONFIRMATION_RETRY');
+                                        } else if (!state.isRead) {
                                             try {
                                                 window.dispatchEvent(new Event('scroll'));
                                             } catch(e) {}
                                         }
 
                                         if (confirmAttempt >= maxConfirmAttempts) {
-                                            AndroidReaderBridge.onLogStep('READER: MB_READ_CONFIRM_TIMEOUT chapterId=' + state.chapterId);
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: MB_READ_CONFIRM_TIMEOUT chapterId=' + state.chapterId +
+                                                ' reason=' + state.waitReason
+                                            );
                                             chapterDone = true;
                                             AndroidReaderBridge.onNextChapterUnknown();
                                             return;
                                         }
 
-                                        AndroidReaderBridge.onLogStep('READER: MB_READ_WAIT attempt=' + confirmAttempt + ' chapterId=' + state.chapterId);
+                                        AndroidReaderBridge.onLogStep(
+                                            'READER: MB_READ_WAIT attempt=' + confirmAttempt +
+                                            ' chapterId=' + state.chapterId +
+                                            ' reason=' + state.waitReason
+                                        );
                                         setTimeout(function() {
                                             waitForMangaBuffConfirmation(onSuccess);
                                         }, 350);
@@ -3523,65 +3544,80 @@ class MangaBuffAutomation(
                                         function resolveNextChapterAfterBottom(attempt) {
                                             if (chapterDone) return;
 
-                                            var nextAfterSettle = findNextChapter();
-                                            var isLastAfterSettle = isLastChapter();
-                                            var candidateAfterSettle =
-                                                (!nextAfterSettle && !isLastAfterSettle)
-                                                    ? buildCandidateNextUrl()
-                                                    : '';
+                                            /*
+                                             * A document bottom is only an end candidate.
+                                             * Do not advance until MangaBuff confirms the current
+                                             * chapter in its own read/history state.
+                                             *
+                                             * For CCL=2 this is normally immediate because the
+                                             * chapter is in history_pool. When the batch is being
+                                             * submitted, wait for ADD_HISTORY_2XX instead.
+                                             */
+                                            waitForMangaBuffConfirmation(function(confirmationSource) {
+                                                if (chapterDone) return;
 
-                                            if (nextAfterSettle) {
-                                                var nextHref = getHref(nextAfterSettle);
-                                                if (isValidNextUrl(nextHref)) {
+                                                var nextAfterSettle = findNextChapter();
+                                                var isLastAfterSettle = isLastChapter();
+                                                var candidateAfterSettle =
+                                                    (!nextAfterSettle && !isLastAfterSettle)
+                                                        ? buildCandidateNextUrl()
+                                                        : '';
+
+                                                if (nextAfterSettle) {
+                                                    var nextHref = getHref(nextAfterSettle);
+                                                    if (isValidNextUrl(nextHref)) {
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'NEXT_CHAPTER_FOUND_DOM_RETRY attempt=' + attempt +
+                                                            ' confirmation=' + (confirmationSource || 'UNKNOWN') +
+                                                            ' url=' + nextHref
+                                                        );
+                                                        chapterDone = true;
+                                                        finish(nextAfterSettle, false, confirmationSource);
+                                                        return;
+                                                    }
+                                                }
+
+                                                if (isLastAfterSettle) {
                                                     AndroidReaderBridge.onLogStep(
-                                                        'NEXT_CHAPTER_FOUND_DOM_RETRY attempt=' + attempt +
-                                                        ' url=' + nextHref
+                                                        'FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER confirmation=' +
+                                                        (confirmationSource || 'UNKNOWN')
                                                     );
+                                                    AndroidReaderBridge.onLogStep('LAST_CHAPTER_CONFIRMED');
                                                     chapterDone = true;
-                                                    finish(nextAfterSettle, false);
+                                                    finish(null, true, confirmationSource);
                                                     return;
                                                 }
-                                            }
 
-                                            if (isLastAfterSettle) {
-                                                AndroidReaderBridge.onLogStep('FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER');
-                                                AndroidReaderBridge.onLogStep('LAST_CHAPTER_CONFIRMED');
-                                                chapterDone = true;
-                                                finish(null, true);
-                                                return;
-                                            }
+                                                if (candidateAfterSettle && isValidNextUrl(candidateAfterSettle)) {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'NEXT_CHAPTER_URL_FALLBACK_RETRY attempt=' + attempt +
+                                                        ' confirmation=' + (confirmationSource || 'UNKNOWN') +
+                                                        ' current=' + window.location.href +
+                                                        ' candidate=' + candidateAfterSettle
+                                                    );
+                                                    chapterDone = true;
+                                                    finishWithCandidateUrl(candidateAfterSettle, confirmationSource);
+                                                    return;
+                                                }
 
-                                            if (candidateAfterSettle && isValidNextUrl(candidateAfterSettle)) {
+                                                if (attempt < 15) {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'NEXT_CHAPTER_DISCOVERY_RETRY attempt=' + (attempt + 1) +
+                                                        '/15 reason=DOM_NOT_READY_AFTER_MANGABUFF_CONFIRMATION'
+                                                    );
+                                                    setTimeout(function() {
+                                                        resolveNextChapterAfterBottom(attempt + 1);
+                                                    }, 1000);
+                                                    return;
+                                                }
+
                                                 AndroidReaderBridge.onLogStep(
-                                                    'NEXT_CHAPTER_URL_FALLBACK_RETRY attempt=' + attempt +
-                                                    ' current=' + window.location.href +
-                                                    ' candidate=' + candidateAfterSettle
+                                                    'NEXT_CHAPTER_DISCOVERY_GIVE_UP reason=NO_VALID_NEXT_URL_AFTER_CONFIRMATION',
+                                                    true
                                                 );
                                                 chapterDone = true;
-                                                finishWithCandidateUrl(candidateAfterSettle);
-                                                return;
-                                            }
-
-                                            // A missing quest increment is expected here. Keep the reader
-                                            // alive and give the page more time instead of turning this
-                                            // into NEXT_CHAPTER_UNKNOWN / ACCOUNT_FINISHED.
-                                            if (attempt < 15) {
-                                                AndroidReaderBridge.onLogStep(
-                                                    'NEXT_CHAPTER_DISCOVERY_RETRY attempt=' + (attempt + 1) +
-                                                    '/15 reason=DOM_NOT_READY_OR_SERVER_ACCOUNTING_DELAY'
-                                                );
-                                                setTimeout(function() {
-                                                    resolveNextChapterAfterBottom(attempt + 1);
-                                                }, 1000);
-                                                return;
-                                            }
-
-                                            AndroidReaderBridge.onLogStep(
-                                                'NEXT_CHAPTER_DISCOVERY_GIVE_UP reason=NO_VALID_NEXT_URL',
-                                                true
-                                            );
-                                            chapterDone = true;
-                                            AndroidReaderBridge.onNextChapterUnknown();
+                                                AndroidReaderBridge.onNextChapterUnknown();
+                                            });
                                         }
 
                                         setTimeout(function() {
