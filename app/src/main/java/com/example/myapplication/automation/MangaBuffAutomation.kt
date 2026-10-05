@@ -2151,7 +2151,7 @@ class MangaBuffAutomation(
                         if (nextChapterUrl.isBlank()) {
                             safeResume(ReaderResult.Failed("NEXT_CHAPTER_UNKNOWN"))
                         } else {
-                            log(account.username, "READER: OPEN_NEXT_CHAPTER url=$nextChapterUrl serverQuestGate=DISABLED_DELAYED_CCL_ACCOUNTING")
+                            log(account.username, "READER: OPEN_NEXT_CHAPTER url=$nextChapterUrl serverQuestGate=DEFERRED_CCL_ACCOUNTING")
                             safeResume(ReaderResult.ChapterRead(giftsFound, chapterUrl, chapterId, nextChapterUrl))
                         }
                     }
@@ -3188,7 +3188,7 @@ class MangaBuffAutomation(
                                         var stateAtBottom = checkMangaBuffReadState();
                                         logReadState(stateAtBottom);
                                         AndroidReaderBridge.onLogStep(
-                                            'READER: SERVER_BALANCE_WILL_VERIFY_LOCAL_STATE isRead=' +
+                                            'READER: SERVER_QUEST_DIAGNOSTIC isRead=' +
                                             stateAtBottom.isRead +
                                             ' historyContainsCurrent=' +
                                             stateAtBottom.containsCurrent +
@@ -3196,7 +3196,7 @@ class MangaBuffAutomation(
                                         );
 
                                         // Give MangaBuff a short grace period to finish its own
-                                        // addHistory/read-state update before the native /balance check.
+                                        // addHistory/read-state update before we choose the next URL.
                                         setTimeout(function() {
                                             var nextAfterSettle = findNextChapter();
                                             var isLastAfterSettle = isLastChapter();
