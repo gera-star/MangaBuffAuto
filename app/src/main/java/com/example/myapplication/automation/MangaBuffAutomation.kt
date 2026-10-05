@@ -1449,17 +1449,28 @@ class MangaBuffAutomation(
                                 );
 
                                 function findTimer() {
+                                    // MangaBuff's ad fullscreen markup is obfuscated, but the
+                                    // data-fullscreen-element attributes are stable.
+                                    var direct = document.querySelector(
+                                        "[data-fullscreen-element=\"timer\"]"
+                                    );
+                                    if (direct) return direct;
+
                                     return document.querySelector(
-                                        "[data-fullscreen-element=\"timer\"]," +
                                         "[data-fullscreen-element-name=\"timer\"]," +
                                         "[class*=\"timer\"]"
                                     );
                                 }
 
                                 function findCloseButton() {
+                                    // Current MangaBuff markup:
+                                    // <div data-fullscreen-element="close">...</div>
+                                    // Older variants used close-btn/aria-label.
                                     var selectors = [
-                                        "[data-fullscreen-element-name=\"close-btn\"]",
+                                        "[data-fullscreen-element=\"close\"]",
+                                        "[data-fullscreen-element-name=\"close\"]",
                                         "[data-fullscreen-element=\"close-btn\"]",
+                                        "[data-fullscreen-element-name=\"close-btn\"]",
                                         ".close-btn",
                                         "button[class*=\"close\"]",
                                         "[aria-label*=\"close\" i]",
@@ -1470,7 +1481,13 @@ class MangaBuffAutomation(
                                         var el = document.querySelector(selectors[i]);
                                         if (el && !el.disabled) return el;
                                     }
-                                    return null;
+
+                                    // The control can be a div containing the actual clickable node.
+                                    var fullscreenClose = document.querySelector(
+                                        "[data-fullscreen-element=\"close\"] [data-survey-fullscreen-control]," +
+                                        "[data-fullscreen-element=\"close\"] svg"
+                                    );
+                                    return fullscreenClose || null;
                                 }
 
                                 function verifyReward(attempt) {
@@ -1492,16 +1509,23 @@ class MangaBuffAutomation(
                                             "diamonds=" + (diamondNow === null ? "?" : diamondNow) +
                                             " before=" + (initialDiamond === null ? "?" : initialDiamond) +
                                             " count=" + (buttonCountNow === null ? "?" : buttonCountNow) +
-                                            " initialCount=" + (initialButtonCount === null ? "?" : initialButtonCount)
+                                            " initialCount=" + (initialButtonCount === null ? "?" : initialButtonCount) +
+                                            " attempt=" + attempt
                                         );
                                         AndroidAds.onAdSuccess();
                                         return;
                                     }
 
-                                    if (attempt >= 12) {
+                                    if (attempt >= 18) {
                                         finished = true;
-                                        AndroidAds.onAdFailed("reward_not_confirmed diamonds=" +
-                                            (diamondNow === null ? "?" : diamondNow));
+                                        AndroidAds.onAdFailed(
+                                            "reward_not_confirmed diamonds=" +
+                                            (diamondNow === null ? "?" : diamondNow) +
+                                            " before=" +
+                                            (initialDiamond === null ? "?" : initialDiamond) +
+                                            " count=" +
+                                            (buttonCountNow === null ? "?" : buttonCountNow)
+                                        );
                                         return;
                                     }
 
@@ -1521,14 +1545,31 @@ class MangaBuffAutomation(
 
                                         var elapsed = Date.now() - adStartedAt;
                                         var timer = findTimer();
-                                        var timerValue = timer ? parseNumber(textOf(timer)) : null;
+                                        var timerText = timer ? textOf(timer) : "";
+                                        var timerValue = timer ? parseNumber(timerText) : null;
                                         var close = findCloseButton();
+                                        var fullscreenTimerVisible = !!(
+                                            timer &&
+                                            timer.getBoundingClientRect &&
+                                            timer.getBoundingClientRect().width > 0 &&
+                                            timer.getBoundingClientRect().height > 0
+                                        );
                                         var adContainer = document.querySelector(
-                                            "[data-fullscreen-element], [data-fullscreen], .fullscreen, .advert, [class*=\"advert\"]"
+                                            "[data-fullscreen-element]," +
+                                            "[data-fullscreen-element-name]," +
+                                            "[data-fullscreen]," +
+                                            ".fullscreen, .advert, [class*=\"advert\"]"
                                         );
 
-                                        if ((timerValue !== null && timerValue <= 0) ||
-                                            (close && adContainer && elapsed >= 10000)) {
+                                        AndroidAds.onStateLog(
+                                            "AD_TIMER",
+                                            "visible=" + fullscreenTimerVisible +
+                                            " value=" + (timerValue === null ? "?" : timerValue) +
+                                            " text=" + timerText
+                                        );
+
+                                        if ((fullscreenTimerVisible && timerValue !== null && timerValue <= 0) ||
+                                            (close && adContainer && elapsed >= 30000)) {
                                             clearInterval(watchTimer);
 
                                             if (close) {
@@ -1538,10 +1579,13 @@ class MangaBuffAutomation(
                                             AndroidAds.onStateLog(
                                                 "AD_FINISHED",
                                                 "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s timer=" + (timerValue === null ? "?" : timerValue)
+                                                "s timer=" + (timerValue === null ? "?" : timerValue) +
+                                                " close=" + !!close
                                             );
 
-                                            setTimeout(function() { verifyReward(0); }, 1500);
+                                            // Give MangaBuff time to finish its reward request after
+                                            // the fullscreen control is closed.
+                                            setTimeout(function() { verifyReward(0); }, 1800);
                                             return;
                                         }
 
