@@ -465,12 +465,28 @@ fun AccountCard(
 
                         Spacer(modifier = Modifier.width(6.dp))
 
-                        Text(
-                            text = "💎 ${account.diamonds}  🃏 ${account.cardDrop}  📖 ${account.chapterProgress}  💬 ${account.commentProgress}",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1
-                        )
+                        Column(
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .align(Alignment.CenterVertically),
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(1.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = "💎 " + account.diamonds, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                Text(text = "🃏 " + account.cardDrop, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                            }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = "📖 " + account.chapterProgress, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                Text(text = "💬 " + account.commentProgress, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(2.dp))
