@@ -2555,7 +2555,7 @@ class MangaBuffAutomation(
                                             ' scrollHeight=' + (diagScrollingElement ? (diagScrollingElement.scrollHeight || 0) : 0)
                                         );
                                     } catch(e) {}
-                                    AndroidReaderBridge.onLogStep('READER: SCROLL_MODE=NATIVE_TOUCH_SWIPE');
+                                    AndroidReaderBridge.onLogStep('READER: SCROLL_MODE=MANGABUFF_NATIVE_AUTOSCROLL');
 
                                     if (window.current_chapter) {
                                         var c = window.current_chapter;
@@ -2712,7 +2712,220 @@ class MangaBuffAutomation(
                                     function stopScroll() {
                                         if (window.__mbScrollTimer) {
                                             clearTimeout(window.__mbScrollTimer);
+                                            window.__mbScrollTimer = null;
                                         }
+
+                                        // Stop MangaBuff's own autoscroll if it is running.
+                                        try {
+                                            var pause = document.querySelector('.reader-autoscroll-icon-pause');
+                                            if (pause && visible(pause)) {
+                                                pause.click();
+                                                AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_STOP_CLICK');
+                                                return;
+                                            }
+
+                                            var play = document.querySelector('.reader-autoscroll-icon-play');
+                                            if (play && visible(play) && play.closest('.reader-autoscroll')) {
+                                                // Already stopped.
+                                                return;
+                                            }
+
+                                            var autoIcon = document.querySelector(
+                                                '.reader-autoscroll-icon-pause, .reader-autoscroll-icon-play'
+                                            );
+                                            if (autoIcon && autoIcon.parentElement) {
+                                                var cls = String(autoIcon.className || '');
+                                                if (cls.indexOf('icon-pause') !== -1) {
+                                                    autoIcon.parentElement.click();
+                                                    AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_STOP_PARENT_CLICK');
+                                                }
+                                            }
+                                        } catch(e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: MANGABUFF_AUTOSCROLL_STOP_ERROR ' +
+                                                (e.message || String(e))
+                                            );
+                                        }
+                                    }
+
+                                    function findSettingsButton() {
+                                        var icon = document.querySelector('.icon.icon-settings');
+                                        if (!icon) return null;
+
+                                        var button = icon.closest(
+                                            'button, a, [role="button"], .reader-menu__item'
+                                        );
+                                        return button || icon;
+                                    }
+
+                                    function findSettingsPopup() {
+                                        var candidates = Array.from(document.querySelectorAll(
+                                            '.popup, .reader-settings, .reader-settings__section'
+                                        ));
+
+                                        for (var i = 0; i < candidates.length; i++) {
+                                            var el = candidates[i];
+                                            if (visible(el) && (
+                                                el.querySelector('[data-reader-setting="speed"]') ||
+                                                el.querySelector('[data-reader-autoscroll-enabled]')
+                                            )) {
+                                                return el;
+                                            }
+                                        }
+
+                                        return null;
+                                    }
+
+                                    function configureMangaBuffAutoscroll(done) {
+                                        var startedAt = Date.now();
+                                        var maxWait = 12000;
+                                        var settingsOpened = false;
+
+                                        function finishSetup(ok, reason) {
+                                            if (ok) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: MANGABUFF_AUTOSCROLL_CONFIGURED speed=360 enabled=true'
+                                                );
+                                            } else {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: MANGABUFF_AUTOSCROLL_CONFIG_FAILED reason=' + reason
+                                                );
+                                            }
+                                            done(ok);
+                                        }
+
+                                        function configure() {
+                                            if (chapterDone) return;
+
+                                            var popup = findSettingsPopup();
+                                            if (!popup) {
+                                                if (!settingsOpened) {
+                                                    var settingsButton = findSettingsButton();
+                                                    if (!settingsButton) {
+                                                        if (Date.now() - startedAt >= maxWait) {
+                                                            finishSetup(false, 'SETTINGS_BUTTON_NOT_FOUND');
+                                                            return;
+                                                        }
+                                                        setTimeout(configure, 250);
+                                                        return;
+                                                    }
+
+                                                    settingsOpened = true;
+                                                    AndroidReaderBridge.onLogStep('READER: MANGABUFF_SETTINGS_OPEN_CLICK');
+                                                    try {
+                                                        settingsButton.click();
+                                                    } catch(e) {}
+
+                                                    setTimeout(configure, 300);
+                                                    return;
+                                                }
+
+                                                if (Date.now() - startedAt >= maxWait) {
+                                                    finishSetup(false, 'SETTINGS_POPUP_NOT_FOUND');
+                                                    return;
+                                                }
+
+                                                setTimeout(configure, 250);
+                                                return;
+                                            }
+
+                                            var speed = popup.querySelector('[data-reader-setting="speed"]');
+                                            if (!speed) {
+                                                finishSetup(false, 'SPEED_RANGE_NOT_FOUND');
+                                                return;
+                                            }
+
+                                            try {
+                                                speed.value = '360';
+                                                speed.dispatchEvent(new Event('input', { bubbles: true }));
+                                                speed.dispatchEvent(new Event('change', { bubbles: true }));
+                                            } catch(e) {
+                                                finishSetup(false, 'SPEED_SET_EXCEPTION_' + (e.message || String(e)));
+                                                return;
+                                            }
+
+                                            var valueLabel = popup.querySelector('[data-reader-value="speed"]');
+                                            if (valueLabel) valueLabel.textContent = '360';
+
+                                            var toggle = popup.querySelector('[data-reader-autoscroll-enabled]');
+                                            if (!toggle) {
+                                                finishSetup(false, 'AUTOSCROLL_TOGGLE_NOT_FOUND');
+                                                return;
+                                            }
+
+                                            var toggleActive =
+                                                toggle.classList.contains('is-active') ||
+                                                toggle.getAttribute('aria-pressed') === 'true' ||
+                                                toggle.getAttribute('aria-checked') === 'true';
+
+                                            if (!toggleActive) {
+                                                AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_ENABLE_CLICK');
+                                                try {
+                                                    toggle.click();
+                                                } catch(e) {
+                                                    finishSetup(false, 'AUTOSCROLL_TOGGLE_CLICK_EXCEPTION');
+                                                    return;
+                                                }
+                                            } else {
+                                                AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_ALREADY_ENABLED');
+                                            }
+
+                                            setTimeout(function() {
+                                                var close = popup.querySelector('.popup__close') ||
+                                                    document.querySelector('.popup__close');
+
+                                                if (close && visible(close)) {
+                                                    AndroidReaderBridge.onLogStep('READER: MANGABUFF_SETTINGS_CLOSE_CLICK');
+                                                    try { close.click(); } catch(e) {}
+                                                } else {
+                                                    AndroidReaderBridge.onLogStep('READER: MANGABUFF_SETTINGS_CLOSE_NOT_FOUND');
+                                                }
+
+                                                setTimeout(function() {
+                                                    var play = document.querySelector('.reader-autoscroll-icon-play');
+                                                    if (!play || !visible(play)) {
+                                                        finishSetup(false, 'AUTOSCROLL_PLAY_NOT_FOUND');
+                                                        return;
+                                                    }
+
+                                                    AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_PLAY_CLICK');
+                                                    try {
+                                                        play.click();
+                                                    } catch(e) {
+                                                        finishSetup(false, 'AUTOSCROLL_PLAY_CLICK_EXCEPTION');
+                                                        return;
+                                                    }
+
+                                                    setTimeout(function() {
+                                                        var pause = document.querySelector('.reader-autoscroll-icon-pause');
+                                                        if (pause && visible(pause)) {
+                                                            AndroidReaderBridge.onLogStep(
+                                                                'READER: MANGABUFF_AUTOSCROLL_STARTED speed=360'
+                                                            );
+                                                            finishSetup(true, '');
+                                                        } else {
+                                                            // Some implementations keep the play icon while
+                                                            // the scrolling loop is already running. Verify by
+                                                            // observing scroll movement before declaring failure.
+                                                            var beforeY = window.scrollY || window.pageYOffset || 0;
+                                                            setTimeout(function() {
+                                                                var afterY = window.scrollY || window.pageYOffset || 0;
+                                                                if (afterY > beforeY + 2) {
+                                                                    AndroidReaderBridge.onLogStep(
+                                                                        'READER: MANGABUFF_AUTOSCROLL_STARTED_BY_SCROLL speed=360'
+                                                                    );
+                                                                    finishSetup(true, '');
+                                                                } else {
+                                                                    finishSetup(false, 'AUTOSCROLL_DID_NOT_START');
+                                                                }
+                                                            }, 1000);
+                                                        }
+                                                    }, 300);
+                                                }, 350);
+                                            }, 350);
+                                        }
+
+                                        configure();
                                     }
 
                                     function logPreNextChapterState() {
@@ -3110,43 +3323,22 @@ class MangaBuffAutomation(
                                     function humanScroll() {
                                         if (chapterDone) return;
 
-                                        var current = window.scrollY || window.pageYOffset || 0;
-                                        var viewport = window.innerHeight || 1;
-                                        var width = window.innerWidth || 1;
-                                        var height = Math.max(document.documentElement.scrollHeight || 0, document.body.scrollHeight || 0);
-                                        var remaining = Math.max(0, height - (current + viewport));
+                                        configureMangaBuffAutoscroll(function(ok) {
+                                            if (!ok || chapterDone) {
+                                                if (!chapterDone) {
+                                                    AndroidReaderBridge.onNextChapterUnknown();
+                                                }
+                                                return;
+                                            }
 
-                                        if (remaining <= 180) {
-                                            checkEnd();
-                                            return;
-                                        }
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: MANGABUFF_AUTOSCROLL_MONITORING speed=360'
+                                            );
 
-                                        // Use a native WebView touch swipe so MangaBuff receives the
-                                        // normal touch/scroll pipeline instead of only window.scrollTo().
-                                        var centerX = Math.max(48, Math.min(width - 48, width / 2));
-                                        var startY = Math.max(80, viewport * 0.78);
-                                        var endY = Math.max(48, viewport * 0.22);
-                                        var duration = 800 + Math.floor(Math.random() * 450);
-                                        var before = Math.floor(current);
-
-                                        AndroidReaderBridge.onLogStep(
-                                            'READER: NATIVE_TOUCH_SWIPE from=' + before +
-                                            ' remaining=' + Math.floor(remaining) +
-                                            ' duration=' + duration
-                                        );
-
-                                        AndroidReaderBridge.nativeSwipe(
-                                            centerX,
-                                            startY,
-                                            centerX,
-                                            endY,
-                                            duration
-                                        );
-
-                                        window.__mbScrollTimer = setTimeout(
-                                            humanScroll,
-                                            duration + 650 + Math.floor(Math.random() * 450)
-                                        );
+                                            // MangaBuff now owns the actual scrolling. Our interval below
+                                            // only observes the dynamically growing document and detects
+                                            // the stable bottom; it does not generate competing touch events.
+                                        });
                                     }
 
                                     var interval = setInterval(function() {
