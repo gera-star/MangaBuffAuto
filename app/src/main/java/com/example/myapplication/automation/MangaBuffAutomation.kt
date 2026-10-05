@@ -285,6 +285,17 @@ class MangaBuffAutomation(
     @Volatile
     private var activeReaderMarkRead: (() -> Unit)? = null
 
+    /**
+     * Hard navigation lock for fullscreen ad sessions.
+     * While an ad is running the balance page must not be reloaded/navigated:
+     * doing so destroys the Yandex fullscreen session and the reward can be lost.
+     */
+    @Volatile
+    private var adSessionActive = false
+
+    @Volatile
+    private var lastBalanceSummary = "💎 0  🃏 0/10  📖 0/75  💬 0/13"
+
     private val commentPhrases = listOf(
         "Спасибо за главу! Было интересно читать.",
         "Спасибо за перевод и новую главу!",
@@ -503,6 +514,16 @@ class MangaBuffAutomation(
                 }
             }
 
+            if (adSessionActive) {
+                log(
+                    account.username,
+                    "STAT: REFRESH_BLOCKED_DURING_AD url=" + webView.url.orEmpty(),
+                    true
+                )
+                safeResume(lastBalanceSummary)
+                return@post
+            }
+
             log(account.username, "STAT: REFRESH_START")
 
             class BalanceBridge {
@@ -548,6 +569,7 @@ class MangaBuffAutomation(
                     log(account.username, "STAT: DOM_SCAN_SUCCESS")
 
                     val summaryStr = "💎 $diamonds  🃏 $cardDropShort  📖 $chapters  💬 $comments"
+                    lastBalanceSummary = summaryStr
                     log(account.username, "STAT: $summaryStr")
 
                     try {
@@ -1323,27 +1345,46 @@ class MangaBuffAutomation(
         log(account.username, "TASK: ADS_START requested=${settings.adsCount} target=$target dailyLimit=3")
         updateStatus(account, "📺 Реклама (0/$target): подготовка", true, "Реклама", 0f)
 
-        while (adsDone < target) {
-            coroutineContext.ensureActive()
+        /*
+         * The ad session owns the WebView navigation until every requested ad
+         * has either completed or the ad runner has definitively failed.
+         *
+         * In particular, fetchAndLogBalanceInfo() is not allowed to call
+         * loadUrl()/reload() while this flag is true. A balance refresh during
+         * the 30-second fullscreen viewing window destroys the ad.
+         */
+        adSessionActive = true
+        log(account.username, "ADS: NAVIGATION_LOCK_ACQUIRED")
 
-            val success = watchSingleAd(account, webView) { step ->
-                updateStatus(
-                    account,
-                    "📺 Реклама ($adsDone/$target): $step",
-                    true,
-                    "Реклама",
-                    if (target > 0) adsDone.toFloat() / target else 1f
-                )
+        try {
+            while (adsDone < target) {
+                coroutineContext.ensureActive()
+
+                val success = watchSingleAd(account, webView) { step ->
+                    updateStatus(
+                        account,
+                        "📺 Реклама ($adsDone/$target): $step",
+                        true,
+                        "Реклама",
+                        if (target > 0) adsDone.toFloat() / target else 1f
+                    )
+                }
+
+                if (!success) break
+
+                adsDone++
+                addDaily(account) { it.copy(ads = it.ads + 1) }
+                log(account.username, "TASK: ADS_COMPLETED_COUNT ad=$adsDone/$target")
+                if (adsDone < target) {
+                    delay(ADS_NEXT_DELAY_MS)
+                }
             }
-
-            if (!success) break
-
-            adsDone++
-            addDaily(account) { it.copy(ads = it.ads + 1) }
-            log(account.username, "TASK: ADS_COMPLETED_COUNT ad=$adsDone/$target")
-            if (adsDone < target) {
-                delay(ADS_NEXT_DELAY_MS)
-            }
+        } finally {
+            adSessionActive = false
+            log(
+                account.username,
+                "ADS: NAVIGATION_LOCK_RELEASED successCount=$adsDone target=$target"
+            )
         }
 
         log(account.username, "TASK: ADS_END successCount=$adsDone target=$target")
