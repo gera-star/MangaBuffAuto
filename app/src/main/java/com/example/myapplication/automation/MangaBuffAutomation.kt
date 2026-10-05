@@ -2797,6 +2797,7 @@ class MangaBuffAutomation(
                                         // Stop the native phone-like swipe scheduler as well.
                                         try {
                                             window.__mbNativeFingerRunning = false;
+                                            window.__mbNativeFingerBusy = false;
                                             if (window.__mbNativeFingerTimer) {
                                                 clearTimeout(window.__mbNativeFingerTimer);
                                                 window.__mbNativeFingerTimer = null;
@@ -3314,6 +3315,7 @@ class MangaBuffAutomation(
 
                                     function checkEnd() {
                                         if (chapterDone) return;
+                                        if (window.__mbNativeFingerBusy) return;
 
                                         var scrollingElement = document.scrollingElement || document.documentElement || document.body;
                                         var rawY = Math.max(
@@ -3572,22 +3574,23 @@ class MangaBuffAutomation(
                                         if (chapterDone) return;
 
                                         /*
-                                         * Real touch-like reader motion:
-                                         * JS scrollBy() moves the page programmatically and looks like a
-                                         * continuous motor. Instead we send actual MotionEvent DOWN/MOVE/UP
-                                         * sequences through the Android WebView View layer.
+                                         * Real touch-like reader motion.
                                          *
-                                         * One swipe is followed by a short, slightly random pause, then
-                                         * the next swipe starts. The distance/duration vary inside a narrow
-                                         * range so the motion resembles repeated finger swipes on a phone.
+                                         * A stalled native gesture is NEVER EOF. Every gesture is
+                                         * verified by reading scrollTop again after the native fling.
+                                         * Only verified movement advances the swipe scheduler.
                                          */
                                         try { stopScroll(); } catch(e) {}
 
                                         window.__mbNativeFingerRunning = true;
                                         window.__mbNativeFingerTimer = null;
+                                        window.__mbNativeFingerBusy = false;
+
+                                        var swipeRecoveryAttempts = 0;
+                                        var swipeSequence = 0;
 
                                         AndroidReaderBridge.onLogStep(
-                                            'READER: NATIVE_FINGER_SCROLL_STARTED mode=TOUCH_SWIPE'
+                                            'READER: NATIVE_FINGER_SCROLL_STARTED mode=TOUCH_SWIPE_VERIFIED'
                                         );
 
                                         function metrics() {
@@ -3598,12 +3601,17 @@ class MangaBuffAutomation(
 
                                             var y = Math.max(
                                                 window.scrollY || 0,
-                                                scrollingElement ? (scrollingElement.scrollTop || 0) : 0
+                                                window.pageYOffset || 0,
+                                                scrollingElement ? (scrollingElement.scrollTop || 0) : 0,
+                                                document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
+                                                document.body ? (document.body.scrollTop || 0) : 0
                                             );
 
                                             var viewport = Math.max(
                                                 window.innerHeight || 0,
                                                 scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
+                                                document.documentElement ? (document.documentElement.clientHeight || 0) : 0,
+                                                document.body ? (document.body.clientHeight || 0) : 0,
                                                 1
                                             );
 
@@ -3621,24 +3629,30 @@ class MangaBuffAutomation(
                                             };
                                         }
 
+                                        function scheduleNext(delayMs) {
+                                            if (chapterDone || !window.__mbNativeFingerRunning) return;
+                                            if (window.__mbNativeFingerTimer) clearTimeout(window.__mbNativeFingerTimer);
+                                            window.__mbNativeFingerTimer = setTimeout(nextSwipe, Math.max(40, delayMs));
+                                        }
+
                                         function nextSwipe() {
                                             if (chapterDone || !window.__mbNativeFingerRunning) return;
+                                            if (window.__mbNativeFingerBusy) return;
 
                                             var m = metrics();
                                             if (m.remaining <= 8) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NATIVE_FINGER_TARGET_BOTTOM remaining=' +
+                                                    Math.floor(m.remaining)
+                                                );
                                                 return;
                                             }
 
-                                            /*
-                                             * Typical phone gesture:
-                                             * finger starts around 76-82% of the viewport,
-                                             * moves upward to roughly 22-30%.
-                                             */
                                             var startY = m.viewport * (0.76 + Math.random() * 0.06);
                                             var endY = m.viewport * (0.22 + Math.random() * 0.08);
-
                                             var distance = startY - endY;
                                             var maxDistance = Math.max(220, m.remaining - 4);
+
                                             if (distance > maxDistance) {
                                                 startY = Math.min(m.viewport * 0.84, endY + maxDistance);
                                                 distance = startY - endY;
@@ -3656,16 +3670,16 @@ class MangaBuffAutomation(
                                             var x1 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x));
                                             var x2 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x + xJitter));
 
-                                            // Fast but natural phone-like swipe:
-                                            // ~0.5-0.7 screen of travel, ~0.3-0.55 s gesture,
-                                            // then a short pause before the next finger movement.
                                             var duration = 320 + Math.floor(Math.random() * 220);
                                             var pause = 80 + Math.floor(Math.random() * 120);
-
                                             var beforeY = m.y;
+                                            var sequence = ++swipeSequence;
+
+                                            window.__mbNativeFingerBusy = true;
 
                                             AndroidReaderBridge.onLogStep(
-                                                'READER: NATIVE_FINGER_SWIPE distance=' + Math.floor(distance) +
+                                                'READER: NATIVE_FINGER_SWIPE seq=' + sequence +
+                                                ' distance=' + Math.floor(distance) +
                                                 ' duration=' + duration +
                                                 ' pause=' + pause +
                                                 ' beforeY=' + Math.floor(beforeY) +
@@ -3673,82 +3687,81 @@ class MangaBuffAutomation(
                                             );
 
                                             try {
-                                                AndroidReaderBridge.nativeSwipe(
-                                                    x1,
-                                                    startY,
-                                                    x2,
-                                                    endY,
-                                                    duration
-                                                );
+                                                AndroidReaderBridge.nativeSwipe(x1, startY, x2, endY, duration);
                                             } catch(e) {
                                                 AndroidReaderBridge.onLogStep(
-                                                    'READER: NATIVE_FINGER_SWIPE_ERROR ' +
-                                                    (e && e.message ? e.message : String(e))
+                                                    'READER: NATIVE_FINGER_SWIPE_ERROR seq=' + sequence +
+                                                    ' error=' + (e && e.message ? e.message : String(e))
                                                 );
                                             }
 
                                             window.__mbNativeFingerTimer = setTimeout(function() {
-                                                if (chapterDone || !window.__mbNativeFingerRunning) return;
+                                                if (chapterDone || !window.__mbNativeFingerRunning) {
+                                                    window.__mbNativeFingerBusy = false;
+                                                    return;
+                                                }
+
                                                 var after = metrics();
                                                 var deltaY = Math.abs(after.y - beforeY);
-                                                var moved = deltaY >= 12;
+                                                var moved = deltaY >= 80;
+
                                                 AndroidReaderBridge.onLogStep(
-                                                    'READER: NATIVE_FINGER_SWIPE_RESULT moved=' + moved +
+                                                    'READER: NATIVE_FINGER_SWIPE_RESULT seq=' + sequence +
+                                                    ' moved=' + moved +
                                                     ' beforeY=' + Math.floor(beforeY) +
                                                     ' afterY=' + Math.floor(after.y) +
                                                     ' deltaY=' + Math.floor(after.y - beforeY) +
                                                     ' remaining=' + Math.floor(after.remaining)
                                                 );
 
-                                                if (after.remaining > 120 && deltaY < 120) {
+                                                if (after.remaining > 120 && deltaY < 80) {
                                                     swipeRecoveryAttempts++;
                                                     AndroidReaderBridge.onLogStep(
-                                                        'READER: NATIVE_FINGER_SWIPE_RECOVERY deltaY=' +
-                                                        Math.floor(deltaY) +
+                                                        'READER: NATIVE_FINGER_SWIPE_NO_PROGRESS seq=' + sequence +
                                                         ' remaining=' + Math.floor(after.remaining) +
                                                         ' attempt=' + swipeRecoveryAttempts
                                                     );
 
-                                                    /*
-                                                     * A failed touch is a transport stall, never EOF.
-                                                     * After three consecutive failures use one bounded
-                                                     * native WebView scroll only as an emergency escape.
-                                                     */
-                                                    if (swipeRecoveryAttempts >= 3) {
-                                                        var recoveryDistance = Math.min(
-                                                            Math.max(360, Math.floor(after.viewport * 0.65)),
-                                                            Math.max(360, Math.floor(after.remaining - 8))
-                                                        );
-
-                                                        AndroidReaderBridge.onLogStep(
-                                                            'READER: NATIVE_FINGER_SWIPE_RECOVERY_SCROLLBY ' +
-                                                            'delta=' + recoveryDistance +
-                                                            ' remaining=' + Math.floor(after.remaining)
-                                                        );
-
-                                                        try {
-                                                            AndroidReaderBridge.nativeRecoveryScroll(recoveryDistance);
-                                                        } catch(e) {
-                                                            AndroidReaderBridge.onLogStep(
-                                                                'READER: NATIVE_RECOVERY_SCROLLBY_CALL_ERROR ' +
-                                                                (e && e.message ? e.message : String(e))
-                                                            );
-                                                        }
-
-                                                        swipeRecoveryAttempts = 0;
-                                                        setTimeout(nextSwipe, 260);
-                                                    } else {
-                                                        setTimeout(nextSwipe, 100);
+                                                    if (swipeRecoveryAttempts < 3) {
+                                                        window.__mbNativeFingerBusy = false;
+                                                        scheduleNext(120);
+                                                        return;
                                                     }
+
+                                                    var recoveryDistance = Math.min(
+                                                        Math.max(360, Math.floor(after.viewport * 0.65)),
+                                                        Math.max(360, Math.floor(after.remaining - 8))
+                                                    );
+
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: NATIVE_FINGER_SWIPE_RECOVERY_SCROLLBY seq=' + sequence +
+                                                        ' delta=' + recoveryDistance +
+                                                        ' remaining=' + Math.floor(after.remaining)
+                                                    );
+
+                                                    try {
+                                                        AndroidReaderBridge.nativeRecoveryScroll(recoveryDistance);
+                                                    } catch(e) {
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'READER: NATIVE_RECOVERY_SCROLLBY_CALL_ERROR seq=' + sequence +
+                                                            ' error=' + (e && e.message ? e.message : String(e))
+                                                        );
+                                                    }
+
+                                                    swipeRecoveryAttempts = 0;
+                                                    window.__mbNativeFingerBusy = false;
+                                                    scheduleNext(300);
                                                 } else {
                                                     swipeRecoveryAttempts = 0;
-                                                    setTimeout(nextSwipe, pause);
+                                                    window.__mbNativeFingerBusy = false;
+                                                    scheduleNext(pause);
                                                 }
-                                            }, duration + 220);
+                                            }, duration + 450);
                                         }
 
                                         nextSwipe();
                                     }
+                                    
                                     var interval = setInterval(function() {
                                         checkEnd();
 
