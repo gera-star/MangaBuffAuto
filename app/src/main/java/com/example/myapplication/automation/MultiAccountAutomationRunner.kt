@@ -38,6 +38,18 @@ class MultiAccountAutomationRunner(
         )
     }
 
+    fun skipCurrentManga(accountId: String? = null): Boolean {
+        val skipped = runtime.skipCurrentManga(accountId)
+        onLog(
+            LogEntry(
+                username = accountId ?: "",
+                component = "RUNNER",
+                message = if (skipped) "READER: SKIP_MANGA_DISPATCHED" else "READER: SKIP_MANGA_NOT_AVAILABLE"
+            )
+        )
+        return skipped
+    }
+
     fun stopAccount(accountId: String) {
         onLog(LogEntry(username = accountId, component = "RUNNER", message = "STOP accountId=$accountId"))
         runtime.stopAccount(accountId)
