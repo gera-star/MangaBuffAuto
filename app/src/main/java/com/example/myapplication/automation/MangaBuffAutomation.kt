@@ -1339,6 +1339,7 @@ class MangaBuffAutomation(
             if (!success) break
 
             adsDone++
+            addDaily(account) { it.copy(ads = it.ads + 1) }
             log(account.username, "TASK: ADS_COMPLETED_COUNT ad=$adsDone/$target")
             if (adsDone < target) {
                 delay(ADS_NEXT_DELAY_MS)
