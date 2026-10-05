@@ -1800,7 +1800,27 @@ class MangaBuffAutomation(
                 }
             }
 
+            /*
+             * Do not rely only on onPageFinished().
+             *
+             * /balance is frequently already the current WebView URL when the
+             * Ads task starts. In that case Android/WebView can reuse the loaded
+             * document and the Ads WebViewClient callback may not arrive for the
+             * navigation we just requested. The old implementation then waited
+             * forever with no ADS:* logs at all.
+             *
+             * Inject once after the navigation as a fallback. The JS runner has
+             * __mbAdsRunnerActive protection, so a normal onPageFinished +
+             * fallback pair cannot start two ad sessions.
+             */
             webView.loadUrl("https://mangabuff.ru/balance")
+
+            mainHandler.postDelayed({
+                if (continuation.isActive &&
+                    webView.url?.contains("/balance") == true) {
+                    webView.evaluateJavascript(script, null)
+                }
+            }, 700L)
         }
     }
 
