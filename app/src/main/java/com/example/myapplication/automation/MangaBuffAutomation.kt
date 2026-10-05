@@ -2097,6 +2097,76 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun requestServerReadQuest(progress: Int) {
+                    log(account.username, "READER: SERVER_QUEST_NATIVE_REQUEST progress=" + progress + "%")
+
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val request = Request.Builder()
+                                .url("https://mangabuff.ru/balance")
+                                .headers(
+                                    getBaseHeaders(account).newBuilder()
+                                        .set("Accept", "text/html,application/xhtml+xml")
+                                        .build()
+                                )
+                                .get()
+                                .build()
+
+                            val response = httpClient.newCall(request).execute()
+                            val html = response.body?.string().orEmpty()
+                            val code = response.code
+
+                            var quest = ""
+                            if (response.isSuccessful && html.isNotBlank()) {
+                                val doc = Jsoup.parse(html)
+                                doc.select(".wallet-panel__stat-head").forEach { head ->
+                                    if (quest.isNotBlank()) return@forEach
+                                    val label = head.selectFirst("span")?.text().orEmpty()
+                                        .replace("\\s+".toRegex(), " ")
+                                        .trim()
+                                        .lowercase()
+                                    val value = head.selectFirst("b")?.text().orEmpty()
+                                        .replace("\\s+".toRegex(), " ")
+                                        .trim()
+
+                                    if ((label.contains("глав") || label.contains("чита")) &&
+                                        Regex("\\d+\\s*/\\s*\\d+").matches(value)
+                                    ) {
+                                        quest = value.replace("\\s+".toRegex(), "")
+                                    }
+                                }
+
+                                if (quest.isBlank()) {
+                                    val bodyText = doc.body()?.text().orEmpty()
+                                    val match = Regex("(?:глав|чита)[^\\d]{0,80}(\\d+)\\s*/\\s*(\\d+)", RegexOption.IGNORE_CASE)
+                                        .find(bodyText)
+                                    if (match != null) {
+                                        quest = "${match.groupValues[1]}/${match.groupValues[2]}"
+                                    }
+                                }
+                            }
+
+                            mainHandler.post {
+                                if (quest.isNotBlank()) {
+                                    log(account.username, "READER: SERVER_QUEST_NATIVE_RESPONSE progress=${progress}% http=${code} quest=${quest}")
+                                    onServerReadQuestProbe(quest, progress)
+                                } else {
+                                    log(account.username, "READER: SERVER_QUEST_NATIVE_NO_VALUE progress=${progress}% http=${code}", true)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            mainHandler.post {
+                                log(
+                                    account.username,
+                                    "READER: SERVER_QUEST_NATIVE_ERROR progress=${progress}% error=${e.message}",
+                                    true
+                                )
+                            }
+                        }
+                    }
+                }
+
+                @JavascriptInterface
                 fun onServerReadQuestProbe(quest: String, progress: Int) {
                     val before = pendingReadQuestBefore ?: return
                     val beforeNum = before.substringBefore('/').toIntOrNull() ?: 0
@@ -2944,85 +3014,7 @@ class MangaBuffAutomation(
                                                     'READER: SERVER_QUEST_PROBE_START progress=' + percent + '%'
                                                 );
 
-                                                fetch('/balance', {
-                                                    method: 'GET',
-                                                    credentials: 'include',
-                                                    cache: 'no-store'
-                                                }).then(function(response) {
-                                                    return response.text();
-                                                }).then(function(html) {
-                                                    try {
-                                                        var parser = new DOMParser();
-                                                        var doc = parser.parseFromString(html, 'text/html');
-                                                        var wallet = doc.querySelector('.wallet-panel');
-                                                        var quest = '';
-
-                                                        if (wallet) {
-                                                            var heads = Array.from(
-                                                                wallet.querySelectorAll('.wallet-panel__stat-head')
-                                                            );
-
-                                                            heads.forEach(function(head) {
-                                                                var span = head.querySelector('span');
-                                                                var b = head.querySelector('b');
-                                                                var label = (
-                                                                    span ? (span.textContent || '') : (head.textContent || '')
-                                                                ).replace(/\s+/g, ' ').trim().toLowerCase();
-                                                                var value = b
-                                                                    ? (b.textContent || '').replace(/\s+/g, ' ').trim()
-                                                                    : '';
-
-                                                                if (
-                                                                    !quest &&
-                                                                    (label.indexOf('глав') !== -1 || label.indexOf('чита') !== -1) &&
-                                                                    value
-                                                                ) {
-                                                                    quest = value;
-                                                                }
-
-                                                                if (!quest) {
-                                                                    var full = (head.textContent || '')
-                                                                        .replace(/\s+/g, ' ').trim();
-                                                                    var m = full.match(/(\d+)\s*\/\s*(\d+)/);
-                                                                    if (
-                                                                        m &&
-                                                                        (full.toLowerCase().indexOf('глав') !== -1 ||
-                                                                         full.toLowerCase().indexOf('чита') !== -1)
-                                                                    ) {
-                                                                        quest = m[1] + '/' + m[2];
-                                                                    }
-                                                                }
-                                                            });
-                                                        }
-
-                                                        if (!quest) {
-                                                            var bodyText = (doc.body && doc.body.innerText) || '';
-                                                            var matches = bodyText.match(
-                                                                /(?:глав|чита)[^\d]{0,80}(\d+)\s*\/\s*(\d+)/i
-                                                            );
-                                                            if (matches) quest = matches[1] + '/' + matches[2];
-                                                        }
-
-                                                        if (quest) {
-                                                            AndroidReaderBridge.onServerReadQuestProbe(quest, percent);
-                                                        } else {
-                                                            AndroidReaderBridge.onLogStep(
-                                                                'READER: SERVER_QUEST_PROBE_NO_VALUE progress=' +
-                                                                    percent + '%'
-                                                            );
-                                                        }
-                                                    } catch (e) {
-                                                        AndroidReaderBridge.onLogStep(
-                                                            'READER: SERVER_QUEST_PROBE_PARSE_ERROR error=' +
-                                                                (e && e.message ? e.message : String(e))
-                                                        );
-                                                    }
-                                                }).catch(function(e) {
-                                                    AndroidReaderBridge.onLogStep(
-                                                        'READER: SERVER_QUEST_PROBE_FETCH_ERROR error=' +
-                                                            (e && e.message ? e.message : String(e))
-                                                    );
-                                                });
+                                                AndroidReaderBridge.requestServerReadQuest(percent);
                                             }
                                         }
 
