@@ -5903,8 +5903,8 @@ class MangaBuffAutomation(
                                             // Use roughly 14-17% of the viewport per finger swipe. Combined
                                             // with the controlled native inertia, this gives a larger but still
                                             // phone-like reading step without jumping across the page.
-                                            var startY = m.viewport * (0.575 + Math.random() * 0.009);
-                                            var endY = m.viewport * (0.425 + Math.random() * 0.009);
+                                            var startY = m.viewport * (0.80 + Math.random() * 0.01);
+                                            var endY = m.viewport * (0.20 + Math.random() * 0.01);
                                             var distance = startY - endY;
                                             var maxDistance = Math.max(32, m.remaining - 4);
 
