@@ -93,18 +93,12 @@ class AutomationRuntime(
         return prepareAccount(toAccount)
     }
 
-    fun skipCurrentManga(accountId: String? = null): Boolean {
-        if (accountId != null) {
-            return automationEngines[accountId]?.skipCurrentManga() == true
-        }
-        return automationEngines.values.any { it.skipCurrentManga() }
+    fun skipCurrentManga(accountId: String): Boolean {
+        return automationEngines[accountId]?.skipCurrentManga() == true
     }
 
-    fun markCurrentMangaAsRead(accountId: String? = null): Boolean {
-        if (accountId != null) {
-            return automationEngines[accountId]?.markCurrentMangaAsRead() == true
-        }
-        return automationEngines.values.any { it.markCurrentMangaAsRead() }
+    fun markCurrentMangaAsRead(accountId: String): Boolean {
+        return automationEngines[accountId]?.markCurrentMangaAsRead() == true
     }
 
     @Synchronized
@@ -159,7 +153,7 @@ class AutomationRuntime(
         expectedProfileName: String
     ) {
         val runtime = runtimes[account.id] ?: prepareAccount(account)
-        onWebViewAssigned(runtime.webView)
+        onWebViewAssigned(account.id, runtime.webView)
 
         // Синхронизируем куки именно этого аккаунта
         webViewStore.syncCookiesForAccount(account.id, runtime.profileName, account.getSafeCookiesJson())
