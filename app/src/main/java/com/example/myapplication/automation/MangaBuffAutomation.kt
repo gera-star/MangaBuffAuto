@@ -153,11 +153,9 @@ class MangaBuffAutomation(
 
     fun closeRuntime() {
         accountIoScope.coroutineContext[Job]?.cancel()
-        mainHandler.post {
-            stopBackgroundScroll()
-            activeReaderSkip = null
-            activeReaderMarkRead = null
-        }
+        stopBackgroundScroll()
+        activeReaderSkip = null
+        activeReaderMarkRead = null
         mainHandler.removeCallbacksAndMessages(null)
     }
 
