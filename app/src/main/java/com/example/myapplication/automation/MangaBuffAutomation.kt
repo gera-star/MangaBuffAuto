@@ -1459,6 +1459,111 @@ class MangaBuffAutomation(
     // ADS
     // =========================================================
 
+    /**
+     * Preflight check on the real MangaBuff balance page.
+     * The local counter is only a cache; the site's toast is authoritative.
+     * We poll briefly because the limit toast can be inserted asynchronously.
+     */
+    private suspend fun checkAdsDailyLimitOnSite(
+        account: MangaBuffAccount,
+        webView: WebView
+    ): String? = suspendCancellableCoroutine { continuation ->
+        var resumed = false
+        var pollRunnable: Runnable? = null
+        val startedAt = SystemClock.elapsedRealtime()
+        val timeoutMs = 4000L
+
+        fun finish(result: String?) {
+            if (resumed) return
+            resumed = true
+            pollRunnable?.let { mainHandler.removeCallbacks(it) }
+            if (continuation.isActive) continuation.resume(result)
+        }
+
+        mainHandler.post {
+            fun poll() {
+                if (resumed || !continuation.isActive) return
+
+                val script = """
+                    (function() {
+                        try {
+                            function visible(el) {
+                                if (!el) return false;
+                                var s = getComputedStyle(el);
+                                return s.display !== 'none' &&
+                                       s.visibility !== 'hidden' &&
+                                       parseFloat(s.opacity || '1') > 0 &&
+                                       (el.offsetWidth > 0 || el.offsetHeight > 0);
+                            }
+
+                            function textOf(el) {
+                                return (el && (el.innerText || el.textContent) || '')
+                                    .replace(/\\s+/g, ' ')
+                                    .trim();
+                            }
+
+                            var exact = 'нельзя смотреть рекламу больше 3 раз в сутки';
+                            var nodes = Array.from(document.querySelectorAll(
+                                '.toast-message, .toast.toast-error, [role="alert"]'
+                            ));
+
+                            for (var i = 0; i < nodes.length; i++) {
+                                var node = nodes[i];
+                                var text = textOf(node).toLowerCase();
+                                if (visible(node) &&
+                                    (text.indexOf(exact) !== -1 ||
+                                     text.indexOf('нельзя смотреть рекламу больше') !== -1)) {
+                                    return JSON.stringify({found:true,text:textOf(node)});
+                                }
+                            }
+
+                            return JSON.stringify({found:false,text:''});
+                        } catch (e) {
+                            return JSON.stringify({found:false,text:'',error:String(e)});
+                        }
+                    })();
+                """.trimIndent()
+
+                try {
+                    webView.evaluateJavascript(script) { raw ->
+                        if (resumed) return@evaluateJavascript
+
+                        val value = raw.orEmpty()
+                        if (value.contains("\\\"found\\\":true")) {
+                            val textMatch = Regex("\\\"text\\\":\\\"(.*?)\\\"").find(value)
+                            val toastText = textMatch?.groupValues?.getOrNull(1)
+                                ?: ADS_DAILY_LIMIT_MESSAGE
+                            log(account.username, "ADS: DAILY_LIMIT_TOAST_FOUND source=SITE_PREFLIGHT text=$toastText")
+                            finish(toastText)
+                            return@evaluateJavascript
+                        }
+
+                        if (SystemClock.elapsedRealtime() - startedAt >= timeoutMs) {
+                            log(account.username, "ADS: DAILY_LIMIT_PREFLIGHT_CLEAR timeout=" + timeoutMs + "ms")
+                            finish(null)
+                        } else {
+                            pollRunnable = Runnable { poll() }
+                            mainHandler.postDelayed(pollRunnable!!, 250L)
+                        }
+                    }
+                } catch (e: Exception) {
+                    log(account.username, "ADS: DAILY_LIMIT_PREFLIGHT_ERROR error=" + e.message, true)
+                    finish(null)
+                }
+            }
+
+            log(account.username, "ADS: DAILY_LIMIT_PREFLIGHT_START url=" + webView.url.orEmpty())
+            poll()
+        }
+
+        continuation.invokeOnCancellation {
+            mainHandler.post {
+                pollRunnable?.let { mainHandler.removeCallbacks(it) }
+                pollRunnable = null
+            }
+        }
+    }
+
     private suspend fun runAdsTask(
         account: MangaBuffAccount,
         settings: GlobalSettings,
@@ -1487,6 +1592,24 @@ class MangaBuffAutomation(
             "TASK: ADS_START requested=${settings.adsCount} localToday=$dailyAdsToday " +
                 "remaining=$remainingAds target=$target dailyLimit=$dailyLimit"
         )
+
+        if (settings.adsCount > 0) {
+            val siteLimitText = checkAdsDailyLimitOnSite(account, webView)
+            if (siteLimitText != null) {
+                log(
+                    account.username,
+                    "ADS: DAILY_LIMIT_REACHED source=SITE_PREFLIGHT today=$dailyAdsToday limit=$dailyLimit text=$siteLimitText"
+                )
+                // Synchronize the local cache with the server-side truth so the
+                // next run will not attempt another impossible ad session.
+                if (dailyAdsToday < dailyLimit) {
+                    addDaily(account) { it.copy(ads = dailyLimit) }
+                    log(account.username, "ADS: DAILY_COUNTER_SYNC siteLimit=$dailyLimit")
+                }
+                updateStatus(account, "📺 Реклама: сайт сообщил лимит 3/3 на сегодня", false, "Реклама", 1f)
+                return true
+            }
+        }
 
         if (settings.adsCount > 0 && remainingAds == 0) {
             log(
