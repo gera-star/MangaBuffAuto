@@ -71,6 +71,15 @@ fun MangaBuffAppUI(
         topBar = {
             TopAppBar(
                 title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
+                actions = {
+                    if (webViewContainer != null) {
+                        TextButton(
+                            onClick = { viewModel.setDebugWebViewVisible(!debugWebViewVisible) }
+                        ) {
+                            Text(if (debugWebViewVisible) "UI" else "WEB")
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
