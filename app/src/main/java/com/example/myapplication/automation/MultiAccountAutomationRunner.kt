@@ -15,10 +15,19 @@ class MultiAccountAutomationRunner(
     onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
     onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
-    onWebViewAssigned: (WebView) -> Unit = {},
-    onWebViewCleared: (WebView) -> Unit = {}
+    onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
+    onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
-    private val runtime = AutomationRuntime(context, onLog, onAccountStatusUpdate, onMangaActiveUrlUpdate, onAccountStatsUpdate, onDailyStatsUpdate, onWebViewAssigned, onWebViewCleared)
+    private val runtime = AutomationRuntime(
+        context,
+        onLog,
+        onAccountStatusUpdate,
+        onMangaActiveUrlUpdate,
+        onAccountStatsUpdate,
+        onDailyStatsUpdate,
+        onWebViewAssigned,
+        onWebViewCleared
+    )
     suspend fun runForAccount(
         account: MangaBuffAccount,
         settings: GlobalSettings,
