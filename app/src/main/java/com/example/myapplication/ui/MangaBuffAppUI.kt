@@ -40,6 +40,7 @@ import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.TaskType
+import com.example.myapplication.data.currentStatsDay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -588,28 +589,56 @@ fun AccountCard(
                 Column(modifier = Modifier.padding(top = 8.dp)) {
                     HorizontalDivider()
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        "Автоматические задачи:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    val today = currentStatsDay()
+                    val isToday = account.dailyStatsDay == today
+                    val dailyBattles = if (isToday) account.dailyBattles else 0
+                    val dailyQuiz = if (isToday) account.dailyQuiz else 0
+                    val dailyAds = if (isToday) account.dailyAds else 0
+                    val dailyMineOre = if (isToday) account.dailyMineOre else 0
+                    val dailyMineDiamonds = if (isToday) account.dailyMineDiamonds else 0
+                    val dailyReaderChapters = if (isToday) account.dailyReaderChapters else 0
+                    val dailyComments = if (isToday) account.dailyComments else 0
 
-                    TaskSwitchRow("🃏 Карточные бои", "${account.dailyBattles} побед", account.battleEnabled) { b ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Автоматические задачи",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                "СЕГОДНЯ",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+
+                    TaskSwitchRow("🃏 Бои", "${dailyBattles} побед", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
                     }
-                    TaskSwitchRow("Квиз / Викторина", "${account.dailyQuiz} ответов", account.quizEnabled) { q ->
+                    TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
                         onUpdateTasks(account.readerEnabled, q, account.advEnabled, account.mineEnabled, account.commentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("Просмотр рекламы", "${account.dailyAds} получено", account.advEnabled) { a ->
+                    TaskSwitchRow("📺 Просмотр рекламы", "${dailyAds}/3", account.advEnabled) { a ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, a, account.mineEnabled, account.commentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("Шахта (Авто-тапы)", "${account.dailyMineOre} 🪨 → 💎${account.dailyMineDiamonds}", account.mineEnabled) { m ->
+                    TaskSwitchRow("⛏️ Шахта", "${dailyMineOre} 🪨 → 💎${dailyMineDiamonds}", account.mineEnabled) { m ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, m, account.commentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("Ежедневное чтение", "${account.dailyReaderChapters} глав", account.readerEnabled) { r ->
+                    TaskSwitchRow("📖 Чтение", "${dailyReaderChapters} глав", account.readerEnabled) { r ->
                         onUpdateTasks(r, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("Комментарии", "${account.dailyComments} отправлено", account.commentEnabled) { c ->
+                    TaskSwitchRow("💬 Комментарии", "${dailyComments}", account.commentEnabled) { c ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, c, account.battleEnabled)
                     }
                 }
