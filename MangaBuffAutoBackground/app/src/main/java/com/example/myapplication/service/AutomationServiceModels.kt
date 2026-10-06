@@ -47,7 +47,7 @@ sealed interface AutomationServiceEvent {
     ) : AutomationServiceEvent
 }
 
-internal class AutomationServiceEventBus {
+class AutomationServiceEventBus {
     val events = MutableSharedFlow<AutomationServiceEvent>(
         replay = 100,
         extraBufferCapacity = 500
