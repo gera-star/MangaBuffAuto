@@ -4499,8 +4499,14 @@ class MangaBuffAutomation(
                                     if (window.current_chapter) {
                                         var c = window.current_chapter;
                                         var resolvedChapterId = resolveCurrentChapterId();
+                                        // Cache the real manga ID before MangaBuff can mutate window.current_chapter.
+                                        var initialMangaId = String(c.manga_id || c.mangaId || '').trim();
+                                        if (initialMangaId) {
+                                            window.__mbExpectedMangaId = initialMangaId;
+                                            AndroidReaderBridge.onLogStep('READER: MANGA_ID_CACHED id=' + initialMangaId);
+                                        }
                                         AndroidReaderBridge.onCurrentChapterData(
-                                            String(c.manga_id || c.mangaId || c.id || ''),
+                                            initialMangaId || String(c.id || ''),
                                             resolvedChapterId,
                                             String(c.name || ''),
                                             String(c.slug || ''),
@@ -4702,6 +4708,11 @@ class MangaBuffAutomation(
                                         }
 
                                         var known = [];
+                                        // Prefer the manga ID captured at chapter startup.
+                                        // current_chapter.id/current_manga.id can be chapter IDs.
+                                        if (window.__mbExpectedMangaId) {
+                                            known.push(String(window.__mbExpectedMangaId));
+                                        }
                                         var fav = document.querySelector(
                                             '.manga__favourite-btn[data-id], .favourite-send-btn[data-id]'
                                         );
