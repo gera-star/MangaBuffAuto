@@ -2107,6 +2107,13 @@ class MangaBuffAutomation(
                                     };
                                 }
 
+                                /*
+                                 * Rewarded-ad controls must remain under the ad SDK/user.
+                                 * Do not synthesize a native tap or invoke a hidden/iframe X.
+                                 * When the control is inaccessible to the parent document,
+                                 * we only record geometry for diagnostics and wait for the
+                                 * user to close the ad normally.
+                                 */
                                 function requestNativeCloseTap(closeElement) {
                                     var width = window.innerWidth || document.documentElement.clientWidth || 0;
                                     var height = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -2116,21 +2123,10 @@ class MangaBuffAutomation(
                                         return false;
                                     }
 
-                                    var tapX = null;
-                                    var tapY = null;
-
+                                    var exact = null;
                                     try {
                                         if (closeElement && closeElement.getBoundingClientRect) {
-                                            var closeRect = getTopViewportRect(closeElement);
-                                            if (closeRect && closeRect.width > 0 && closeRect.height > 0) {
-                                                tapX = closeRect.left + closeRect.width / 2;
-                                                tapY = closeRect.top + closeRect.height / 2;
-                                                AndroidAds.onStateLog(
-                                                    "NATIVE_CLOSE_EXACT",
-                                                    "x=" + tapX + " y=" + tapY +
-                                                    " rect=" + closeRect.width + "x" + closeRect.height
-                                                );
-                                            }
+                                            exact = getTopViewportRect(closeElement);
                                         }
                                     } catch (e) {
                                         AndroidAds.onStateLog(
@@ -2139,57 +2135,15 @@ class MangaBuffAutomation(
                                         );
                                     }
 
-                                    var fullscreenVisible = false;
-
-                                    try {
-                                        var markers = Array.from(
-                                            document.querySelectorAll(
-                                                "[data-fullscreen-element], [data-fullscreen-element-name]"
-                                            )
-                                        );
-                                        fullscreenVisible = markers.some(isVisibleElement);
-                                    } catch (e) {}
-
-                                    try {
-                                        var frames = Array.from(document.querySelectorAll("iframe"));
-                                        fullscreenVisible = fullscreenVisible || frames.some(function(frame) {
-                                            try {
-                                                var r = frame.getBoundingClientRect();
-                                                return r.width >= width * 0.8 && r.height >= height * 0.8;
-                                            } catch (e) {
-                                                return false;
-                                            }
-                                        });
-                                    } catch (e) {}
-
-                                    /*
-                                     * The ad is already known to be active because this code runs
-                                     * from the dedicated ad runner after the hard 32s viewing time.
-                                     * Do not require a DOM fullscreen marker here: Yandex can put
-                                     * the fullscreen layer in a cross-origin iframe / closed shadow
-                                     * root, which makes the marker invisible to page JS.
-                                     */
-                                    if (!fullscreenVisible) {
+                                    if (exact && exact.width > 0 && exact.height > 0) {
                                         AndroidAds.onStateLog(
-                                            "NATIVE_CLOSE_FALLBACK",
-                                            "fullscreen_marker_not_visible; tapping known top-right X area anyway viewport=" +
-                                                width + "x" + height
+                                            "NATIVE_CLOSE_AVAILABLE",
+                                            "x=" + (exact.left + exact.width / 2) +
+                                            " y=" + (exact.top + exact.height / 2) +
+                                            " rect=" + exact.width + "x" + exact.height +
+                                            " action=MANUAL_REQUIRED"
                                         );
-                                    }
-
-                                    var x = tapX;
-                                    var y = tapY;
-                                    var source = "fullscreen_close_element";
-
-                                    /*
-                                     * The current diagnostic proves the Yandex fullscreen
-                                     * surface is a cross-origin iframe (iframes=1, markers=0).
-                                     * We cannot inspect its X, but the iframe rectangle itself is
-                                     * visible to the parent document. Use the iframe's own
-                                     * top-right corner rather than assuming the whole WebView is
-                                     * the ad surface.
-                                     */
-                                    if (x === null || y === null) {
+                                    } else {
                                         try {
                                             var frames = Array.from(document.querySelectorAll("iframe"));
                                             var best = null;
@@ -2211,17 +2165,13 @@ class MangaBuffAutomation(
                                             });
 
                                             if (best) {
-                                                x = best.left + best.width - 20;
-                                                y = best.top + 20;
-                                                source = "iframe_top_right_fallback";
                                                 AndroidAds.onStateLog(
                                                     "NATIVE_CLOSE_IFRAME_RECT",
                                                     "left=" + best.left +
                                                     " top=" + best.top +
                                                     " width=" + best.width +
                                                     " height=" + best.height +
-                                                    " tapX=" + x +
-                                                    " tapY=" + y
+                                                    " action=DIAGNOSTIC_ONLY"
                                                 );
                                             }
                                         } catch (e) {
@@ -2230,24 +2180,16 @@ class MangaBuffAutomation(
                                                 "error=" + (e && e.message ? e.message : String(e))
                                             );
                                         }
+
+                                        AndroidAds.onStateLog(
+                                            "NATIVE_CLOSE_MANUAL_REQUIRED",
+                                            "close_control_inaccessible_to_parent_document viewport=" +
+                                                width + "x" + height
+                                        );
                                     }
 
-                                    if (x === null || y === null) {
-                                        x = Math.max(1, width - 20);
-                                        y = Math.max(1, 20);
-                                        source = "fullscreen_top_right_fallback";
-                                    }
-
-                                    AndroidAds.onStateLog(
-                                        "NATIVE_CLOSE_TAP",
-                                        "x=" + x + " y=" + y +
-                                        " viewport=" + width + "x" + height +
-                                        " source=" + source
-                                    );
-                                    AndroidAds.onCloseTapRequested(x, y, source);
-                                    return true;
+                                    return false;
                                 }
-
                                 function verifyReward(attempt) {
                                     if (finished) return;
 
@@ -2327,7 +2269,7 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
-                                            if (attempt >= 18) {
+                                            if (attempt >= 60) {
                                                 finished = true;
                                                 window.__mbAdsRunnerActive = false;
                                                 AndroidAds.onAdFailed(
@@ -2343,7 +2285,7 @@ class MangaBuffAutomation(
                                                 verifyReward(attempt + 1);
                                             }, 1000);
                                         } catch (e) {
-                                            if (attempt >= 18) {
+                                            if (attempt >= 60) {
                                                 finished = true;
                                                 window.__mbAdsRunnerActive = false;
                                                 AndroidAds.onAdFailed(
@@ -2469,7 +2411,7 @@ class MangaBuffAutomation(
                                                 " rewarded=" + yandexRewarded
                                             );
 
-                                            if (elapsed >= hardTimeoutMs) {
+                                            if (elapsed >= hardTimeoutMs && !yandexReady) {
                                                 /*
                                                  * The Yandex timer/callback is not always observable
                                                  * from the MangaBuff document (the live ad can be hosted
@@ -2529,51 +2471,30 @@ class MangaBuffAutomation(
                                         if (closeVisible) {
                                             clearInterval(watchTimer);
 
-                                            var nativeRequested = requestNativeCloseTap(close);
+                                            requestNativeCloseTap(close);
 
                                             AndroidAds.onStateLog(
-                                                "AD_REWARDED_FINISHED",
+                                                "AD_CLOSE_AVAILABLE",
                                                 "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s source=" + (nativeRequested ? "NATIVE_EXACT" : "DOM")
+                                                "s action=MANUAL_REQUIRED"
                                             );
 
-                                            setTimeout(function() {
-                                                if (finished) return;
-
-                                                var stillClose = findCloseButton();
-                                                if (isVisibleElement(stillClose)) {
-                                                    try {
-                                                        stillClose.click();
-                                                        AndroidAds.onStateLog(
-                                                            "CLOSE_CLICKED",
-                                                            "fallback_dom_after_native"
-                                                        );
-                                                    } catch (e) {}
-                                                }
-
-                                                verifyReward(0);
-                                            }, nativeRequested ? 500 : 0);
+                                            verifyReward(0);
                                             return;
                                         }
 
-                                        if (!window.__mbAdsNativeCloseRequested) {
-                                            window.__mbAdsNativeCloseRequested = true;
+                                        if (!window.__mbAdsManualVerifyStarted) {
+                                            window.__mbAdsManualVerifyStarted = true;
 
-                                            if (requestNativeCloseTap(null)) {
-                                                clearInterval(watchTimer);
+                                            requestNativeCloseTap(null);
 
-                                                AndroidAds.onStateLog(
-                                                    "CLOSE_NATIVE_REQUESTED",
-                                                    "elapsed=" + Math.floor(elapsed / 1000) +
-                                                    "s yandexReady=true"
-                                                );
+                                            AndroidAds.onStateLog(
+                                                "AD_CLOSE_MANUAL_REQUIRED",
+                                                "elapsed=" + Math.floor(elapsed / 1000) +
+                                                "s yandexReady=true; waiting_for_user_close"
+                                            );
 
-                                                setTimeout(function() {
-                                                    if (finished) return;
-                                                    verifyReward(0);
-                                                }, 2500);
-                                                return;
-                                            }
+                                            verifyReward(0);
                                         }
 
 
