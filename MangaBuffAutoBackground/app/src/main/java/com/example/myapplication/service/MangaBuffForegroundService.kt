@@ -28,6 +28,7 @@ import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -516,7 +517,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun persistRun(accountId: String, taskType: TaskType) {
-        val values = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).toMutableSet()
+        val values = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).orEmpty().toMutableSet()
         values.removeAll { it.startsWith("$accountId|") }
         values.add("$accountId|${taskType.name}")
         runtimePrefs.edit().putStringSet(KEY_ACTIVE_RUNS, values).apply()
