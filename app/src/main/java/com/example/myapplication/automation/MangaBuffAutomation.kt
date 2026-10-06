@@ -303,7 +303,7 @@ class MangaBuffAutomation(
          */
         val safeDuration = durationMs.coerceIn(325L, 425L)
         val moveSteps = 12
-        val settleMs = 70L
+        val settleMs = 35L
         val downTime = SystemClock.uptimeMillis()
 
         fun send(action: Int, x: Float, y: Float) {
@@ -342,8 +342,8 @@ class MangaBuffAutomation(
             }, delayMs)
         }
 
-        // Final MOVE at the destination, then keep the finger there for a short
-        // settle period. This removes residual velocity before ACTION_UP.
+        // Final MOVE at the destination. Keep only a very short settle period:
+        // we intentionally want a small, controlled native inertia after release.
         mainHandler.postDelayed({
             if (!webView.isAttachedToWindow) return@postDelayed
             send(MotionEvent.ACTION_MOVE, endX, endY)
@@ -351,6 +351,27 @@ class MangaBuffAutomation(
             mainHandler.postDelayed({
                 if (!webView.isAttachedToWindow) return@postDelayed
                 send(MotionEvent.ACTION_UP, endX, endY)
+
+                /*
+                 * Controlled inertia:
+                 * the old implementation accidentally produced enormous flings
+                 * because MOVE event timestamps were artificial. The gesture is
+                 * now dispatched in real time, so we can safely add a bounded
+                 * native fling after ACTION_UP.
+                 *
+                 * Upward finger movement => positive WebView scroll velocity.
+                 * Keep the velocity deliberately modest and capped so inertia
+                 * never turns into the previous runaway 4k..16k px jumps.
+                 */
+                val fingerVelocity = ((startY - endY) / safeDuration.toFloat()) * 1000f
+                val inertiaVelocity = fingerVelocity
+                    .coerceIn(280f, 650f)
+                    .toInt()
+
+                mainHandler.postDelayed({
+                    if (!webView.isAttachedToWindow) return@postDelayed
+                    webView.flingScroll(0, inertiaVelocity)
+                }, 16L)
             }, settleMs)
         }, safeDuration)
     }
