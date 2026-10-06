@@ -36,6 +36,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
+import kotlin.random.Random
 
 enum class ReaderScrollMode {
     NATIVE_MANGABUFF,
@@ -360,13 +361,11 @@ class MangaBuffAutomation(
                  * native fling after ACTION_UP.
                  *
                  * Upward finger movement => positive WebView scroll velocity.
-                 * Keep the velocity deliberately modest and capped so inertia
-                 * never turns into the previous runaway 4k..16k px jumps.
+                 * Keep the velocity in a deliberate 1500..3000 px/s range.
+                 * This gives the reader a clearly visible but controlled native inertia.
                  */
                 val fingerVelocity = ((startY - endY) / safeDuration.toFloat()) * 1000f
-                val inertiaVelocity = fingerVelocity
-                    .coerceIn(280f, 650f)
-                    .toInt()
+                val inertiaVelocity = Random.nextInt(1500, 3001)
 
                 mainHandler.postDelayed({
                     if (!webView.isAttachedToWindow) return@postDelayed
