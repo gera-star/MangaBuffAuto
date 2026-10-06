@@ -26,6 +26,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeWebView = MutableStateFlow<android.webkit.WebView?>(null)
     val activeWebView: StateFlow<android.webkit.WebView?> = _activeWebView.asStateFlow()
 
+    // TEMP DEBUG: show the real automation WebView so the rewarded ad can be
+    // inspected and its close button can be pressed manually.
+    private val _debugWebViewVisible = MutableStateFlow(false)
+    val debugWebViewVisible: StateFlow<Boolean> = _debugWebViewVisible.asStateFlow()
+
+    fun setDebugWebViewVisible(visible: Boolean) {
+        _debugWebViewVisible.value = visible
+    }
+
     private val automationRunner = MultiAccountAutomationRunner(
         context = application,
         onLog = { logEntry -> addLog(logEntry) },
