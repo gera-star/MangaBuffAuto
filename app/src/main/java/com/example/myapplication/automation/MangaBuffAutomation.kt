@@ -3715,6 +3715,22 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun isExpectedMangaId(mangaId: String): Boolean {
+                    val candidate = mangaId.trim()
+                    if (candidate.isBlank()) return false
+
+                    val expected = activeChapterContext?.mangaId?.trim().orEmpty()
+                    val current = currentMangaUrl
+                    val matches = expected.isNotBlank() && candidate == expected
+
+                    log(
+                        account.username,
+                        "READER: LAST_CHAPTER_MANGA_ID_CHECK notifyId=$candidate expected=$expected matches=$matches"
+                    )
+                    return matches
+                }
+
+                @JavascriptInterface
                 fun onCurrentChapterData(
                     mangaIdStr: String,
                     chapterIdStr: String,
@@ -4734,7 +4750,21 @@ class MangaBuffAutomation(
                                             return false;
                                         }
 
-                                        var mangaIdMatches = known.indexOf(id) !== -1;
+                                        /*
+                                         * The JS global current_chapter is not stable on MangaBuff:
+                                         * its "id" can be the chapter id, while the native reader
+                                         * context already has the authoritative mangaId from
+                                         * onCurrentChapterData(). Use that native value as an
+                                         * additional source of truth for the notify button.
+                                         */
+                                        var nativeMangaIdMatches = false;
+                                        try {
+                                            nativeMangaIdMatches = AndroidReaderBridge.isExpectedMangaId(id);
+                                        } catch (e) {
+                                            nativeMangaIdMatches = false;
+                                        }
+
+                                        var mangaIdMatches = nativeMangaIdMatches || known.indexOf(id) !== -1;
                                         if (!mangaIdMatches) {
                                             AndroidReaderBridge.onLogStep(
                                                 'LAST_CHAPTER_MARKER_REJECTED reason=MANGA_ID_MISMATCH notifyId=' +
@@ -4742,6 +4772,11 @@ class MangaBuffAutomation(
                                             );
                                             return false;
                                         }
+
+                                        AndroidReaderBridge.onLogStep(
+                                            'LAST_CHAPTER_MANGA_ID_CONFIRMED notifyId=' + id +
+                                            ' source=' + (nativeMangaIdMatches ? 'NATIVE_CONTEXT' : 'JS_CONTEXT')
+                                        );
 
                                         /*
                                          * Do not require one exact finish CSS class. Find the actual
