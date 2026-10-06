@@ -394,14 +394,15 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
             } finally {
-                if (accountJobs[accountId] === coroutineContext[Job]) {
-                    accountJobs.remove(accountId)
+                val currentJob = coroutineContext[Job]
+                if (accountJobs[accountId] === currentJob) {
+                    accountJobs.remove(accountId, currentJob)
+                    automationRunner.stopAccount(accountId)
+                    removePersistedRun(accountId)
+                    publishStatus(accountId, "Готово", false, "", 0f)
+                    releaseWakeLockIfIdle()
+                    stopSelfIfIdle()
                 }
-                automationRunner.stopAccount(accountId)
-                removePersistedRun(accountId)
-                publishStatus(accountId, "Готово", false, "", 0f)
-                releaseWakeLockIfIdle()
-                stopSelfIfIdle()
             }
         }
 
