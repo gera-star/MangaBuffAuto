@@ -266,11 +266,8 @@ class MangaBuffForegroundService : Service() {
 
     private fun startAccount(accountId: String, taskType: TaskType, restoring: Boolean) {
         if (automationJob?.isActive == true) {
-            if (!restoring) {
-                stopAll(explicitUserStop = true)
-            } else {
-                return
-            }
+            emitLog(LogEntry(component = "BG", message = "RUN_ACCOUNT_IGNORED_ALREADY_RUNNING"))
+            return
         }
 
         val account = repository.getAccounts().firstOrNull { it.id == accountId }
@@ -324,11 +321,8 @@ class MangaBuffForegroundService : Service() {
 
     private fun startAll(taskType: TaskType, restoring: Boolean) {
         if (automationJob?.isActive == true) {
-            if (!restoring) {
-                stopAll(explicitUserStop = true)
-            } else {
-                return
-            }
+            emitLog(LogEntry(component = "BG", message = "RUN_ALL_IGNORED_ALREADY_RUNNING"))
+            return
         }
 
         val accounts = repository.getAccounts()
