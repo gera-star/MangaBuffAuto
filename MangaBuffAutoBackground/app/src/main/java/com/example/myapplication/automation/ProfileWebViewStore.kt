@@ -3,6 +3,7 @@ package com.example.myapplication.automation
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.graphics.Color
 import android.view.View
 import android.webkit.CookieManager
@@ -66,6 +67,13 @@ class ProfileWebViewStore(
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             setBackgroundColor(Color.TRANSPARENT)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                setRendererPriorityPolicy(
+                    WebView.RENDERER_PRIORITY_IMPORTANT,
+                    false
+                )
+            }
         }
 
         webView.webViewClient = object : WebViewClient() {
@@ -84,6 +92,44 @@ class ProfileWebViewStore(
                 if (request?.isForMainFrame == true) {
                     onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "LOAD_ERROR url=${request.url} error=${error?.description}", isError = true))
                 }
+            }
+
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: android.webkit.RenderProcessGoneDetail?
+            ): Boolean {
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "RENDERER_GONE didCrash=${detail?.didCrash()} priority=IMPORTANT",
+                        isError = true
+                    )
+                )
+
+                synchronized(this@ProfileWebViewStore) {
+                    if (view != null && activeWebViews[accountId] === view) {
+                        activeWebViews.remove(accountId)
+                        attachDeferreds.remove(accountId)
+                        webViewRunIds.remove(accountId)
+                    }
+                }
+
+                try {
+                    view?.destroy()
+                } catch (_: Exception) {
+                }
+
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "RENDERER_GONE_INVALIDATED create_new_instance_next_run=true",
+                        isError = true
+                    )
+                )
+
+                return true
             }
         }
 
