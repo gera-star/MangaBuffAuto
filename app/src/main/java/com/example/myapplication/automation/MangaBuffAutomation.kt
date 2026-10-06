@@ -4688,7 +4688,8 @@ class MangaBuffAutomation(
                                          *   <button class="notify-new-chapter" data-id="MANGA_ID">
                                          *
                                          * Do NOT infer the end from an empty next href or from
-                                         * chapter number + 1. A real next chapter must always win.
+                                         * chapter number + 1. Once this finish marker is confirmed,
+                                         * it is terminal and wins over any stale/phantom next link.
                                          *
                                          * Older/newer MangaBuff layouts may use different wrapper
                                          * classes, so the textual finish marker is intentionally
@@ -5542,8 +5543,29 @@ class MangaBuffAutomation(
                                             waitForMangaBuffConfirmation(function(confirmationSource) {
                                                 if (chapterDone) return;
 
-                                                var nextAfterSettle = findNextChapter();
+                                                /*
+                                                 * A confirmed MangaBuff end marker is terminal.
+                                                 * Check it BEFORE looking for any next-chapter DOM
+                                                 * link so a stale/phantom "/N+1" link can never win
+                                                 * over the real "Таков конец..." + "Уведомить о выходе"
+                                                 * state.
+                                                 */
                                                 var isLastAfterSettle = isLastChapter();
+
+                                                if (isLastAfterSettle) {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER confirmation=' +
+                                                        (confirmationSource || 'UNKNOWN')
+                                                    );
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'LAST_CHAPTER_CONFIRMED terminal=true nextChapterSearch=SKIPPED'
+                                                    );
+                                                    chapterDone = true;
+                                                    finish(null, true, confirmationSource);
+                                                    return;
+                                                }
+
+                                                var nextAfterSettle = findNextChapter();
 
                                                 if (nextAfterSettle) {
                                                     var nextHref = getHref(nextAfterSettle);
@@ -5557,17 +5579,6 @@ class MangaBuffAutomation(
                                                         finish(nextAfterSettle, false, confirmationSource);
                                                         return;
                                                     }
-                                                }
-
-                                                if (isLastAfterSettle) {
-                                                    AndroidReaderBridge.onLogStep(
-                                                        'FINAL_UI_DETECTED type=NOTIFY_NEW_CHAPTER confirmation=' +
-                                                        (confirmationSource || 'UNKNOWN')
-                                                    );
-                                                    AndroidReaderBridge.onLogStep('LAST_CHAPTER_CONFIRMED');
-                                                    chapterDone = true;
-                                                    finish(null, true, confirmationSource);
-                                                    return;
                                                 }
 
                                                 // No real next href and no confirmed finish marker:
