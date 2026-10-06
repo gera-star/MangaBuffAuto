@@ -301,9 +301,9 @@ class MangaBuffAutomation(
          * final position is held briefly before ACTION_UP so the finger velocity
          * reaches ~0 instead of handing WebView a fling.
          */
-        val safeDuration = durationMs.coerceIn(650L, 850L)
+        val safeDuration = durationMs.coerceIn(325L, 425L)
         val moveSteps = 12
-        val settleMs = 140L
+        val settleMs = 70L
         val downTime = SystemClock.uptimeMillis()
 
         fun send(action: Int, x: Float, y: Float) {
