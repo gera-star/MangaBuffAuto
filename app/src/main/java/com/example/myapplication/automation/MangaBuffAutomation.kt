@@ -5940,7 +5940,7 @@ class MangaBuffAutomation(
                                             var x2 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x + xJitter));
 
                                             var duration = 250 + Math.floor(Math.random() * 110);
-                                            var pause = 220 + Math.floor(Math.random() * 180);
+                                            var pause = 0; // EXPERIMENT: no pause between completed swipes
                                             var beforeY = m.y;
                                             var sequence = ++swipeSequence;
 
