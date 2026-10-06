@@ -50,6 +50,8 @@ sealed class TaskResult {
     data class Timeout(val reason: String) : TaskResult()
 }
 
+private enum class AdWatchResult { Rewarded, DailyLimit, Failed }
+
 sealed interface ReaderResult {
     data class ChapterRead(
         val gifts: Int,
@@ -1591,24 +1593,6 @@ class MangaBuffAutomation(
                 "remaining=$remainingAds target=$target dailyLimit=$dailyLimit"
         )
 
-        if (settings.adsCount > 0) {
-            val siteLimitText = checkAdsDailyLimitOnSite(account, webView)
-            if (siteLimitText != null) {
-                log(
-                    account.username,
-                    "ADS: DAILY_LIMIT_REACHED source=SITE_PREFLIGHT today=$dailyAdsToday limit=$dailyLimit text=$siteLimitText"
-                )
-                // Synchronize the local cache with the server-side truth so the
-                // next run will not attempt another impossible ad session.
-                if (dailyAdsToday < dailyLimit) {
-                    addDaily(account) { it.copy(ads = dailyLimit) }
-                    log(account.username, "ADS: DAILY_COUNTER_SYNC siteLimit=$dailyLimit")
-                }
-                updateStatus(account, "📺 Реклама: сайт сообщил лимит 3/3 на сегодня", false, "Реклама", 1f)
-                return true
-            }
-        }
-
         if (settings.adsCount > 0 && remainingAds == 0) {
             log(
                 account.username,
@@ -1650,13 +1634,23 @@ class MangaBuffAutomation(
                     )
                 }
 
-                if (!success) break
-
-                adsDone++
-                addDaily(account) { it.copy(ads = it.ads + 1) }
-                log(account.username, "TASK: ADS_COMPLETED_COUNT ad=$adsDone/$target")
-                if (adsDone < target) {
-                    delay(ADS_NEXT_DELAY_MS)
+                when (success) {
+                    AdWatchResult.Rewarded -> {
+                        adsDone++
+                        addDaily(account) { it.copy(ads = (it.ads + 1).coerceAtMost(dailyLimit)) }
+                        log(account.username, "TASK: ADS_COMPLETED_COUNT ad=" + adsDone + "/" + target + " daily=" + dailyStats.ads + "/" + dailyLimit)
+                        if (adsDone < target) delay(ADS_NEXT_DELAY_MS)
+                    }
+                    AdWatchResult.DailyLimit -> {
+                        if (dailyStats.ads < dailyLimit) addDaily(account) { it.copy(ads = dailyLimit) }
+                        log(account.username, "ADS: DAILY_LIMIT_REACHED source=SITE_TOAST local=" + dailyStats.ads + "/" + dailyLimit)
+                        updateStatus(account, "📺 Реклама: лимит " + dailyLimit + "/" + dailyLimit + " на сегодня", false, "Реклама", 1f)
+                        return true
+                    }
+                    AdWatchResult.Failed -> {
+                        log(account.username, "ADS: WATCH_FAILED completed=" + adsDone + "/" + target, true)
+                        return false
+                    }
                 }
             }
         } finally {
@@ -1676,10 +1670,10 @@ class MangaBuffAutomation(
         account: MangaBuffAccount,
         webView: WebView,
         onStep: (String) -> Unit
-    ): Boolean = suspendCancellableCoroutine { continuation ->
+    ): AdWatchResult = suspendCancellableCoroutine { continuation ->
         var resumed = false
 
-        fun safeResume(result: Boolean) {
+        fun safeResume(result: AdWatchResult) {
             if (!resumed && continuation.isActive) {
                 resumed = true
                 continuation.resume(result)
@@ -1708,21 +1702,21 @@ class MangaBuffAutomation(
                 fun onAdSuccess() {
                     clearAdViewingLock()
                     log(account.username, "ADS: REWARD_CONFIRMED")
-                    safeResume(true)
+                    safeResume(AdWatchResult.Rewarded)
                 }
 
                 @JavascriptInterface
                 fun onAdFailed(reason: String) {
                     clearAdViewingLock()
                     log(account.username, "ADS: FAILED reason=$reason", true)
-                    safeResume(false)
+                    safeResume(AdWatchResult.Failed)
                 }
 
                 @JavascriptInterface
                 fun onDailyLimit() {
                     clearAdViewingLock()
                     log(account.username, "ADS: DAILY_LIMIT_REACHED")
-                    safeResume(false)
+                    safeResume(AdWatchResult.DailyLimit)
                 }
 
                 @JavascriptInterface
