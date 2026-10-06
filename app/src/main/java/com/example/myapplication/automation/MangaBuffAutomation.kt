@@ -2177,11 +2177,66 @@ class MangaBuffAutomation(
                                         );
                                     }
 
-                                    var x = tapX !== null ? tapX : Math.max(1, width - 20);
-                                    var y = tapY !== null ? tapY : Math.max(1, 20);
-                                    var source = tapX !== null
-                                        ? "fullscreen_close_element"
-                                        : "fullscreen_top_right_fallback";
+                                    var x = tapX;
+                                    var y = tapY;
+                                    var source = "fullscreen_close_element";
+
+                                    /*
+                                     * The current diagnostic proves the Yandex fullscreen
+                                     * surface is a cross-origin iframe (iframes=1, markers=0).
+                                     * We cannot inspect its X, but the iframe rectangle itself is
+                                     * visible to the parent document. Use the iframe's own
+                                     * top-right corner rather than assuming the whole WebView is
+                                     * the ad surface.
+                                     */
+                                    if (x === null || y === null) {
+                                        try {
+                                            var frames = Array.from(document.querySelectorAll("iframe"));
+                                            var best = null;
+                                            var bestArea = 0;
+
+                                            frames.forEach(function(frame) {
+                                                try {
+                                                    var r = frame.getBoundingClientRect();
+                                                    var area = Math.max(0, r.width) * Math.max(0, r.height);
+                                                    if (
+                                                        r.width >= width * 0.8 &&
+                                                        r.height >= height * 0.8 &&
+                                                        area > bestArea
+                                                    ) {
+                                                        bestArea = area;
+                                                        best = r;
+                                                    }
+                                                } catch (e) {}
+                                            });
+
+                                            if (best) {
+                                                x = best.left + best.width - 20;
+                                                y = best.top + 20;
+                                                source = "iframe_top_right_fallback";
+                                                AndroidAds.onStateLog(
+                                                    "NATIVE_CLOSE_IFRAME_RECT",
+                                                    "left=" + best.left +
+                                                    " top=" + best.top +
+                                                    " width=" + best.width +
+                                                    " height=" + best.height +
+                                                    " tapX=" + x +
+                                                    " tapY=" + y
+                                                );
+                                            }
+                                        } catch (e) {
+                                            AndroidAds.onStateLog(
+                                                "NATIVE_CLOSE_IFRAME_RECT_ERROR",
+                                                "error=" + (e && e.message ? e.message : String(e))
+                                            );
+                                        }
+                                    }
+
+                                    if (x === null || y === null) {
+                                        x = Math.max(1, width - 20);
+                                        y = Math.max(1, 20);
+                                        source = "fullscreen_top_right_fallback";
+                                    }
 
                                     AndroidAds.onStateLog(
                                         "NATIVE_CLOSE_TAP",
@@ -2340,7 +2395,7 @@ class MangaBuffAutomation(
                                      */
                                     var adStartedAt = Date.now();
                                     var ownWatchDurationMs = 32000;
-                                    var hardTimeoutMs = 38000;
+                                    var hardTimeoutMs = 35000;
                                     var lastSecondLogged = -1;
 
                                     AndroidAds.onStateLog(
