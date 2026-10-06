@@ -272,6 +272,11 @@ class MangaBuffForegroundService : Service() {
                 ?: "Фоновая автоматизация активна"
         )
 
+        if (!restoredPersistedRuns) {
+            restoredPersistedRuns = true
+            restorePersistedRuns()
+        }
+
         when (action) {
             ACTION_START,
             ACTION_UPDATE -> {
@@ -330,11 +335,6 @@ class MangaBuffForegroundService : Service() {
             ACTION_STOP -> stopAllInternal(explicitUserStop = true)
         }
 
-        if (!restoredPersistedRuns) {
-            restoredPersistedRuns = true
-            restorePersistedRuns()
-        }
-
         return START_STICKY
     }
 
@@ -369,6 +369,7 @@ class MangaBuffForegroundService : Service() {
                 message = "SERVICE_START accountId=$accountId taskType=${taskType.title}"
             )
         )
+        publishStatus(accountId, "Запуск...", true, taskType.title, 0f)
 
         val job = serviceScope.launch {
             try {
