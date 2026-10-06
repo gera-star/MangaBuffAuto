@@ -14,12 +14,10 @@ import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 
 class AutomationRuntime(
     private val context: Context,
@@ -28,29 +26,13 @@ class AutomationRuntime(
     private val onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
-    private val onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
-    private val onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
+    private val onWebViewAssigned: (WebView) -> Unit = {},
+    private val onWebViewCleared: (WebView) -> Unit = {}
 ) {
+    private val webViewStore = ProfileWebViewStore(context, onLog)
     private val runtimes = mutableMapOf<String, AccountRuntime>()
     private val automationEngines = mutableMapOf<String, MangaBuffAutomation>()
-    private val executionJobs = mutableMapOf<String, Job>()
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    private val webViewStore = ProfileWebViewStore(
-        context = context,
-        onLog = onLog,
-        onRendererGone = { accountId ->
-            onLog(
-                LogEntry(
-                    username = accountId,
-                    component = "SECURITY",
-                    message = "RENDERER_GONE_CANCEL_ACCOUNT accountId=$accountId",
-                    isError = true
-                )
-            )
-            stopAccount(accountId)
-        }
-    )
 
     @Synchronized
     private fun getOrCreateEngine(accountId: String): MangaBuffAutomation {
@@ -67,7 +49,7 @@ class AutomationRuntime(
     fun prepareAccount(account: MangaBuffAccount): AccountRuntime {
         onLog(LogEntry(username = account.username, component = "ACCOUNT", message = "START requested"))
         val (profileName, webView) = webViewStore.getOrCreateWebView(account.id, account.getSafeCookiesJson())
-        onWebViewAssigned(account.id, webView)
+        onWebViewAssigned(webView)
         val runtime = AccountRuntime(
             accountId = account.id,
             profileName = profileName,
@@ -75,13 +57,7 @@ class AutomationRuntime(
             state = AccountState.IDLE
         )
         runtimes[account.id] = runtime
-        onLog(
-            LogEntry(
-                username = account.username,
-                component = "ACCOUNT",
-                message = "READY accountId=${account.id} profile=$profileName runId=${runtime.runId} webView=${webView.hashCode()}"
-            )
-        )
+        onLog(LogEntry(username = account.username, component = "ACCOUNT", message = "READY profile=$profileName"))
         return runtime
     }
 
@@ -93,42 +69,31 @@ class AutomationRuntime(
         return prepareAccount(toAccount)
     }
 
-    fun skipCurrentManga(accountId: String): Boolean {
-        return automationEngines[accountId]?.skipCurrentManga() == true
+    fun skipCurrentManga(accountId: String? = null): Boolean {
+        if (accountId != null) {
+            return automationEngines[accountId]?.skipCurrentManga() == true
+        }
+        return automationEngines.values.any { it.skipCurrentManga() }
     }
 
-    fun markCurrentMangaAsRead(accountId: String): Boolean {
-        return automationEngines[accountId]?.markCurrentMangaAsRead() == true
+    fun markCurrentMangaAsRead(accountId: String? = null): Boolean {
+        if (accountId != null) {
+            return automationEngines[accountId]?.markCurrentMangaAsRead() == true
+        }
+        return automationEngines.values.any { it.markCurrentMangaAsRead() }
     }
 
     @Synchronized
     fun stopAccount(accountId: String) {
-        executionJobs.remove(accountId)?.cancel()
-
         val runtime = runtimes.remove(accountId)
         if (runtime != null) {
             runtime.state = AccountState.STOPPED
-            onWebViewCleared(accountId, runtime.webView)
+            onWebViewCleared(runtime.webView)
             webViewStore.releaseWebView(accountId)
-            onLog(
-                LogEntry(
-                    username = accountId,
-                    component = "ACCOUNT",
-                    message = "STOPPED accountId=$accountId runId=${runtime.runId} webView=${runtime.webView.hashCode()}"
-                )
-            )
         }
-
         val engine = automationEngines.remove(accountId)
         if (engine != null) {
-            engine.closeRuntime()
-            onLog(
-                LogEntry(
-                    username = accountId,
-                    component = "ENGINE",
-                    message = "STOP / DESTROY engineId=${engine.hashCode()} accountId=$accountId"
-                )
-            )
+            onLog(LogEntry(username = accountId, component = "ENGINE", message = "STOP / DESTROY engineId=${engine.hashCode()}"))
         }
     }
 
@@ -153,7 +118,7 @@ class AutomationRuntime(
         expectedProfileName: String
     ) {
         val runtime = runtimes[account.id] ?: prepareAccount(account)
-        onWebViewAssigned(account.id, runtime.webView)
+        onWebViewAssigned(runtime.webView)
 
         // Синхронизируем куки именно этого аккаунта
         webViewStore.syncCookiesForAccount(account.id, runtime.profileName, account.getSafeCookiesJson())
@@ -163,65 +128,20 @@ class AutomationRuntime(
         val profileMatch = (runtime.profileName == expectedProfileName)
         
         val isMultiProfileSupported = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
-        val actualProfileName = if (isMultiProfileSupported) {
-            try {
-                WebViewCompat.getProfile(runtime.webView)?.name.orEmpty()
-            } catch (_: Exception) {
-                ""
-            }
-        } else {
-            ""
-        }
         val webViewProfileMatch = if (isMultiProfileSupported) {
-            actualProfileName == runtime.profileName
+            val actualProfile = WebViewCompat.getProfile(runtime.webView)
+            actualProfile != null
         } else {
-            false
+            true
         }
-
-        onLog(
-            LogEntry(
-                username = account.username,
-                component = "SECURITY",
-                message = "ACCOUNT_BIND_CHECK accountId=${account.id} expectedProfile=${runtime.profileName} actualProfile=$actualProfileName webView=${runtime.webView.hashCode()}"
-            )
-        )
 
         if (!accountIdMatch || !profileMatch || !webViewProfileMatch) {
             onLog(LogEntry(username = account.username, component = "SECURITY", message = "ATTACH_FOREIGN_WEBVIEW failed", isError = true))
             throw SecurityException("Security check failed! accountIdMatch=$accountIdMatch, profileMatch=$profileMatch, webViewProfileMatch=$webViewProfileMatch")
         }
 
-        /*
-         * Background execution must not depend on the Activity being alive.
-         * UI attachment is optional and only used for debug display.
-         */
-        if (runtime.webView.isAttachedToWindow) {
-            onLog(
-                LogEntry(
-                    username = account.username,
-                    component = "WEBVIEW",
-                    message = "ATTACHED_FOR_UI accountId=${account.id} webView=${runtime.webView.hashCode()}"
-                )
-            )
-        } else {
-            onLog(
-                LogEntry(
-                    username = account.username,
-                    component = "WEBVIEW",
-                    message = "BACKGROUND_NO_UI_ATTACHMENT accountId=${account.id} webView=${runtime.webView.hashCode()}"
-                )
-            )
-        }
-
-        val webViewUa = runtime.webView.settings.userAgentString
-        val storedHttpUa = account.getSafeUserAgent()
-        onLog(
-            LogEntry(
-                username = account.username,
-                component = "NETWORK",
-                message = "WEBVIEW_UA=$webViewUa STORED_HTTP_UA=$storedHttpUa UA_MATCH=${webViewUa == storedHttpUa}"
-            )
-        )
+        // Wait for WebView to be attached to UI window
+        webViewStore.awaitAttached(account.id, runtime.webView)
 
         val engine = getOrCreateEngine(account.id)
         onLog(LogEntry(username = account.username, component = "ENGINE", message = "USE engineId=${engine.hashCode()}"))
@@ -248,13 +168,6 @@ class AutomationRuntime(
         }
 
         runtime.state = AccountState.RUNNING
-
-        val currentJob = coroutineContext[Job]
-        synchronized(executionJobs) {
-            executionJobs[account.id] =
-                currentJob ?: throw IllegalStateException("ACCOUNT_JOB_MISSING accountId=${account.id}")
-        }
-
         try {
             engine.runAccountTasks(account, settings, taskType, runtime.webView)
             runtime.state = AccountState.IDLE
@@ -269,12 +182,6 @@ class AutomationRuntime(
             throw e
         } finally {
             engineHeartbeatJob.cancel()
-            synchronized(executionJobs) {
-                val registered = executionJobs[account.id]
-                if (registered == currentJob) {
-                    executionJobs.remove(account.id)
-                }
-            }
         }
     }
 
