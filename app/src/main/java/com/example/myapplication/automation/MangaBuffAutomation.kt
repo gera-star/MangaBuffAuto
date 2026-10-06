@@ -148,6 +148,70 @@ class MangaBuffAutomation(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /*
+     * Background reader state is local to THIS MangaBuffAutomation instance.
+     * AutomationRuntime creates one engine per accountId, so this state cannot
+     * be shared between accounts.
+     */
+    @Volatile
+    private var backgroundScrollActive = false
+    private var backgroundScrollRunnable: Runnable? = null
+    private var backgroundScrollWebView: WebView? = null
+    private var backgroundScreenWasOff = false
+
+    private fun startBackgroundScroll(accountUsername: String, webView: WebView) {
+        mainHandler.post {
+            if (backgroundScrollActive && backgroundScrollWebView === webView) return@post
+
+            stopBackgroundScroll()
+            backgroundScrollActive = true
+            backgroundScrollWebView = webView
+            backgroundScreenWasOff = false
+
+            val runnable = object : Runnable {
+                override fun run() {
+                    val target = backgroundScrollWebView
+                    if (!backgroundScrollActive || target == null || target.isDestroyed) return
+
+                    val screenOff = BackgroundExecutionState.isScreenOff()
+                    if (screenOff != backgroundScreenWasOff) {
+                        backgroundScreenWasOff = screenOff
+                        log(accountUsername, "READER: BACKGROUND_SCROLL_STATE screenOff=$screenOff")
+                    }
+
+                    if (screenOff) {
+                        try {
+                            target.evaluateJavascript(
+                                "window.__mbBackgroundStep && window.__mbBackgroundStep();",
+                                null
+                            )
+                        } catch (e: Exception) {
+                            log(
+                                accountUsername,
+                                "READER: BACKGROUND_SCROLL_EVAL_ERROR error=${e.message}",
+                                true
+                            )
+                        }
+                    }
+
+                    if (backgroundScrollActive) mainHandler.postDelayed(this, 180L)
+                }
+            }
+
+            backgroundScrollRunnable = runnable
+            log(accountUsername, "READER: BACKGROUND_SCROLL_NATIVE_STARTED")
+            runnable.run()
+        }
+    }
+
+    private fun stopBackgroundScroll() {
+        backgroundScrollActive = false
+        backgroundScrollRunnable?.let(mainHandler::removeCallbacks)
+        backgroundScrollRunnable = null
+        backgroundScrollWebView = null
+        backgroundScreenWasOff = false
+    }
+
     /**
      * Performs a short synthetic finger gesture and then uses WebView's native
      * fling path. This follows Android's touch/velocity model instead of
@@ -3749,6 +3813,23 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun isScreenOff(): Boolean = BackgroundExecutionState.isScreenOff()
+
+                @JavascriptInterface
+                fun startBackgroundScroll() {
+                    mainHandler.post {
+                        startBackgroundScroll(account.username, webView)
+                    }
+                }
+
+                @JavascriptInterface
+                fun cancelBackgroundScroll() {
+                    mainHandler.post {
+                        stopBackgroundScroll()
+                    }
+                }
+
+                @JavascriptInterface
                 fun nativeSwipe(
                     x1: Float,
                     y1: Float,
@@ -4997,6 +5078,10 @@ class MangaBuffAutomation(
                                     }
 
                                     function stopScroll() {
+                                        try {
+                                            AndroidReaderBridge.cancelBackgroundScroll();
+                                        } catch(e) {}
+
                                         if (window.__mbScrollTimer) {
                                             clearTimeout(window.__mbScrollTimer);
                                             window.__mbScrollTimer = null;
@@ -5798,13 +5883,67 @@ class MangaBuffAutomation(
                                     function humanScroll() {
                                         if (chapterDone) return;
 
-                                        // MangaBuff's native autoscroll is intentionally not used for the
-                                        // actual reader motion: its maximum practical speed is too slow
-                                        // (about 330 px/s on long chapters). Use one smooth native
-                                        // requestAnimationFrame loop instead. This keeps continuous
-                                        // scrolling without large jumps and still lets checkEnd() observe
-                                        // the dynamically growing document.
+                                        // Keep the existing smooth visible-screen rAF path, but add a
+                                        // native Android tick path for screen-off periods. Chromium can
+                                        // throttle rAF heavily when the display is locked.
                                         try { stopScroll(); } catch(e) {}
+
+                                        window.__mbBackgroundStep = function() {
+                                            try {
+                                                if (
+                                                    chapterDone ||
+                                                    !window.__mbFastScrollRunning ||
+                                                    !AndroidReaderBridge.isScreenOff()
+                                                ) {
+                                                    return;
+                                                }
+
+                                                var scrollingElement =
+                                                    document.scrollingElement ||
+                                                    document.documentElement ||
+                                                    document.body;
+
+                                                var viewport = Math.max(
+                                                    window.innerHeight || 0,
+                                                    scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
+                                                    1
+                                                );
+                                                var height = Math.max(
+                                                    scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
+                                                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                                                    document.body ? (document.body.scrollHeight || 0) : 0
+                                                );
+                                                var y = Math.max(
+                                                    window.scrollY || 0,
+                                                    scrollingElement ? (scrollingElement.scrollTop || 0) : 0
+                                                );
+                                                var remaining = Math.max(0, height - viewport - y);
+                                                if (remaining <= 2) return;
+
+                                                var step = Math.min(
+                                                    420,
+                                                    Math.max(140, Math.floor(viewport * 0.20))
+                                                );
+                                                step = Math.min(step, remaining);
+                                                window.scrollBy(0, step);
+                                            } catch(e) {
+                                                try {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: BACKGROUND_SCROLL_STEP_ERROR ' +
+                                                        (e.message || String(e))
+                                                    );
+                                                } catch(ignore) {}
+                                            }
+                                        };
+
+                                        try {
+                                            AndroidReaderBridge.startBackgroundScroll();
+                                        } catch(e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: BACKGROUND_SCROLL_BRIDGE_ERROR ' +
+                                                (e.message || String(e))
+                                            );
+                                        }
 
                                         var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000 px/s
                                         var lastFrame = performance.now();
