@@ -4676,22 +4676,20 @@ class MangaBuffAutomation(
 
                                     function isLastChapter() {
                                         /*
-                                         * "Last chapter" is a confirmed UI state only:
-                                         *   1. there is NO real next chapter in the DOM;
-                                         *   2. MangaBuff shows .notify-new-chapter;
-                                         *   3. the reader wrapper has the finish marker.
+                                         * MangaBuff marks the real end of a manga with:
+                                         *   "Таков конец..."
+                                         *   "Назад к тайтлу"
+                                         *   <button class="notify-new-chapter" data-id="MANGA_ID">
                                          *
-                                         * Do not infer the end from a missing href, an empty
-                                         * chapter list, or URL increment.
+                                         * Do NOT infer the end from an empty next href or from
+                                         * chapter number + 1. A real next chapter must always win.
+                                         *
+                                         * Older/newer MangaBuff layouts may use different wrapper
+                                         * classes, so the textual finish marker is intentionally
+                                         * detected independently of .reader__wrapper--finish.
                                          */
                                         var notify = document.querySelector('.notify-new-chapter');
-                                        var finishMarker = document.querySelector('.reader__wrapper--finish');
-
                                         if (!notify || !visible(notify)) {
-                                            return false;
-                                        }
-
-                                        if (!finishMarker || !visible(finishMarker)) {
                                             return false;
                                         }
 
@@ -4713,6 +4711,9 @@ class MangaBuffAutomation(
                                         if (window.current_manga && window.current_manga.id) {
                                             known.push(String(window.current_manga.id));
                                         }
+                                        if (window.current_chapter && window.current_chapter.manga_id) {
+                                            known.push(String(window.current_chapter.manga_id));
+                                        }
 
                                         if (known.length === 0) {
                                             AndroidReaderBridge.onLogStep(
@@ -4730,8 +4731,69 @@ class MangaBuffAutomation(
                                             return false;
                                         }
 
+                                        /*
+                                         * Do not require one exact finish CSS class. Find the actual
+                                         * visible end marker by its user-facing text. This matches the
+                                         * real last-page markup even when the wrapper class changes.
+                                         */
+                                        var finishTextFound = false;
+                                        var finishTitleFound = false;
+
+                                        var finishCandidates = Array.from(
+                                            document.querySelectorAll(
+                                                '.reader__wrapper--finish, [class*="finish"], .reader__finish, .reader-finish'
+                                            )
+                                        );
+
+                                        for (var fi = 0; fi < finishCandidates.length; fi++) {
+                                            var candidate = finishCandidates[fi];
+                                            if (!visible(candidate)) continue;
+
+                                            var candidateText = text(candidate).toLowerCase();
+                                            if (candidateText.indexOf('таков конец') !== -1) {
+                                                finishTextFound = true;
+                                            }
+                                            if (candidateText.indexOf('назад к тайтлу') !== -1) {
+                                                finishTitleFound = true;
+                                            }
+                                        }
+
+                                        /*
+                                         * Fallback for markup where the finish block has no stable
+                                         * class at all: inspect visible DIVs containing the exact end
+                                         * phrase. Limit this to the phrase itself, not the whole body,
+                                         * so a random page text cannot become an EOF signal.
+                                         */
+                                        if (!finishTextFound) {
+                                            var endTextNodes = Array.from(document.querySelectorAll('div'));
+                                            for (var ei = 0; ei < endTextNodes.length; ei++) {
+                                                var endEl = endTextNodes[ei];
+                                                if (!visible(endEl)) continue;
+
+                                                var endText = text(endEl).toLowerCase();
+                                                if (
+                                                    endText === 'таков конец...' ||
+                                                    endText === 'таков конец…' ||
+                                                    endText === 'таков конец'
+                                                ) {
+                                                    finishTextFound = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        if (!finishTextFound) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'LAST_CHAPTER_MARKER_REJECTED reason=FINISH_TEXT_NOT_FOUND'
+                                            );
+                                            return false;
+                                        }
+
                                         AndroidReaderBridge.onLogStep(
-                                            'LAST_CHAPTER_MARKER_CONFIRMED notify=true finish=true mangaId=' + id
+                                            'LAST_CHAPTER_MARKER_CONFIRMED notify=true finishText=true' +
+                                            ' backToTitle=' + finishTitleFound +
+                                            ' finishClass=' + (finishCandidates.length > 0) +
+                                            ' finish=true mangaId=' + id
                                         );
                                         return true;
                                     }
