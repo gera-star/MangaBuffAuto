@@ -109,7 +109,7 @@ data class GlobalSettings(
     val adsCount: Int = 5,
     val mineClicks: Int = 100,
     val mineAutoUpgrade: Boolean = true,
-    val mineAutoExchange: Boolean = true,
+    val mineAutoExchange: Boolean = false,
     val readerChapters: Int = 4,
     val commentCount: Int = 3,
     val battleTargetCount: Int = 20
