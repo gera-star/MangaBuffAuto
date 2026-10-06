@@ -171,16 +171,24 @@ class ProfileWebViewStore(
             onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIE_MANAGER profile=$profileName"))
 
             targetCookieManager.setAcceptCookie(true)
+            var syncedCookieCount = 0
             if (cookiesJson.isNotBlank()) {
                 val cookieItems = cookiesJson.split(";", ",")
                 for (item in cookieItems) {
                     if (item.contains("=")) {
                         targetCookieManager.setCookie("https://mangabuff.ru", item.trim())
+                        syncedCookieCount++
                     }
                 }
                 targetCookieManager.flush()
             }
-            onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIES_SYNC_SUCCESS profile=$profileName"))
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "PROFILE",
+                    message = "COOKIES_SYNC_SUCCESS profile=$profileName count=$syncedCookieCount"
+                )
+            )
         } catch (e: Exception) {
             onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIE_PROFILE_FAIL error=${e.message}", isError = true))
             throw e
