@@ -2453,27 +2453,69 @@ class MangaBuffAutomation(
                                                     " rewarded=" + yandexRewarded
                                                 );
 
-                                                if (!window.__mbAdsNativeCloseRequested) {
-                                                    window.__mbAdsNativeCloseRequested = true;
+                                                /*
+                                                 * The ad may be hosted in a cross-origin fullscreen iframe.
+                                                 * At this point the parent document cannot safely press its X.
+                                                 * Do not synthesize a rewarded-ad click. Instead keep the
+                                                 * session alive, continue checking the real server balance,
+                                                 * and wait for the user to close the visible ad.
+                                                 */
+                                                AndroidAds.onStateLog(
+                                                    "AD_HARD_TIMEOUT_WAIT_USER",
+                                                    "elapsed=" + Math.floor(elapsed / 1000) +
+                                                    "s action=MANUAL_REQUIRED"
+                                                );
 
-                                                    if (requestNativeCloseTap(null)) {
-                                                        AndroidAds.onStateLog(
-                                                            "CLOSE_NATIVE_REQUESTED",
-                                                            "elapsed=" + Math.floor(elapsed / 1000) +
-                                                            "s source=hard_timeout"
-                                                        );
+                                                clearInterval(watchTimer);
 
-                                                        setTimeout(function() {
-                                                            if (finished) return;
-                                                            verifyReward(0);
-                                                        }, 2500);
+                                                /*
+                                                 * Start reward verification immediately. If MangaBuff has
+                                                 * already credited +7, this finishes without requiring DOM
+                                                 * access to the cross-origin Yandex iframe.
+                                                 */
+                                                verifyReward(0);
+
+                                                /*
+                                                 * Keep a lightweight diagnostic watcher alive so a real
+                                                 * user close can be recorded even when the close button
+                                                 * itself is inaccessible to the parent document.
+                                                 */
+                                                var userCloseWatchStartedAt = Date.now();
+                                                var userCloseWatch = null;
+
+                                                function watchForUserCloseAfterTimeout() {
+                                                    if (finished) {
+                                                        if (userCloseWatch) clearTimeout(userCloseWatch);
                                                         return;
                                                     }
+
+                                                    var currentClose = findCloseButton();
+                                                    var stillVisible = isVisibleElement(currentClose);
+
+                                                    if (!stillVisible) {
+                                                        AndroidAds.onStateLog(
+                                                            "AD_CLOSE_USER_CONFIRMED",
+                                                            "source=POST_TIMEOUT_DOM_DISAPPEARED"
+                                                        );
+                                                        return;
+                                                    }
+
+                                                    if (Date.now() - userCloseWatchStartedAt >= 30000) {
+                                                        AndroidAds.onStateLog(
+                                                            "AD_CLOSE_USER_WAIT_TIMEOUT",
+                                                            "source=POST_TIMEOUT"
+                                                        );
+                                                        return;
+                                                    }
+
+                                                    userCloseWatch = setTimeout(
+                                                        watchForUserCloseAfterTimeout,
+                                                        250
+                                                    );
                                                 }
 
-                                                finished = true;
-                                                window.__mbAdsRunnerActive = false;
-                                                AndroidAds.onAdFailed("yandex_reward_timeout");
+                                                watchForUserCloseAfterTimeout();
+                                                return;
                                             }
                                             return;
                                         }
