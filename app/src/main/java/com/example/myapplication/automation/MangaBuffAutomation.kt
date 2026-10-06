@@ -2340,7 +2340,7 @@ class MangaBuffAutomation(
                                      */
                                     var adStartedAt = Date.now();
                                     var ownWatchDurationMs = 32000;
-                                    var hardTimeoutMs = 65000;
+                                    var hardTimeoutMs = 38000;
                                     var lastSecondLogged = -1;
 
                                     AndroidAds.onStateLog(
@@ -2394,12 +2394,17 @@ class MangaBuffAutomation(
                                         );
 
                                         /*
-                                         * 32s is only our watchdog. Never close the Yandex
-                                         * Rewarded solely because it expired. We wait for the
-                                         * real Yandex timer to reach zero or onRewarded(true).
+                                         * The live RSYA fullscreen used by MangaBuff is normally
+                                         * the 30-second rewarded format. Its controls can live in
+                                         * a cross-origin iframe, so the parent page cannot inspect
+                                         * the Yandex timer/callback. After our 32s minimum, allow
+                                         * a short safety margin and perform the real native close
+                                         * tap. The reward is considered successful only after the
+                                         * MangaBuff balance confirms the +7 diamonds.
                                          */
                                         var yandexReady = yandexRewarded ||
-                                            (yandexSeconds !== null && yandexSeconds <= 0);
+                                            (yandexSeconds !== null && yandexSeconds <= 0) ||
+                                            elapsed >= ownWatchDurationMs;
 
                                         if (!yandexReady) {
                                             AndroidAds.onStateLog(
