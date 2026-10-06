@@ -2231,12 +2231,25 @@ class MangaBuffAutomation(
                                         " before=" + (initialDiamond === null ? "?" : initialDiamond)
                                     );
 
-                                    fetch("/balance", {
+                                    /*
+                                     * The reward is credited only after the real fullscreen
+                                     * close action. Keep checking the server after that close;
+                                     * the balance page may otherwise be served from an
+                                     * intermediate/cache layer for a short time.
+                                     *
+                                     * The query parameter makes every verification request
+                                     * unique. This does NOT interact with the ad itself.
+                                     */
+                                    var balanceUrl = "/balance?_mb_reward_check=" + Date.now();
+
+                                    fetch(balanceUrl, {
                                         method: "GET",
                                         credentials: "include",
                                         cache: "no-store",
                                         headers: {
-                                            "Accept": "text/html,application/xhtml+xml"
+                                            "Accept": "text/html,application/xhtml+xml",
+                                            "Cache-Control": "no-cache",
+                                            "Pragma": "no-cache"
                                         }
                                     }).then(function(response) {
                                         if (!response.ok) throw new Error("balance_http_" + response.status);
@@ -2283,9 +2296,16 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
+                                            /*
+                                             * Right after the user closes the fullscreen ad,
+                                             * MangaBuff normally credits the +7 reward within
+                                             * a couple of seconds. Poll faster during the first
+                                             * 10 seconds, then fall back to the normal cadence.
+                                             */
+                                            var nextDelay = attempt < 20 ? 500 : 1000;
                                             rewardPoll = setTimeout(function() {
                                                 verifyReward(attempt + 1);
-                                            }, 1000);
+                                            }, nextDelay);
                                         } catch (e) {
                                             if (attempt >= 60) {
                                                 finished = true;
