@@ -771,6 +771,7 @@ class MangaBuffAutomation(
                     val script = """
                         (function() {
                             try {
+                                AndroidMine.onMineLog('SCRIPT_START');
                                 var startedAt = Date.now();
                                 var maxWait = 10000;
 
@@ -2900,6 +2901,13 @@ class MangaBuffAutomation(
                                 var initialOre = root ? (parseInt(root.getAttribute('data-ore') || '0', 10) || 0) : 0;
                                 var hits = document.querySelector('.main-mine__game-hits-left');
                                 var initialHits = hits ? parseInt((hits.innerText || '').trim(), 10) || 0 : 0;
+                                var autoUpgrade = ${settings.mineAutoUpgrade};
+
+                                AndroidMine.onMineLog(
+                                    'DOM_READY hits=' + initialHits +
+                                    ' ore=' + initialOre +
+                                    ' autoUpgrade=' + autoUpgrade
+                                );
 
                                 function numText(el) {
                                     if (!el) return 0;
@@ -3029,7 +3037,7 @@ class MangaBuffAutomation(
                                         }, 250);
                                     }
 
-                                    if (${settings.mineAutoUpgrade}) {
+                                    if (autoUpgrade) {
                                         var upgrade = document.querySelector('#modal-mine-shop .mine-shop__upgrade-btn');
                                         var priceText = upgrade && upgrade.parentElement ? upgrade.parentElement.innerText : '';
                                         var priceMatch = priceText.match(/Цена:\s*([0-9\s]+)\s*руды/i);
@@ -3082,7 +3090,9 @@ class MangaBuffAutomation(
                         })();
                     """.trimIndent()
 
-                        view.evaluateJavascript(script, null)
+                        view.evaluateJavascript(script) { result ->
+                            log(account.username, "MINE: JS_EVAL_RESULT result=$result")
+                        }
                     }
                 }
             }
