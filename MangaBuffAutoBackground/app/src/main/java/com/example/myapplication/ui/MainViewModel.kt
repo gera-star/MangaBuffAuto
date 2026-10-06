@@ -3,7 +3,6 @@ package com.example.myapplication.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.myapplication.automation.MultiAccountAutomationRunner
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
@@ -30,31 +29,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setDebugWebViewVisible(visible: Boolean) {
         _debugWebViewVisible.value = visible
     }
-
-    private val automationRunner = MultiAccountAutomationRunner(
-        context = application,
-        onLog = { logEntry -> addLog(logEntry) },
-        onAccountStatusUpdate = { accountId, statusMessage, isRunning, currentTask, progress ->
-            updateAccountStatus(accountId, statusMessage, isRunning, currentTask, progress)
-        },
-        onMangaActiveUrlUpdate = { accountId, url, title ->
-            updateActiveMangaUrl(accountId, url, title)
-        },
-        onAccountStatsUpdate = { accountId, diamonds, cardDrop, chapters, comments ->
-            updateAccountStats(accountId, diamonds, cardDrop, chapters, comments)
-        },
-        onDailyStatsUpdate = { accountId, stats ->
-            updateDailyStats(accountId, stats)
-        },
-        onWebViewAssigned = { webView ->
-            _activeWebView.value = webView
-        },
-        onWebViewCleared = { webView ->
-            if (_activeWebView.value == webView) {
-                _activeWebView.value = null
-            }
-        }
-    )
 
     private val applicationContext = getApplication<Application>()
 
@@ -179,30 +153,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun reloadAccount(account: MangaBuffAccount) {
-        automationRunner.reloadAccount(account)
+        MangaBuffForegroundService.reloadAccount(applicationContext, account.id)
         addLog(LogEntry(username = account.username, message = "Обновление страницы и переход на главную"))
     }
 
     fun skipCurrentManga(): Boolean {
-        val skipped = automationRunner.skipCurrentManga()
-        addLog(
-            LogEntry(
-                message = if (skipped) "READER: SKIP_MANGA_BUTTON_DISPATCHED" else "READER: SKIP_MANGA_BUTTON_NOT_AVAILABLE",
-                isError = !skipped
-            )
-        )
-        return skipped
+        MangaBuffForegroundService.skipCurrentManga(applicationContext)
+        addLog(LogEntry(message = "READER: SKIP_MANGA_BUTTON_DISPATCHED"))
+        return true
     }
 
     fun markCurrentMangaAsRead(): Boolean {
-        val marked = automationRunner.markCurrentMangaAsRead()
-        addLog(
-            LogEntry(
-                message = if (marked) "READER: MARK_READ_BUTTON_DISPATCHED" else "READER: MARK_READ_BUTTON_NOT_AVAILABLE",
-                isError = !marked
-            )
-        )
-        return marked
+        MangaBuffForegroundService.markCurrentMangaAsRead(applicationContext)
+        addLog(LogEntry(message = "READER: MARK_READ_BUTTON_DISPATCHED"))
+        return true
     }
 
     /**
@@ -211,19 +175,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * /manga?hide_read=1 -> choose another manga -> start reading.
      */
     fun changeCurrentManga(accountId: String): Boolean {
-        val marked = automationRunner.markCurrentMangaAsRead(accountId)
+        MangaBuffForegroundService.markCurrentMangaAsRead(applicationContext, accountId)
         addLog(
             LogEntry(
                 username = accountId,
-                message = if (marked) {
-                    "READER: CHANGE_MANGA_REQUESTED action=MARK_READ_THEN_CATALOG"
-                } else {
-                    "READER: CHANGE_MANGA_NOT_AVAILABLE"
-                },
-                isError = !marked
+                message = "READER: CHANGE_MANGA_REQUESTED action=MARK_READ_THEN_CATALOG"
             )
         )
-        return marked
+        return true
     }
 
     fun updateAccountTasks(
