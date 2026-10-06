@@ -48,6 +48,7 @@ class MangaBuffForegroundService : Service() {
         const val ACTION_STOP_ALL = "ACTION_STOP_ALL"
         const val ACTION_SKIP_MANGA = "ACTION_SKIP_MANGA"
         const val ACTION_MARK_READ = "ACTION_MARK_READ"
+        const val ACTION_RELOAD_ACCOUNT = "ACTION_RELOAD_ACCOUNT"
 
         const val EXTRA_STATUS = "EXTRA_STATUS_TEXT"
         const val EXTRA_ACCOUNT_ID = "EXTRA_ACCOUNT_ID"
@@ -132,6 +133,17 @@ class MangaBuffForegroundService : Service() {
                 context,
                 Intent(context, MangaBuffForegroundService::class.java).apply {
                     action = ACTION_MARK_READ
+                    putExtra(EXTRA_ACCOUNT_ID, accountId)
+                },
+                foreground = false
+            )
+        }
+
+        fun reloadAccount(context: Context, accountId: String) {
+            dispatch(
+                context,
+                Intent(context, MangaBuffForegroundService::class.java).apply {
+                    action = ACTION_RELOAD_ACCOUNT
                     putExtra(EXTRA_ACCOUNT_ID, accountId)
                 },
                 foreground = false
@@ -304,6 +316,15 @@ class MangaBuffForegroundService : Service() {
             ACTION_MARK_READ -> {
                 val accountId = intent.getStringExtra(EXTRA_ACCOUNT_ID)
                 runner.markCurrentMangaAsRead(accountId)
+            }
+
+            ACTION_RELOAD_ACCOUNT -> {
+                val accountId = intent.getStringExtra(EXTRA_ACCOUNT_ID)
+                if (!accountId.isNullOrBlank()) {
+                    repository.getAccounts()
+                        .firstOrNull { it.id == accountId }
+                        ?.let { runner.reloadAccount(it) }
+                }
             }
 
             null -> {
