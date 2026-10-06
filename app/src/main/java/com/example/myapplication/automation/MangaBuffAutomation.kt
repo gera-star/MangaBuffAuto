@@ -5878,13 +5878,15 @@ class MangaBuffAutomation(
                                             // Slow the reader down: use roughly 40% of the previous
                                             // finger travel. The old swipe covered ~50-60% of the viewport,
                                             // which made the bot descend too quickly.
-                                            var startY = m.viewport * (0.64 + Math.random() * 0.04);
-                                            var endY = m.viewport * (0.40 + Math.random() * 0.04);
+                                            // Extra slow mode: reduce the already shortened swipe by another 60%.
+                                            // This keeps the finger gesture natural but makes each step much smaller.
+                                            var startY = m.viewport * (0.54 + Math.random() * 0.02);
+                                            var endY = m.viewport * (0.45 + Math.random() * 0.02);
                                             var distance = startY - endY;
-                                            var maxDistance = Math.max(140, m.remaining - 4);
+                                            var maxDistance = Math.max(80, m.remaining - 4);
 
                                             if (distance > maxDistance) {
-                                                startY = Math.min(m.viewport * 0.68, endY + maxDistance);
+                                                startY = Math.min(m.viewport * 0.56, endY + maxDistance);
                                                 distance = startY - endY;
                                             }
 
