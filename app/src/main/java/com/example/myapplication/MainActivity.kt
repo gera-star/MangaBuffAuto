@@ -53,17 +53,16 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val webViewsByAccount by viewModel.webViewsByAccount.collectAsState()
+                    val activeWebView by viewModel.activeWebView.collectAsState()
                     val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
-                    val debugWebView = webViewsByAccount.values.firstOrNull()
 
                     Box(modifier = Modifier.fillMaxSize()) {
                         MangaBuffAppUI(
                             viewModel = viewModel,
-                            webViewContainer = debugWebView
+                            webViewContainer = activeWebView
                         )
 
-                        debugWebView?.let { webView ->
+                        activeWebView?.let { webView ->
                             key(webView) {
                                 AndroidView(
                                     factory = {
