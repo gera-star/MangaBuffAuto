@@ -286,20 +286,28 @@ class MangaBuffAutomation(
 
         /*
          * IMPORTANT:
-         * Do not create a native fling here. A real phone finger swipe releases
-         * into inertia, but our automation performs repeated swipes. Passing the
-         * velocity to flingScroll() makes that inertia accumulate from one
-         * synthetic swipe to the next, producing the "accelerating reader" effect.
+         * MotionEvents must be dispatched at their real wall-clock times.
+         * The previous implementation sent the whole gesture in one main-thread
+         * loop and only changed MotionEvent.eventTime. WebView therefore received
+         * all MOVE events almost instantly, while Chromium's velocity tracker saw
+         * the artificial timestamps and could start a huge fling on ACTION_UP.
          *
-         * We deliberately send a slower, eased finger movement and finish with
-         * ACTION_UP at zero residual velocity. The JS scheduler already supplies
-         * the pause between gestures, so every swipe gets a clean stop.
+         * That is exactly the "first swipes are normal, then the reader becomes
+         * lightning fast" behaviour from the logs:
+         *   distance=40..46
+         *   deltaY=471 -> 497 -> 4509 -> 8101 -> 11532 -> 16686
+         *
+         * Send the events asynchronously over real elapsed time instead. The
+         * final position is held briefly before ACTION_UP so the finger velocity
+         * reaches ~0 instead of handing WebView a fling.
          */
-        val safeDuration = durationMs.coerceIn(420L, 620L)
+        val safeDuration = durationMs.coerceIn(650L, 850L)
+        val moveSteps = 12
+        val settleMs = 140L
         val downTime = SystemClock.uptimeMillis()
-        val steps = 12
 
-        fun send(action: Int, eventTime: Long, x: Float, y: Float) {
+        fun send(action: Int, x: Float, y: Float) {
+            val eventTime = SystemClock.uptimeMillis()
             MotionEvent.obtain(
                 downTime,
                 eventTime,
@@ -316,26 +324,35 @@ class MangaBuffAutomation(
             }
         }
 
-        try {
-            send(MotionEvent.ACTION_DOWN, downTime, startX, startY)
+        send(MotionEvent.ACTION_DOWN, startX, startY)
 
-            for (i in 1 until steps) {
-                val fraction = i.toFloat() / steps.toFloat()
+        for (i in 1 until moveSteps) {
+            val fraction = i.toFloat() / moveSteps.toFloat()
+            val delayMs = (safeDuration * fraction).toLong()
 
-                // Ease-out movement: the finger slows before release instead
-                // of ending with a high velocity that can turn into a fling.
+            mainHandler.postDelayed({
+                if (!webView.isAttachedToWindow) return@postDelayed
+
+                // Ease-out movement: most of the finger travel happens early,
+                // then the finger naturally slows toward the end of the swipe.
                 val eased = 1f - ((1f - fraction) * (1f - fraction))
-                val eventTime = downTime + (safeDuration * fraction).toLong()
                 val currentX = startX + ((endX - startX) * eased)
                 val currentY = startY + ((endY - startY) * eased)
-                send(MotionEvent.ACTION_MOVE, eventTime, currentX, currentY)
-            }
-
-            val upTime = downTime + safeDuration
-            send(MotionEvent.ACTION_UP, upTime, endX, endY)
-        } catch (e: Exception) {
-            throw e
+                send(MotionEvent.ACTION_MOVE, currentX, currentY)
+            }, delayMs)
         }
+
+        // Final MOVE at the destination, then keep the finger there for a short
+        // settle period. This removes residual velocity before ACTION_UP.
+        mainHandler.postDelayed({
+            if (!webView.isAttachedToWindow) return@postDelayed
+            send(MotionEvent.ACTION_MOVE, endX, endY)
+
+            mainHandler.postDelayed({
+                if (!webView.isAttachedToWindow) return@postDelayed
+                send(MotionEvent.ACTION_UP, endX, endY)
+            }, settleMs)
+        }, safeDuration)
     }
 
     private var dailyStats = DailyStats(day = currentStatsDay())
