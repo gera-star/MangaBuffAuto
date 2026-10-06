@@ -3029,7 +3029,7 @@ class MangaBuffAutomation(
                                         }, 250);
                                     }
 
-                                    if (\${settings.mineAutoUpgrade}) {
+                                    if (${settings.mineAutoUpgrade}) {
                                         var upgrade = document.querySelector('#modal-mine-shop .mine-shop__upgrade-btn');
                                         var priceText = upgrade && upgrade.parentElement ? upgrade.parentElement.innerText : '';
                                         var priceMatch = priceText.match(/Цена:\s*([0-9\s]+)\s*руды/i);
