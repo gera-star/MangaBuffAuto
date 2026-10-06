@@ -775,7 +775,7 @@ class MangaBuffAutomation(
                     val script = """
                         (function() {
                             try {
-                                AndroidMine.onMineLog('SCRIPT_START');
+                                AndroidBalanceBridge.onBalanceDiag('STAT: BALANCE_SCRIPT_START');
                                 var startedAt = Date.now();
                                 var maxWait = 10000;
 
