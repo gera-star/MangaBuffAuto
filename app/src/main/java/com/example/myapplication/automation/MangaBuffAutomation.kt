@@ -4711,8 +4711,15 @@ class MangaBuffAutomation(
                                          * classes, so the textual finish marker is intentionally
                                          * detected independently of .reader__wrapper--finish.
                                          */
+                                        // The end marker can be present in the DOM while its button is
+                                        // temporarily outside the viewport during the final layout pass.
+                                        // Do not make EOF depend on CSS visibility; the DOM marker itself is
+                                        // authoritative once the page has reached the stabilized bottom.
                                         var notify = document.querySelector('.notify-new-chapter');
-                                        if (!notify || !visible(notify)) {
+                                        if (!notify) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'LAST_CHAPTER_MARKER_REJECTED reason=NOTIFY_BUTTON_NOT_FOUND'
+                                            );
                                             return false;
                                         }
 
@@ -4741,13 +4748,6 @@ class MangaBuffAutomation(
                                         }
                                         if (window.current_chapter && window.current_chapter.manga_id) {
                                             known.push(String(window.current_chapter.manga_id));
-                                        }
-
-                                        if (known.length === 0) {
-                                            AndroidReaderBridge.onLogStep(
-                                                'LAST_CHAPTER_MARKER_REJECTED reason=MANGA_ID_UNKNOWN'
-                                            );
-                                            return false;
                                         }
 
                                         /*
@@ -4812,7 +4812,11 @@ class MangaBuffAutomation(
                                          * so a random page text cannot become an EOF signal.
                                          */
                                         if (!finishTextFound) {
-                                            var endTextNodes = Array.from(document.querySelectorAll('div'));
+                                            // Fallback for the real MangaBuff markup:
+                                            // <div>Таков конец...</div>
+                                            // The exact wrapper/class is not stable, so inspect visible
+                                            // elements by their normalized user-facing text.
+                                            var endTextNodes = Array.from(document.querySelectorAll('body *'));
                                             for (var ei = 0; ei < endTextNodes.length; ei++) {
                                                 var endEl = endTextNodes[ei];
                                                 if (!visible(endEl)) continue;
@@ -4821,7 +4825,9 @@ class MangaBuffAutomation(
                                                 if (
                                                     endText === 'таков конец...' ||
                                                     endText === 'таков конец…' ||
-                                                    endText === 'таков конец'
+                                                    endText === 'таков конец' ||
+                                                    endText.indexOf('таков конец...') !== -1 ||
+                                                    endText.indexOf('таков конец…') !== -1
                                                 ) {
                                                     finishTextFound = true;
                                                     break;
