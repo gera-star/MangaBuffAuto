@@ -2198,11 +2198,13 @@ class MangaBuffAutomation(
                                     var buttonCountNow = readButtonCount(btnNow);
                                     var diamondConfirmed = initialDiamond !== null &&
                                         diamondNow !== null && diamondNow >= initialDiamond + 7;
-                                    var buttonCountChanged = initialButtonCount !== null &&
-                                        buttonCountNow !== null &&
-                                        buttonCountNow !== initialButtonCount;
-
-                                    if (diamondConfirmed || buttonCountChanged) {
+                                    /*
+                                     * The button counter is only a UI/state signal. It can
+                                     * change before MangaBuff has actually credited the reward
+                                     * to the account. Never finish the ad task from that signal.
+                                     * The real account balance (+7 diamonds) is authoritative.
+                                     */
+                                    if (diamondConfirmed) {
                                         finished = true;
                                         window.__mbAdsRunnerActive = false;
                                         AndroidAds.onStateLog(
