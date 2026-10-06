@@ -52,6 +52,13 @@ class MainActivity : ComponentActivity() {
                     val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
 
                     Box(modifier = Modifier.fillMaxSize()) {
+                        // Главный UI приложения. Кнопка WEB внутри UI временно
+                        // переключает тот же самый WebView в видимый режим для ручной проверки рекламы.
+                        MangaBuffAppUI(
+                            viewModel = viewModel,
+                            webViewContainer = activeWebView
+                        )
+
                         // The automation WebView must have a real viewport even while running
                         // in the background. A 1dp WebView makes window.innerHeight collapse to
                         // ~1px and breaks reader end-of-page detection and touch swipe geometry.
@@ -146,12 +153,6 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        // Главный UI приложения. Кнопка WEB внутри UI временно
-                        // переключает тот же самый WebView в видимый режим для ручной проверки рекламы.
-                        MangaBuffAppUI(
-                            viewModel = viewModel,
-                            webViewContainer = activeWebView
-                        )
                     }
                 }
             }
