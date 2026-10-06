@@ -98,7 +98,7 @@ class MangaBuffForegroundService : Service() {
                 stopSelf()
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun createNotificationChannel() {
