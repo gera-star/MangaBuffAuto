@@ -5799,7 +5799,7 @@ class MangaBuffAutomation(
                                         // the dynamically growing document.
                                         try { stopScroll(); } catch(e) {}
 
-                                        var speedPxPerSecond = 2000 + Math.floor(Math.random() * 701); // 2000..2700 px/s
+                                        var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000 px/s
                                         var lastFrame = performance.now();
                                         window.__mbFastScrollRunning = true;
 
