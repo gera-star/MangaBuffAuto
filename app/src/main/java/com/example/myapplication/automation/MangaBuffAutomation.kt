@@ -22,6 +22,8 @@ import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -147,6 +149,17 @@ class MangaBuffAutomation(
         .build()
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val accountIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    fun closeRuntime() {
+        accountIoScope.coroutineContext[Job]?.cancel()
+        mainHandler.post {
+            stopBackgroundScroll()
+            activeReaderSkip = null
+            activeReaderMarkRead = null
+        }
+        mainHandler.removeCallbacksAndMessages(null)
+    }
 
     /*
      * Background reader state is local to THIS MangaBuffAutomation instance.
@@ -4214,7 +4227,7 @@ class MangaBuffAutomation(
                 fun requestServerReadQuest(progress: Int) {
                     log(account.username, "READER: SERVER_QUEST_NATIVE_REQUEST progress=" + progress + "%")
 
-                    CoroutineScope(Dispatchers.IO).launch {
+                    accountIoScope.launch {
                         try {
                             val request = Request.Builder()
                                 .url("https://mangabuff.ru/balance")
