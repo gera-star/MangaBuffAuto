@@ -1130,7 +1130,7 @@ fun LogsTab(
                 modifier = Modifier.fillMaxSize().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(logs, key = { it.timestamp.toString() + it.message.hashCode() }) { log ->
+                itemsIndexed(logs, key = { index, _ -> index }) { _, log ->
                     val timeStr = dateFormat.format(Date(log.timestamp))
                     val levelStr = if (log.isError) "ERROR" else "INFO"
                     val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
