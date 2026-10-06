@@ -18,7 +18,6 @@ import androidx.core.content.ContextCompat
 import com.example.myapplication.MainActivity
 import com.example.myapplication.R
 import com.example.myapplication.automation.BackgroundExecutionState
-import com.example.myapplication.data.LogEntry
 
 class MangaBuffForegroundService : Service() {
 
