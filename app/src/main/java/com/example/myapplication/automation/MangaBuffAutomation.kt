@@ -5905,7 +5905,7 @@ class MangaBuffAutomation(
                                             var x1 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x));
                                             var x2 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x + xJitter));
 
-                                            var duration = 500 + Math.floor(Math.random() * 220);
+                                            var duration = 250 + Math.floor(Math.random() * 110);
                                             var pause = 220 + Math.floor(Math.random() * 180);
                                             var beforeY = m.y;
                                             var sequence = ++swipeSequence;
