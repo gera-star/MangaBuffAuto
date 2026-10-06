@@ -20,6 +20,7 @@ import com.example.myapplication.MainActivity
 import com.example.myapplication.R
 import com.example.myapplication.automation.BackgroundExecutionState
 import com.example.myapplication.automation.MultiAccountAutomationRunner
+import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.GlobalSettings
@@ -230,6 +231,7 @@ class MangaBuffForegroundService : Service() {
             onAccountStatsUpdate = ::publishStats,
             onDailyStatsUpdate = ::publishDailyStats,
             onWebViewAssigned = { accountId, webView ->
+                AutomationWebViewRegistry.assigned(accountId, webView)
                 publishLog(
                     LogEntry(
                         username = accountId,
@@ -239,6 +241,7 @@ class MangaBuffForegroundService : Service() {
                 )
             },
             onWebViewCleared = { accountId, webView ->
+                AutomationWebViewRegistry.cleared(accountId, webView)
                 publishLog(
                     LogEntry(
                         username = accountId,
