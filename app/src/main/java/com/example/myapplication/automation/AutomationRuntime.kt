@@ -218,6 +218,16 @@ class AutomationRuntime(
             )
         }
 
+        val webViewUa = runtime.webView.settings.userAgentString
+        val storedHttpUa = account.getSafeUserAgent()
+        onLog(
+            LogEntry(
+                username = account.username,
+                component = "NETWORK",
+                message = "WEBVIEW_UA=$webViewUa STORED_HTTP_UA=$storedHttpUa UA_MATCH=${webViewUa == storedHttpUa}"
+            )
+        )
+
         val engine = getOrCreateEngine(account.id)
         onLog(LogEntry(username = account.username, component = "ENGINE", message = "USE engineId=${engine.hashCode()}"))
 
