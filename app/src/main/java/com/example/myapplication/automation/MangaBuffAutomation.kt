@@ -4560,93 +4560,180 @@ class MangaBuffAutomation(
                                     }
 
                                     function findNextChapter() {
-                                        var direct = Array.from(document.querySelectorAll('a, button, [role="button"], [role="link"]'));
+                                        /*
+                                         * IMPORTANT:
+                                         * Never manufacture the next chapter URL from N + 1.
+                                         * The chapter list/navigation DOM is the source of truth.
+                                         *
+                                         * The previous implementation could fall back to
+                                         * buildCandidateNextUrl(), which turned a real last chapter
+                                         * into a request for a non-existent "/N+1" page.
+                                         */
+
+                                        function findRealHref(el) {
+                                            if (!el) return '';
+                                            var href = getHref(el);
+                                            return isValidNextUrl(href) ? href : '';
+                                        }
+
+                                        // 1) MangaBuff chapter list: use the real adjacent chapter
+                                        // link after the active chapter.
+                                        var chapterItems = Array.from(
+                                            document.querySelectorAll('.reader-chapters__item')
+                                        );
+
+                                        if (chapterItems.length > 0) {
+                                            var activeIndex = -1;
+                                            for (var ci = 0; ci < chapterItems.length; ci++) {
+                                                var item = chapterItems[ci];
+                                                if (
+                                                    item.classList.contains('reader-chapters__item--active') ||
+                                                    item.classList.contains('active') ||
+                                                    item.querySelector('.reader-chapters__item--active')
+                                                ) {
+                                                    activeIndex = ci;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (activeIndex >= 0) {
+                                                for (var ni = activeIndex + 1; ni < chapterItems.length; ni++) {
+                                                    var nextItem = chapterItems[ni];
+                                                    var nextLink = nextItem.querySelector(
+                                                        'a[href], button[href], [role="link"][href]'
+                                                    ) || (
+                                                        nextItem.tagName === 'A' ? nextItem : null
+                                                    );
+                                                    var nextHref = findRealHref(nextLink);
+                                                    if (nextHref) {
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'NEXT_CHAPTER_FOUND_LIST index=' + ni +
+                                                            ' text="' + text(nextItem) +
+                                                            '" url=' + nextHref
+                                                        );
+                                                        return nextLink;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // 2) Real MangaBuff next-navigation controls.
+                                        var explicit = Array.from(document.querySelectorAll(
+                                            '.navigate-button, .reader-header__nav-btn--next, .reader__next, [data-next-chapter]'
+                                        ));
+
+                                        for (var j = 0; j < explicit.length; j++) {
+                                            var ex = explicit[j];
+                                            if (!visible(ex)) continue;
+                                            if (ex.classList && ex.classList.contains('notify-new-chapter')) continue;
+
+                                            var exHref = findRealHref(ex);
+                                            if (exHref) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'NEXT_CHAPTER_FOUND_NAV tag=' + ex.tagName +
+                                                    ' text="' + text(ex) + '" url=' + exHref
+                                                );
+                                                return ex;
+                                            }
+
+                                            var nested = ex.querySelector ? ex.querySelector('a[href]') : null;
+                                            var nestedHref = findRealHref(nested);
+                                            if (nestedHref) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'NEXT_CHAPTER_FOUND_NAV_NESTED text="' + text(ex) +
+                                                    '" url=' + nestedHref
+                                                );
+                                                return nested;
+                                            }
+                                        }
+
+                                        // 3) Text-based discovery is only accepted when it contains
+                                        // a real, strictly increasing chapter href.
+                                        var direct = Array.from(document.querySelectorAll(
+                                            'a[href], button[href], [role="link"][href], [role="button"]'
+                                        ));
+
                                         for (var i = 0; i < direct.length; i++) {
                                             var el = direct[i];
                                             if (!visible(el)) continue;
                                             if (el.classList && el.classList.contains('notify-new-chapter')) continue;
 
                                             var ownText = text(el);
-                                            if (isNextText(ownText)) {
-                                                var href = getHref(el);
-                                                if (isValidNextUrl(href)) {
-                                                    AndroidReaderBridge.onLogStep('NEXT_CHAPTER_FOUND_DOM tag=' + el.tagName + ' text="' + ownText + '" url=' + href);
-                                                    return el;
-                                                }
-                                            }
-                                        }
+                                            if (!isNextText(ownText)) continue;
 
-                                        var explicit = Array.from(document.querySelectorAll('.reader-header__nav-btn--next, .reader__next, [data-next-chapter]'));
-                                        for (var j = 0; j < explicit.length; j++) {
-                                            var ex = explicit[j];
-                                            if (!visible(ex)) continue;
-                                            if (ex.classList && ex.classList.contains('notify-new-chapter')) continue;
-
-                                            var exHref = getHref(ex);
-                                            if (isValidNextUrl(exHref)) {
-                                                AndroidReaderBridge.onLogStep('NEXT_CHAPTER_FOUND_DOM tag=' + ex.tagName + ' text="' + text(ex) + '" url=' + exHref);
-                                                return ex;
-                                            }
-                                        }
-
-                                        var generic = Array.from(document.querySelectorAll('div, span'))
-                                            .filter(function(el) {
-                                                if (!visible(el)) return false;
-                                                if (el.classList && el.classList.contains('notify-new-chapter')) return false;
-                                                var t = text(el);
-                                                return isNextText(t) && t.length <= 120;
-                                            })
-                                            .sort(function(a, b) { return text(a).length - text(b).length; });
-
-                                        for (var k = 0; k < generic.length; k++) {
-                                            var g = generic[k];
-                                            var parentA = g.closest ? g.closest('a, button, [role="button"], [role="link"]') : null;
-                                            if (parentA && parentA !== g) {
-                                                var parentHref = getHref(parentA);
-                                                if (isValidNextUrl(parentHref)) {
-                                                    AndroidReaderBridge.onLogStep('NEXT_CHAPTER_FOUND_DOM tag=' + parentA.tagName + ' text="' + text(parentA) + '" url=' + parentHref);
-                                                    return parentA;
-                                                } else {
-                                                    AndroidReaderBridge.onLogStep('NEXT_CHAPTER_WRAPPER_REJECTED parentText="' + text(parentA) + '" href="' + parentHref + '"');
-                                                }
+                                            var href = findRealHref(el);
+                                            if (href) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'NEXT_CHAPTER_FOUND_DOM tag=' + el.tagName +
+                                                    ' text="' + ownText + '" url=' + href
+                                                );
+                                                return el;
                                             }
                                         }
 
                                         return null;
                                     }
 
-                                    function buildCandidateNextUrl() {
-                                        try {
-                                            var loc = new URL(window.location.href);
-                                            var parts = loc.pathname.split('/').filter(Boolean);
-                                            if (parts.length >= 4 && parts[0] === 'manga') {
-                                                var slug = parts[1];
-                                                var vol = parts[2];
-                                                var chNum = parseInt(parts[3], 10);
-                                                if (!isNaN(chNum)) {
-                                                    var nextChNum = chNum + 1;
-                                                    return loc.origin + '/manga/' + slug + '/' + vol + '/' + nextChNum;
-                                                }
-                                            }
-                                        } catch(e) {}
-                                        return '';
-                                    }
-
                                     function isLastChapter() {
+                                        /*
+                                         * "Last chapter" is a confirmed UI state only:
+                                         *   1. there is NO real next chapter in the DOM;
+                                         *   2. MangaBuff shows .notify-new-chapter;
+                                         *   3. the reader wrapper has the finish marker.
+                                         *
+                                         * Do not infer the end from a missing href, an empty
+                                         * chapter list, or URL increment.
+                                         */
                                         var notify = document.querySelector('.notify-new-chapter');
-                                        if (!notify || !visible(notify)) return false;
+                                        var finishMarker = document.querySelector('.reader__wrapper--finish');
+
+                                        if (!notify || !visible(notify)) {
+                                            return false;
+                                        }
+
+                                        if (!finishMarker || !visible(finishMarker)) {
+                                            return false;
+                                        }
 
                                         var id = (notify.getAttribute('data-id') || '').trim();
-                                        if (!id) return true;
+                                        if (!id) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'LAST_CHAPTER_MARKER_REJECTED reason=NOTIFY_ID_EMPTY'
+                                            );
+                                            return false;
+                                        }
 
                                         var known = [];
-                                        var fav = document.querySelector('.manga__favourite-btn[data-id], .favourite-send-btn[data-id]');
+                                        var fav = document.querySelector(
+                                            '.manga__favourite-btn[data-id], .favourite-send-btn[data-id]'
+                                        );
                                         if (fav) known.push(String(fav.getAttribute('data-id')));
-                                        if (window.manga_id) known.push(String(window.manga_id));
-                                        if (window.current_manga && window.current_manga.id) known.push(String(window.current_manga.id));
 
-                                        if (known.length === 0) return true;
-                                        return known.indexOf(id) !== -1;
+                                        if (window.manga_id) known.push(String(window.manga_id));
+                                        if (window.current_manga && window.current_manga.id) {
+                                            known.push(String(window.current_manga.id));
+                                        }
+
+                                        if (known.length === 0) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'LAST_CHAPTER_MARKER_REJECTED reason=MANGA_ID_UNKNOWN'
+                                            );
+                                            return false;
+                                        }
+
+                                        var mangaIdMatches = known.indexOf(id) !== -1;
+                                        if (!mangaIdMatches) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'LAST_CHAPTER_MARKER_REJECTED reason=MANGA_ID_MISMATCH notifyId=' +
+                                                id + ' known=' + known.join(',')
+                                            );
+                                            return false;
+                                        }
+
+                                        AndroidReaderBridge.onLogStep(
+                                            'LAST_CHAPTER_MARKER_CONFIRMED notify=true finish=true mangaId=' + id
+                                        );
+                                        return true;
                                     }
 
                                     function stopScroll() {
@@ -4923,18 +5010,9 @@ class MangaBuffAutomation(
                                                 AndroidReaderBridge.onLogStep('READER: NEXT_CHAPTER_REAL_URL_FOUND url=' + href);
                                                 nextUrl = href;
                                             } else {
-                                                // The native side refreshes /balance before opening the next chapter.
-                                                // Therefore a DOM-only target cannot be deferred across that navigation:
-                                                // the chapter DOM is gone after /balance. Prefer a deterministic real URL.
-                                                var fallbackUrl = buildCandidateNextUrl();
-                                                if (fallbackUrl && isValidNextUrl(fallbackUrl)) {
-                                                    AndroidReaderBridge.onLogStep(
-                                                        'READER: NEXT_CHAPTER_DOM_NO_HREF_USING_FALLBACK url=' + fallbackUrl
-                                                    );
-                                                    nextUrl = fallbackUrl;
-                                                } else {
-                                                    AndroidReaderBridge.onLogStep('READER: NEXT_CHAPTER_DOM_TARGET_UNUSABLE');
-                                                }
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NEXT_CHAPTER_DOM_TARGET_UNUSABLE reason=REAL_HREF_REQUIRED'
+                                                );
                                             }
                                         }
 
@@ -5393,10 +5471,6 @@ class MangaBuffAutomation(
 
                                                 var nextAfterSettle = findNextChapter();
                                                 var isLastAfterSettle = isLastChapter();
-                                                var candidateAfterSettle =
-                                                    (!nextAfterSettle && !isLastAfterSettle)
-                                                        ? buildCandidateNextUrl()
-                                                        : '';
 
                                                 if (nextAfterSettle) {
                                                     var nextHref = getHref(nextAfterSettle);
@@ -5423,17 +5497,8 @@ class MangaBuffAutomation(
                                                     return;
                                                 }
 
-                                                if (candidateAfterSettle && isValidNextUrl(candidateAfterSettle)) {
-                                                    AndroidReaderBridge.onLogStep(
-                                                        'NEXT_CHAPTER_URL_FALLBACK_RETRY attempt=' + attempt +
-                                                        ' confirmation=' + (confirmationSource || 'UNKNOWN') +
-                                                        ' current=' + window.location.href +
-                                                        ' candidate=' + candidateAfterSettle
-                                                    );
-                                                    chapterDone = true;
-                                                    finishWithCandidateUrl(candidateAfterSettle, confirmationSource);
-                                                    return;
-                                                }
+                                                // No real next href and no confirmed finish marker:
+                                                // this is UNKNOWN, never an invitation to open /N+1.
 
                                                 if (attempt < 15) {
                                                     AndroidReaderBridge.onLogStep(
@@ -5447,7 +5512,7 @@ class MangaBuffAutomation(
                                                 }
 
                                                 AndroidReaderBridge.onLogStep(
-                                                    'NEXT_CHAPTER_DISCOVERY_GIVE_UP reason=NO_VALID_NEXT_URL_AFTER_CONFIRMATION',
+                                                    'NEXT_CHAPTER_DISCOVERY_GIVE_UP reason=NO_REAL_NEXT_AND_NO_CONFIRMED_FINISH_MARKER',
                                                     true
                                                 );
                                                 chapterDone = true;
