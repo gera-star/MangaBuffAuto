@@ -21,7 +21,8 @@ import java.util.UUID
 @SuppressLint("RestrictedApi")
 class ProfileWebViewStore(
     private val context: Context,
-    private val onLog: (LogEntry) -> Unit = {}
+    private val onLog: (LogEntry) -> Unit = {},
+    private val onRendererGone: (accountId: String) -> Unit = {}
 ) {
     private val activeWebViews = mutableMapOf<String, WebView>()
     private val attachDeferreds = mutableMapOf<String, CompletableDeferred<Unit>>()
@@ -128,6 +129,7 @@ class ProfileWebViewStore(
                         isError = true
                     )
                 )
+                onRendererGone(accountId)
 
                 return true
             }
