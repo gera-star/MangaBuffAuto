@@ -1530,9 +1530,7 @@ class MangaBuffAutomation(
 
                         val value = raw.orEmpty()
                         if (value.contains("\\\"found\\\":true")) {
-                            val textMatch = Regex("\\\"text\\\":\\\"(.*?)\\\"").find(value)
-                            val toastText = textMatch?.groupValues?.getOrNull(1)
-                                ?: ADS_DAILY_LIMIT_MESSAGE
+                            val toastText = ADS_DAILY_LIMIT_MESSAGE
                             log(account.username, "ADS: DAILY_LIMIT_TOAST_FOUND source=SITE_PREFLIGHT text=$toastText")
                             finish(toastText)
                             return@evaluateJavascript
