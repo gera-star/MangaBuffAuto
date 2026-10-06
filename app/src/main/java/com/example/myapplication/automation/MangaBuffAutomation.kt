@@ -284,12 +284,20 @@ class MangaBuffAutomation(
         val endX = x2 * density
         val endY = y2 * density
 
-        // The JS side describes the intended finger travel. Keep the actual
-        // touch gesture short; the remaining motion is produced by flingScroll.
-        val safeDuration = durationMs.coerceIn(180L, 360L)
+        /*
+         * IMPORTANT:
+         * Do not create a native fling here. A real phone finger swipe releases
+         * into inertia, but our automation performs repeated swipes. Passing the
+         * velocity to flingScroll() makes that inertia accumulate from one
+         * synthetic swipe to the next, producing the "accelerating reader" effect.
+         *
+         * We deliberately send a slower, eased finger movement and finish with
+         * ACTION_UP at zero residual velocity. The JS scheduler already supplies
+         * the pause between gestures, so every swipe gets a clean stop.
+         */
+        val safeDuration = durationMs.coerceIn(420L, 620L)
         val downTime = SystemClock.uptimeMillis()
-        val tracker = VelocityTracker.obtain()
-        val steps = 6
+        val steps = 12
 
         fun send(action: Int, eventTime: Long, x: Float, y: Float) {
             MotionEvent.obtain(
@@ -301,7 +309,6 @@ class MangaBuffAutomation(
                 0
             ).also { event ->
                 try {
-                    tracker.addMovement(event)
                     webView.dispatchTouchEvent(event)
                 } finally {
                     event.recycle()
@@ -314,8 +321,9 @@ class MangaBuffAutomation(
 
             for (i in 1 until steps) {
                 val fraction = i.toFloat() / steps.toFloat()
-                // Slight ease-out, matching a finger that accelerates then
-                // releases into the native fling.
+
+                // Ease-out movement: the finger slows before release instead
+                // of ending with a high velocity that can turn into a fling.
                 val eased = 1f - ((1f - fraction) * (1f - fraction))
                 val eventTime = downTime + (safeDuration * fraction).toLong()
                 val currentX = startX + ((endX - startX) * eased)
@@ -325,30 +333,8 @@ class MangaBuffAutomation(
 
             val upTime = downTime + safeDuration
             send(MotionEvent.ACTION_UP, upTime, endX, endY)
-
-            tracker.computeCurrentVelocity(1000)
-            val velocityY = tracker.yVelocity
-            val minFlingVelocity = ViewConfiguration.get(webView.context).scaledMinimumFlingVelocity
-            val maxFlingVelocity = ViewConfiguration.get(webView.context).scaledMaximumFlingVelocity
-            val clampedVelocityY = velocityY.coerceIn(
-                -maxFlingVelocity.toFloat(),
-                maxFlingVelocity.toFloat()
-            )
-
-            if (kotlin.math.abs(clampedVelocityY) >= minFlingVelocity) {
-                // Android's ScrollView/WebView convention uses the finger's
-                // velocity sign: upward finger motion is negative and scrolls
-                // the content downward.
-                webView.flingScroll(0, clampedVelocityY.toInt())
-            } else {
-                // Keep very short/slow gestures moving even if they do not
-                // reach Android's minimum fling threshold.
-                webView.scrollBy(0, (endY - startY).toInt())
-            }
         } catch (e: Exception) {
             throw e
-        } finally {
-            tracker.recycle()
         }
     }
 
