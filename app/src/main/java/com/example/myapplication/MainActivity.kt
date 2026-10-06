@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
                                     factory = { webView },
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .alpha(0f)
+                                        .alpha(1f)
                                 )
                             }
                         }
