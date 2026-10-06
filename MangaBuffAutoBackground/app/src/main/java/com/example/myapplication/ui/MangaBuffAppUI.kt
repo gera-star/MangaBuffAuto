@@ -202,6 +202,34 @@ fun MangaBuffAppUI(
                             val wv = WebView(ctx)
                             wv.settings.javaScriptEnabled = true
                             wv.settings.domStorageEnabled = true
+                            wv.webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: android.webkit.WebResourceRequest?
+                                ): Boolean {
+                                    val url = request?.url?.toString().orEmpty()
+                                    return if (url.startsWith("http://") || url.startsWith("https://")) {
+                                        view?.loadUrl(url)
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+
+                                @Suppress("DEPRECATION")
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    url: String?
+                                ): Boolean {
+                                    val target = url.orEmpty()
+                                    return if (target.startsWith("http://") || target.startsWith("https://")) {
+                                        view?.loadUrl(target)
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                            }
                             if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
                                 try {
                                     WebViewCompat.setProfile(wv, profileName)
