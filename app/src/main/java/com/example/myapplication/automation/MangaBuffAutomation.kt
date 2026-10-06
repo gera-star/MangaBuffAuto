@@ -57,7 +57,8 @@ sealed interface ReaderResult {
         val gifts: Int,
         val chapterUrl: String,
         val chapterId: String,
-        val nextChapterUrl: String = ""
+        val nextChapterUrl: String = "",
+        val terminal: Boolean = false
     ) : ReaderResult
 
     data class MangaCompleted(
@@ -3435,9 +3436,12 @@ class MangaBuffAutomation(
                     chaptersReadCount++
                     currentSessionChaptersRead = chaptersReadCount
                     updateReaderStatus(account)
+                    addDaily(account) { it.copy(readerChapters = it.readerChapters + 1) }
 
                     log(account.username, "READER: CHAPTER_READ count=" + chaptersReadCount +
-                        "/" + target + " id=" + chId + " serverQuestGate=DEFERRED_CCL_ACCOUNTING")
+                        "/" + target + " id=" + chId +
+                        " terminal=" + result.terminal +
+                        " serverQuestGate=DEFERRED_CCL_ACCOUNTING")
 
                     chaptersSinceComment++
 
@@ -3500,6 +3504,29 @@ class MangaBuffAutomation(
                                 delay(COMMENT_DELAY_MS)
                             }
                         }
+                    }
+
+                    if (result.terminal) {
+                        if (currentMangaUrl.isNotBlank()) {
+                            skippedMangaUrls.add(currentMangaUrl)
+                        }
+
+                        log(
+                            account.username,
+                            "READER: MANGA_COMPLETED terminal=true title='" +
+                                cleanMangaTitle(lastFinishedMangaTitle) + "'"
+                        )
+
+                        currentMangaUrl = ""
+                        nextChapterUrlToOpen = ""
+                        totalMangaChapters = 0
+                        activeChapterContext = null
+                        onMangaActiveUrlUpdate(account.id, "", "")
+
+                        if (chaptersReadCount < target) {
+                            delay(1000L)
+                        }
+                        continue
                     }
 
                     if (nextChapterUrlToOpen.isBlank()) {
@@ -4182,9 +4209,12 @@ class MangaBuffAutomation(
                         )
 
                         safeResume(
-                            ReaderResult.MangaCompleted(
-                                mangaUrl = currentMangaUrl,
-                                title = completedTitle
+                            ReaderResult.ChapterRead(
+                                gifts = giftsFound,
+                                chapterUrl = chapterUrl,
+                                chapterId = chapterId,
+                                nextChapterUrl = "",
+                                terminal = true
                             )
                         )
                     } else {
