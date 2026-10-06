@@ -1627,6 +1627,11 @@ class MangaBuffAutomation(
                                 var watchTimer = null;
                                 var rewardPoll = null;
 
+                                // Diagnostic state for the real user's close action.
+                                // We intentionally never synthesize the rewarded-ad tap.
+                                var closeWasVisible = false;
+                                var closeAvailableLogged = false;
+
                                 function textOf(el) {
                                     return (el && (el.innerText || el.textContent) || "")
                                         .replace(/\s+/g, " ")
@@ -2512,15 +2517,7 @@ class MangaBuffAutomation(
                                                         watchForUserCloseAfterTimeout,
                                                         250
                                                     );
-                                                }
-
-                                                watchForUserCloseAfterTimeout();
-                                                return;
-                                            }
-                                            return;
-                                        }
-
-                                        var close = findCloseButton();
+                                                                 var close = findCloseButton();
                                         var closeVisible = isVisibleElement(close);
 
                                         AndroidAds.onStateLog(
@@ -2532,79 +2529,62 @@ class MangaBuffAutomation(
                                             " rewarded=" + yandexRewarded
                                         );
 
+                                        /*
+                                         * Keep the monitoring loop alive after the X becomes available.
+                                         * Previously we stopped the loop at this point, which meant that
+                                         * a real user close could not be reliably observed afterwards.
+                                         *
+                                         * We only diagnose the control and its geometry here. The actual
+                                         * rewarded-ad close remains a real user interaction.
+                                         */
                                         if (closeVisible) {
-                                            clearInterval(watchTimer);
+                                            closeWasVisible = true;
 
-                                            /*
-                                             * The rewarded-ad close control must be pressed by the
-                                             * real user. Do not synthesize a touchscreen click here.
-                                             * We only expose the exact control state and then watch for
-                                             * the real close to disappear from the ad surface.
-                                             */
-                                            var closeRect = null;
-                                            try {
-                                                closeRect = getTopViewportRect(close);
-                                            } catch (e) {}
+                                            if (!closeAvailableLogged) {
+                                                closeAvailableLogged = true;
+
+                                                var closeRect = null;
+                                                try {
+                                                    closeRect = getTopViewportRect(close);
+                                                } catch (e) {}
+
+                                                AndroidAds.onStateLog(
+                                                    "AD_CLOSE_AVAILABLE",
+                                                    "elapsed=" + Math.floor(elapsed / 1000) +
+                                                    "s action=MANUAL_REQUIRED" +
+                                                    (closeRect
+                                                        ? " x=" + (closeRect.left + closeRect.width / 2) +
+                                                          " y=" + (closeRect.top + closeRect.height / 2) +
+                                                          " rect=" + closeRect.width + "x" + closeRect.height
+                                                        : " rect=unavailable")
+                                                );
+                                            }
+
+                                            return;
+                                        }
+
+                                        /*
+                                         * If the close control was previously visible and is now gone,
+                                         * record that the ad surface changed after the user interaction.
+                                         * The reward is still accepted only after the server confirms +7.
+                                         *
+                                         * For cross-origin Yandex iframes this is best-effort: the parent
+                                         * document may not be able to see the internal close state.
+                                         */
+                                        if (closeWasVisible && !closeVisible) {
+                                            closeWasVisible = false;
 
                                             AndroidAds.onStateLog(
-                                                "AD_CLOSE_AVAILABLE",
-                                                "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s action=MANUAL_REQUIRED" +
-                                                (closeRect
-                                                    ? " x=" + (closeRect.left + closeRect.width / 2) +
-                                                      " y=" + (closeRect.top + closeRect.height / 2) +
-                                                      " rect=" + closeRect.width + "x" + closeRect.height
-                                                    : " rect=unavailable")
+                                                "AD_CLOSE_USER_CONFIRMED",
+                                                "source=DOM_DISAPPEARED elapsed=" +
+                                                    Math.floor(elapsed / 1000) + "s"
                                             );
 
-                                            var manualCloseStartedAt = Date.now();
-                                            var manualClosePoll = null;
+                                            verifyReward(0);
+                                            return;
+                                        }
 
-                                            function waitForRealUserClose() {
-                                                if (finished) return;
-
-                                                var currentClose = findCloseButton();
-                                                var stillVisible = isVisibleElement(currentClose);
-
-                                                if (!stillVisible) {
-                                                    if (manualClosePoll) {
-                                                        clearTimeout(manualClosePoll);
-                                                        manualClosePoll = null;
-                                                    }
-
-                                                    AndroidAds.onStateLog(
-                                                        "AD_CLOSE_USER_CONFIRMED",
-                                                        "elapsed=" +
-                                                            Math.floor((Date.now() - manualCloseStartedAt) / 1000) +
-                                                            "s source=DOM_DISAPPEARED"
-                                                    );
-
-                                                    /*
-                                                     * The reward is still considered valid only after the
-                                                     * MangaBuff server reports the real +7 diamond increase.
-                                                     */
-                                                    verifyReward(0);
-                                                    return;
-                                                }
-
-                                                if (Date.now() - manualCloseStartedAt >= 15000) {
-                                                    AndroidAds.onStateLog(
-                                                        "AD_CLOSE_USER_WAIT_TIMEOUT",
-                                                        "waiting_for_real_user_close=true"
-                                                    );
-
-                                                    /*
-                                                     * Keep reward verification alive. This can still
-                                                     * confirm a server-side reward if Yandex credited it,
-                                                     * but we never generate the close tap ourselves.
-                                                     */
-                                                    verifyReward(0);
-                                                    return;
-                                                }
-
-                                                manualClosePoll = setTimeout(
-                                                    waitForRealUserClose,
-                                                    250
+                                       250
                                                 );
                                             }
 
