@@ -39,7 +39,7 @@ class AutomationRuntime(
     private val webViewStore = ProfileWebViewStore(
         context = context,
         onLog = onLog,
-        onRendererGone = { accountId ->
+        onRendererGone = { accountId, webView ->
             onLog(
                 LogEntry(
                     username = accountId,
@@ -48,8 +48,18 @@ class AutomationRuntime(
                     isError = true
                 )
             )
-            stopAccount(accountId)
-        }
+            val current = runtimes[accountId]
+            if (current?.webView === webView) {
+                stopAccount(accountId)
+            } else {
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "SECURITY",
+                        message = "STALE_RENDERER_IGNORED accountId=$accountId webView=${webView.hashCode()}"
+                    )
+                )
+            }        }
     )
 
     @Synchronized
