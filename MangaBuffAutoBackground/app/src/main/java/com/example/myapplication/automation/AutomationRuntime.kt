@@ -59,7 +59,8 @@ class AutomationRuntime(
                         message = "STALE_RENDERER_IGNORED accountId=$accountId webView=${webView.hashCode()}"
                     )
                 )
-            }        }
+            }
+        }
     )
 
     @Synchronized
