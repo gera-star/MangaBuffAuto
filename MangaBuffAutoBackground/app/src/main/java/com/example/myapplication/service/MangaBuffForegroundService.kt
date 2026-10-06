@@ -6,7 +6,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.IntentFilter
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -17,6 +19,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.MainActivity
 import com.example.myapplication.R
+import com.example.myapplication.automation.BackgroundExecutionState
 import com.example.myapplication.automation.MultiAccountAutomationRunner
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.LogEntry
@@ -158,11 +161,39 @@ class MangaBuffForegroundService : Service() {
     private var currentTaskType: TaskType? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    BackgroundExecutionState.setScreenOff(true)
+                    emitLog(LogEntry(component = "BG", message = "SCREEN_STATE=OFF"))
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    BackgroundExecutionState.setScreenOff(false)
+                    emitLog(LogEntry(component = "BG", message = "SCREEN_STATE=ON"))
+                }
+            }
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        BackgroundExecutionState.setScreenOff(!powerManager.isInteractive)
+
+        ContextCompat.registerReceiver(
+            this,
+            screenStateReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         runner = MultiAccountAutomationRunner(
             context = applicationContext,
@@ -623,6 +654,10 @@ class MangaBuffForegroundService : Service() {
             )
         )
         releaseWakeLock()
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (_: Exception) {
+        }
         serviceScope.cancel()
         super.onDestroy()
     }
