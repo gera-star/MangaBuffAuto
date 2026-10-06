@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
                     Box(modifier = Modifier.fillMaxSize()) {
                         MangaBuffAppUI(
                             viewModel = viewModel,
-                            webViewContainer = activeWebView
+                            webViewContainer = debugWebView
                         )
 
                         debugWebView?.let { webView ->
