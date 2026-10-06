@@ -127,6 +127,7 @@ class AutomationRuntime(
 
         val engine = automationEngines.remove(accountId)
         if (engine != null) {
+            engine.closeRuntime()
             onLog(
                 LogEntry(
                     username = accountId,
