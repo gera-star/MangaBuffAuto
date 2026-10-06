@@ -3737,29 +3737,51 @@ class MangaBuffAutomation(
                     mainHandler.post {
                         try {
                             if (!webView.isAttachedToWindow) return@post
-                            val safeDelta = deltaPx.coerceIn(240, 1400)
 
-                            // Emergency recovery only: first use the native WebView page
-                            // scrolling API. If the page is still in a transient rendering
-                            // state, pageDown() gives Chromium another native scroll request.
-                            val beforeY = webView.scrollY
-                            webView.scrollBy(0, safeDelta)
-                            val afterY = webView.scrollY
-
-                            if (afterY == beforeY) {
-                                webView.pageDown(false)
-                                log(
-                                    account.username,
-                                    "READER: NATIVE_RECOVERY_PAGEDOWN delta=$safeDelta beforeY=$beforeY"
-                                )
-                            } else {
-                                log(
-                                    account.username,
-                                    "READER: NATIVE_RECOVERY_SCROLLBY delta=$safeDelta beforeY=$beforeY afterY=$afterY"
-                                )
+                            /*
+                             * Do NOT call WebView.scrollBy()/pageDown() here.
+                             * MangaBuff's reader can use its own document scroller, so
+                             * WebView.scrollY may belong to the outer WebView container
+                             * and can diverge wildly from the reader's JS scrollY.
+                             *
+                             * The normal reader path uses a real touchscreen gesture.
+                             * Recovery must use the same path so it targets the actual
+                             * scrollable reader instead of the outer WebView.
+                             */
+                            val width = webView.width.coerceAtLeast(2).toFloat()
+                            val height = webView.height.coerceAtLeast(2).toFloat()
+                            val x = width * 0.5f
+                            val startY = height * 0.78f
+                            val endY = height * 0.20f
+                            val duration = when {
+                                deltaPx <= 0 -> 300L
+                                deltaPx < 500 -> 260L
+                                else -> 300L
                             }
+
+                            log(
+                                account.username,
+                                "READER: NATIVE_RECOVERY_FINGER_SWIPE delta=$deltaPx " +
+                                    "startY=" + startY.toInt() +
+                                    " endY=" + endY.toInt() +
+                                    " duration=" + duration
+                            )
+
+                            dispatchNativeSwipe(
+                                webView = webView,
+                                x1 = x,
+                                y1 = startY,
+                                x2 = x,
+                                y2 = endY,
+                                durationMs = duration
+                            )
                         } catch (e: Exception) {
-                            log(account.username, "READER: NATIVE_RECOVERY_SCROLLBY_ERROR " + (e.message ?: "unknown"), true)
+                            log(
+                                account.username,
+                                "READER: NATIVE_RECOVERY_FINGER_ERROR " +
+                                    (e.message ?: "unknown"),
+                                true
+                            )
                         }
                     }
                 }
