@@ -67,8 +67,7 @@ fun MangaBuffAppUI(
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+    Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
@@ -139,33 +138,6 @@ fun MangaBuffAppUI(
                     onClearLogs = { viewModel.clearLogs() }
                 )
             }
-        }
-    }
-
-    if (webViewContainer != null) {
-        FloatingActionButton(
-            onClick = { viewModel.setDebugWebViewVisible(!debugWebViewVisible) },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = 92.dp),
-            containerColor = if (debugWebViewVisible) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-        ) {
-            Text(if (debugWebViewVisible) "UI" else "WEB")
-        }
-    }
-
-    if (debugWebViewVisible && webViewContainer != null) {
-        AndroidView(
-            factory = { webViewContainer },
-            modifier = Modifier.fillMaxSize()
-        )
-        Button(
-            onClick = { viewModel.setDebugWebViewVisible(false) },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp)
-        ) {
-            Text("Вернуться в UI")
         }
     }
 
