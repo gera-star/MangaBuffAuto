@@ -5971,8 +5971,7 @@ class MangaBuffAutomation(
                                             try {
                                                 if (
                                                     chapterDone ||
-                                                    !window.__mbFastScrollRunning ||
-                                                    !AndroidReaderBridge.isScreenOff()
+                                                    !window.__mbFastScrollRunning
                                                 ) {
                                                     return;
                                                 }
