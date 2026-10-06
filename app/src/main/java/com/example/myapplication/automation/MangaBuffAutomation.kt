@@ -5875,13 +5875,16 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
-                                            var startY = m.viewport * (0.76 + Math.random() * 0.06);
-                                            var endY = m.viewport * (0.22 + Math.random() * 0.08);
+                                            // Slow the reader down: use roughly 40% of the previous
+                                            // finger travel. The old swipe covered ~50-60% of the viewport,
+                                            // which made the bot descend too quickly.
+                                            var startY = m.viewport * (0.64 + Math.random() * 0.04);
+                                            var endY = m.viewport * (0.40 + Math.random() * 0.04);
                                             var distance = startY - endY;
-                                            var maxDistance = Math.max(220, m.remaining - 4);
+                                            var maxDistance = Math.max(140, m.remaining - 4);
 
                                             if (distance > maxDistance) {
-                                                startY = Math.min(m.viewport * 0.84, endY + maxDistance);
+                                                startY = Math.min(m.viewport * 0.68, endY + maxDistance);
                                                 distance = startY - endY;
                                             }
 
