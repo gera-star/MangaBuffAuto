@@ -126,6 +126,8 @@ class MangaBuffAutomation(
         private const val QUIZ_NEXT_QUESTION_DELAY_MS = 3500L
 
         private const val ADS_NEXT_DELAY_MS = 4000L
+        private const val ADS_DAILY_LIMIT = 3
+        private const val ADS_DAILY_LIMIT_MESSAGE = "Нельзя смотреть рекламу больше 3 раз в сутки"
         private const val MINE_COMPLETION_DELAY_MS = 2000L
 
         private const val COMMENT_DELAY_MS = 4000L
@@ -1463,13 +1465,43 @@ class MangaBuffAutomation(
         webView: WebView
     ): Boolean {
         /*
-         * MangaBuff currently pays 3 ad rewards per day. Keep the user setting,
-         * but never drive the site past its real daily limit.
+         * MangaBuff currently pays at most 3 rewarded ads per account/day.
+         *
+         * The local daily counter is only an optimization: it prevents us from
+         * opening an ad session that we already know cannot succeed. The website
+         * remains the source of truth and is checked again inside watchSingleAd
+         * by looking for the actual daily-limit toast.
          */
-        val target = settings.adsCount.coerceAtLeast(0).coerceAtMost(3)
+        val dailyAdsToday = if (dailyStats.day == currentStatsDay()) {
+            dailyStats.ads.coerceAtLeast(0)
+        } else {
+            0
+        }
+        val dailyLimit = ADS_DAILY_LIMIT
+        val remainingAds = (dailyLimit - dailyAdsToday).coerceAtLeast(0)
+        val target = settings.adsCount.coerceAtLeast(0).coerceAtMost(remainingAds)
         var adsDone = 0
 
-        log(account.username, "TASK: ADS_START requested=${settings.adsCount} target=$target dailyLimit=3")
+        log(
+            account.username,
+            "TASK: ADS_START requested=${settings.adsCount} localToday=$dailyAdsToday " +
+                "remaining=$remainingAds target=$target dailyLimit=$dailyLimit"
+        )
+
+        if (settings.adsCount > 0 && remainingAds == 0) {
+            log(
+                account.username,
+                "ADS: DAILY_LIMIT_REACHED source=LOCAL_COUNTER today=$dailyAdsToday limit=$dailyLimit"
+            )
+            updateStatus(account, "📺 Реклама: лимит на сегодня уже достигнут", false, "Реклама", 1f)
+            return true
+        }
+
+        if (target == 0) {
+            updateStatus(account, "📺 Реклама: отключена", false, "Реклама", 1f)
+            return true
+        }
+
         updateStatus(account, "📺 Реклама (0/$target): подготовка", true, "Реклама", 0f)
 
         /*
@@ -1698,9 +1730,36 @@ class MangaBuffAutomation(
                                 }
 
                                 function isDailyLimitText(text) {
-                                    var t = String(text || "").toLowerCase();
-                                    return t.indexOf("лимит") !== -1 ||
+                                    var t = String(text || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                                    var exact = "нельзя смотреть рекламу больше 3 раз в сутки";
+
+                                    return t.indexOf(exact) !== -1 ||
+                                           t.indexOf("нельзя смотреть рекламу больше") !== -1 ||
+                                           t.indexOf("лимит") !== -1 ||
                                            (t.indexOf("дост") !== -1 && t.indexOf("заверш") !== -1);
+                                }
+
+                                function findDailyLimitToast() {
+                                    var nodes = Array.from(document.querySelectorAll(".toast-message"));
+                                    for (var i = 0; i < nodes.length; i++) {
+                                        var text = textOf(nodes[i]);
+                                        if (isDailyLimitText(text)) return text;
+                                    }
+                                    return "";
+                                }
+
+                                function checkDailyLimitToast() {
+                                    var toastText = findDailyLimitToast();
+                                    if (!toastText) return false;
+
+                                    AndroidAds.onStateLog(
+                                        "DAILY_LIMIT_TOAST_FOUND",
+                                        "text=" + toastText
+                                    );
+                                    finished = true;
+                                    window.__mbAdsRunnerActive = false;
+                                    AndroidAds.onDailyLimit();
+                                    return true;
                                 }
 
                                 /*
@@ -2619,6 +2678,10 @@ class MangaBuffAutomation(
 
                                 function tryFindAndClick() {
                                     if (finished) return;
+
+                                    // The site can create this toast asynchronously after a
+                                    // balance/ad request. Check it before touching the ad button.
+                                    if (checkDailyLimitToast()) return;
 
                                     var btn = findWatchButton();
                                     if (!btn) {
