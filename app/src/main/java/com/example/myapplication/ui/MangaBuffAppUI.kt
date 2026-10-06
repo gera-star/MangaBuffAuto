@@ -800,9 +800,67 @@ fun TasksTab(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        TaskActionButton("⛏️ Шахта", { onRunAll(TaskType.MINE) }, actionEnabled, Modifier.weight(1f))
-                        TaskActionButton("📖 Чтение", { onRunAll(TaskType.READER) }, actionEnabled, Modifier.weight(1f))
-                        TaskActionButton("🎟️ Промокод", onOpenPromoDialog, actionEnabled, Modifier.weight(1f))
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TaskActionButton(
+                                "⛏️ Шахта",
+                                { onRunAll(TaskType.MINE) },
+                                actionEnabled,
+                                Modifier.weight(1f)
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (settings.mineAutoExchange) {
+                                            Color(0xFF4CAF50)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        }
+                                    )
+                                    .clickable(enabled = actionEnabled) {
+                                        onSaveSettings(
+                                            settings.copy(
+                                                mineAutoExchange = !settings.mineAutoExchange
+                                            )
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Sync,
+                                    contentDescription = if (settings.mineAutoExchange) {
+                                        "Автообмен руды включен"
+                                    } else {
+                                        "Автообмен руды выключен"
+                                    },
+                                    tint = if (settings.mineAutoExchange) {
+                                        Color.White
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        TaskActionButton(
+                            "📖 Чтение",
+                            { onRunAll(TaskType.READER) },
+                            actionEnabled,
+                            Modifier.weight(1f)
+                        )
+                        TaskActionButton(
+                            "🎟️ Промокод",
+                            onOpenPromoDialog,
+                            actionEnabled,
+                            Modifier.weight(1f)
+                        )
                     }
                 }
             }
@@ -911,9 +969,17 @@ fun TasksTab(
                     Spacer(Modifier.height(3.dp))
 
                     Text(
-                        "Шахта определяет количество ударов автоматически.",
+                        if (settings.mineAutoExchange) {
+                            "⛏️ Шахта • автообмен руды в кристаллы ВКЛ"
+                        } else {
+                            "⛏️ Шахта • обмен руды в кристаллы вручную"
+                        },
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = if (settings.mineAutoExchange) {
+                            Color(0xFF4CAF50)
+                        } else {
+                            MaterialTheme.colorScheme.outline
+                        },
                         maxLines = 1
                     )
                 }
