@@ -3645,7 +3645,30 @@ class MangaBuffAutomation(
                         catch (e: Exception) {
                             pendingMangaMarkAsRead = false
                             log(account.username, "READER: MARK_READ_NAVIGATION_ERROR error=" + (e.message ?: "unknown"), true)
+                            safeResume(
+                                ReaderResult.MangaSkipped(
+                                    mangaUrl = markUrl,
+                                    title = cleanMangaTitle(lastFinishedMangaTitle)
+                                )
+                            )
                         }
+
+                        mainHandler.postDelayed({
+                            if (!resumed && continuation.isActive && pendingMangaMarkAsRead) {
+                                pendingMangaMarkAsRead = false
+                                log(
+                                    account.username,
+                                    "READER: MARK_READ_WATCHDOG_TIMEOUT -> SKIP_MANGA",
+                                    true
+                                )
+                                safeResume(
+                                    ReaderResult.MangaSkipped(
+                                        mangaUrl = markUrl,
+                                        title = cleanMangaTitle(lastFinishedMangaTitle)
+                                    )
+                                )
+                            }
+                        }, 15_000L)
                     }
                 }
             }
@@ -3851,7 +3874,14 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun onMangaMarkedRead(title: String, found: Boolean = true) {
                     if (!found) {
-                        log(account.username, "READER: READ_ACTION_NOT_CONFIRMED folder-id=3", true)
+                        pendingMangaMarkAsRead = false
+                        log(account.username, "READER: READ_ACTION_NOT_CONFIRMED folder-id=3 -> SKIP_MANGA", true)
+                        safeResume(
+                            ReaderResult.MangaSkipped(
+                                mangaUrl = currentMangaUrl,
+                                title = cleanMangaTitle(title).ifBlank { cleanMangaTitle(lastFinishedMangaTitle) }
+                            )
+                        )
                         return
                     }
                     log(account.username, "READER: READ_ACTION_CONFIRMED folder-id=3 (Прочитано)")
@@ -4116,7 +4146,22 @@ class MangaBuffAutomation(
 
                     if (isRealLastChapter) {
                         log(account.username, "READER: LAST_CHAPTER_REACHED historyAccepted=$historyAccepted")
-                        pendingMangaMarkAsRead = true
+
+                        /*
+                         * The reader end marker is already the authoritative terminal
+                         * signal for the current chapter. Do not navigate back to the
+                         * manga info page and wait for the optional "Прочитано" folder
+                         * action here: that UI is not part of chapter completion and
+                         * its selectors can vary, which previously left the reader
+                         * continuation suspended forever after the final chapter.
+                         *
+                         * The chapter has already passed the local/server read-history
+                         * confirmation above, so finish this ReaderResult immediately.
+                         * runReaderTask() will then mark the manga as completed for this
+                         * run and continue with the normal task pipeline/catalog flow.
+                         */
+                        pendingMangaMarkAsRead = false
+
                         val chapterCanonical = ensureCanonicalMangaUrl(chapterUrl)
                         val slug = chapterCanonical.substringAfter("/manga/").substringBefore("/")
 
@@ -4126,8 +4171,22 @@ class MangaBuffAutomation(
                             currentMangaUrl
                         }
 
-                        log(account.username, "READER: OPEN_MANGA_INFO_FOR_READ_MARK url=$currentMangaUrl")
-                        webView.loadUrl(currentMangaUrl)
+                        val completedTitle = cleanMangaTitle(title)
+                            .ifBlank { cleanMangaTitle(lastFinishedMangaTitle) }
+
+                        log(
+                            account.username,
+                            "READER: LAST_CHAPTER_TERMINAL " +
+                                "terminal=true nextChapterSearch=SKIPPED " +
+                                "markReadGate=SKIPPED title='$completedTitle'"
+                        )
+
+                        safeResume(
+                            ReaderResult.MangaCompleted(
+                                mangaUrl = currentMangaUrl,
+                                title = completedTitle
+                            )
+                        )
                     } else {
                         if (nextChapterUrl.isBlank()) {
                             safeResume(ReaderResult.Failed("NEXT_CHAPTER_UNKNOWN"))
