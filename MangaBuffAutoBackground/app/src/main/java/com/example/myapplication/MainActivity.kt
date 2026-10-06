@@ -23,6 +23,7 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.ui.MainViewModel
 import com.example.myapplication.ui.MangaBuffAppUI
 import com.example.myapplication.ui.theme.MyApplicationTheme
@@ -53,7 +54,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val webViewsByAccount by viewModel.webViewsByAccount.collectAsState()
+                    val webViewsByAccount by AutomationWebViewRegistry.webViewsByAccount.collectAsState()
                     val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
                     val debugWebView = webViewsByAccount.values.firstOrNull()
 
