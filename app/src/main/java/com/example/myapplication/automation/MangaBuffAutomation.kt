@@ -5898,16 +5898,13 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
-                                            // Slow the reader down: use roughly 40% of the previous
-                                            // finger travel. The old swipe covered ~50-60% of the viewport,
-                                            // which made the bot descend too quickly.
-                                            // Extra slow mode: reduce the already shortened swipe by another 60%.
-                                            // This keeps the finger gesture natural but makes each step much smaller.
-                                            // Ultra-slow mode: reduce the current swipe length by ~60%.
-                                            // Keep the gesture large enough to pass Android touch-slop, but
-                                            // make many more short steps instead of rapidly crossing the page.
-                                            var startY = m.viewport * (0.525 + Math.random() * 0.009);
-                                            var endY = m.viewport * (0.475 + Math.random() * 0.009);
+                                            // Increase the reader step: the previous ~35-50 CSS px
+                                            // gesture was too short and made the page move in tiny pieces.
+                                            // Use roughly 14-17% of the viewport per finger swipe. Combined
+                                            // with the controlled native inertia, this gives a larger but still
+                                            // phone-like reading step without jumping across the page.
+                                            var startY = m.viewport * (0.575 + Math.random() * 0.009);
+                                            var endY = m.viewport * (0.425 + Math.random() * 0.009);
                                             var distance = startY - endY;
                                             var maxDistance = Math.max(32, m.remaining - 4);
 
