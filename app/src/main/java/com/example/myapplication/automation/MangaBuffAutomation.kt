@@ -2486,12 +2486,18 @@ class MangaBuffAutomation(
                                         if (!window.__mbAdsManualVerifyStarted) {
                                             window.__mbAdsManualVerifyStarted = true;
 
-                                            requestNativeCloseTap(null);
-
+                                            /*
+                                             * TEMP DEBUG MODE:
+                                             * The automation WebView is intentionally visible and the
+                                             * native fallback tap is disabled here. This lets the developer
+                                             * physically see the real Yandex fullscreen ad and press its
+                                             * real X/close control. Reward confirmation still comes only
+                                             * from MangaBuff server balance (+7 diamonds).
+                                             */
                                             AndroidAds.onStateLog(
                                                 "AD_CLOSE_MANUAL_REQUIRED",
                                                 "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s yandexReady=true; waiting_for_user_close"
+                                                "s yandexReady=true; DEBUG_VISIBLE_AD=true; waiting_for_real_user_close"
                                             );
 
                                             verifyReward(0);
