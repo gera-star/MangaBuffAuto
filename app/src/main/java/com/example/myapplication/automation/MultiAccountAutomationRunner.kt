@@ -49,11 +49,11 @@ class MultiAccountAutomationRunner(
         )
     }
 
-    fun skipCurrentManga(accountId: String? = null): Boolean {
+    fun skipCurrentManga(accountId: String): Boolean {
         val skipped = runtime.skipCurrentManga(accountId)
         onLog(
             LogEntry(
-                username = accountId ?: "",
+                username = accountId,
                 component = "RUNNER",
                 message = if (skipped) "READER: SKIP_MANGA_DISPATCHED" else "READER: SKIP_MANGA_NOT_AVAILABLE"
             )
@@ -61,11 +61,11 @@ class MultiAccountAutomationRunner(
         return skipped
     }
 
-    fun markCurrentMangaAsRead(accountId: String? = null): Boolean {
+    fun markCurrentMangaAsRead(accountId: String): Boolean {
         val marked = runtime.markCurrentMangaAsRead(accountId)
         onLog(
             LogEntry(
-                username = accountId ?: "",
+                username = accountId,
                 component = "RUNNER",
                 message = if (marked) "READER: MARK_READ_DISPATCHED" else "READER: MARK_READ_NOT_AVAILABLE"
             )
