@@ -182,7 +182,7 @@ class MangaBuffAutomation(
             val runnable = object : Runnable {
                 override fun run() {
                     val target = backgroundScrollWebView
-                    if (!backgroundScrollActive || target == null || target.isDestroyed) return
+                    if (!backgroundScrollActive || target == null) return
 
                     val screenOff = BackgroundExecutionState.isScreenOff()
                     if (screenOff != backgroundScreenWasOff) {
@@ -729,7 +729,7 @@ class MangaBuffAutomation(
                     "x-csrf-token"
                 )
             }
-            .sortedBy { it.first.lowercase() }
+            .sortedBy { it.key.lowercase() }
             .joinToString(";") { (name, value) ->
                 val lower = name.lowercase()
                 val safeValue = when (lower) {
