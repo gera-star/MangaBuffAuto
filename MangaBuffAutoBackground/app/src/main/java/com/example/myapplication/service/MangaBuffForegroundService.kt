@@ -525,7 +525,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun removePersistedRun(accountId: String) {
-        val values = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).toMutableSet()
+        val values = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).orEmpty().toMutableSet()
         values.removeAll { it.startsWith("$accountId|") }
         runtimePrefs.edit().putStringSet(KEY_ACTIVE_RUNS, values).apply()
     }
