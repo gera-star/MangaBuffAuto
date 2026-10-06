@@ -101,6 +101,9 @@ class AccountRepository(context: Context) {
 
     fun saveSettings(settings: GlobalSettings) {
         val json = gson.toJson(settings)
-        prefs.edit().putString(KEY_SETTINGS, json).apply()
+        prefs.edit()
+            .putString(KEY_SETTINGS, json)
+            .putBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, true)
+            .apply()
     }
 }
