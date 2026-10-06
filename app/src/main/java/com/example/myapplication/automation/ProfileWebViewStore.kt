@@ -20,7 +20,8 @@ import java.util.UUID
 @SuppressLint("RestrictedApi")
 class ProfileWebViewStore(
     private val context: Context,
-    private val onLog: (LogEntry) -> Unit = {}
+    private val onLog: (LogEntry) -> Unit = {},
+    private val onRendererGone: (accountId: String) -> Unit = {}
 ) {
     private val activeWebViews = mutableMapOf<String, WebView>()
     private val attachDeferreds = mutableMapOf<String, CompletableDeferred<Unit>>()
@@ -69,6 +70,46 @@ class ProfileWebViewStore(
         }
 
         webView.webViewClient = object : WebViewClient() {
+
+            override fun onRenderProcessGone(
+                view: WebView,
+                detail: android.webkit.RenderProcessGoneDetail
+            ): Boolean {
+                val removed = activeWebViews.remove(accountId)
+                attachDeferreds.remove(accountId)
+                webViewRunIds.remove(accountId)
+
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "RENDERER_GONE didCrash=${detail.didCrash()} instance=${view.hashCode()}",
+                        isError = true
+                    )
+                )
+
+                try {
+                    view.removeAllViews()
+                    view.destroy()
+                } catch (_: Exception) {
+                    // Renderer is already gone; nothing else to release here.
+                }
+
+                if (removed != null) {
+                    onLog(
+                        LogEntry(
+                            username = accountId,
+                            component = "PROFILE",
+                            message = "RENDERER_GONE_INVALIDATED accountId=$accountId create_new_instance_next_run=true",
+                            isError = true
+                        )
+                    )
+                }
+
+                onRendererGone(accountId)
+                return true
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "PAGE_STARTED url=$url"))
