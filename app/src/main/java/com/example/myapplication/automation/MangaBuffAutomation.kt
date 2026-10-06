@@ -36,7 +36,6 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
-import kotlin.random.Random
 
 enum class ReaderScrollMode {
     NATIVE_MANGABUFF,
@@ -364,13 +363,28 @@ class MangaBuffAutomation(
                  * Keep the velocity in a deliberate 1500..3000 px/s range.
                  * This gives the reader a clearly visible but controlled native inertia.
                  */
-                val fingerVelocity = ((startY - endY) / safeDuration.toFloat()) * 1000f
-                val inertiaVelocity = Random.nextInt(1500, 3001)
+                /*
+                 * Do not derive this from the synthetic finger velocity and do not
+                 * randomize it. The gesture itself is already a full 50-60% screen
+                 * swipe; the fling is only the short phone-like continuation after
+                 * release.
+                 *
+                 * 2400 px/s is deliberately moderate: visible inertia without the
+                 * old runaway behaviour. The JS reader scheduler waits long enough
+                 * for this fling to finish before starting the next finger swipe.
+                 */
+                val inertiaVelocity = 2400
+
+                log(
+                    "SYSTEM",
+                    "READER: NATIVE_FLING_START velocity=$inertiaVelocity " +
+                        "duration=$safeDuration"
+                )
 
                 mainHandler.postDelayed({
                     if (!webView.isAttachedToWindow) return@postDelayed
                     webView.flingScroll(0, inertiaVelocity)
-                }, 16L)
+                }, 20L)
             }, settleMs)
         }, safeDuration)
     }
@@ -6028,7 +6042,7 @@ class MangaBuffAutomation(
                                                     window.__mbNativeFingerBusy = false;
                                                     scheduleNext(pause);
                                                 }
-                                            }, duration + 450);
+                                            }, duration + 850);
                                         }
 
                                         // Give WebView one rendered frame to settle the reader
