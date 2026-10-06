@@ -731,7 +731,17 @@ class MangaBuffAutomation(
             }
             .sortedBy { it.first.lowercase() }
             .joinToString(";") { (name, value) ->
-                "$name=${value.take(240)}"
+                val lower = name.lowercase()
+                val safeValue = when (lower) {
+                    "x-csrf-token",
+                    "x-xsrf-token",
+                    "authorization",
+                    "proxy-authorization",
+                    "cookie",
+                    "set-cookie" -> "<redacted len=${value.length}>"
+                    else -> value.take(240)
+                }
+                "$name=$safeValue"
             }
             .ifBlank { "none" }
 
