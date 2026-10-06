@@ -2951,7 +2951,7 @@ class MangaBuffAutomation(
                             view.reload()
                         } else {
                             log(account.username, "ADS: BRIDGE_MISSING_AFTER_RELOAD", true)
-                            safeResume(false)
+                            safeResume(AdWatchResult.Failed)
                         }
                     }
                 }
@@ -2985,7 +2985,7 @@ class MangaBuffAutomation(
                     try {
                         webView.evaluateJavascript("window.__mbAdsRunnerActive=false;", null)
                     } catch (_: Exception) {}
-                    safeResume(false)
+                    safeResume(AdWatchResult.Failed)
                 }
             }, 90_000L)
         }
