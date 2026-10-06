@@ -65,6 +65,7 @@ fun MangaBuffAppUI(
 
     var selectedBalanceAccount by remember { mutableStateOf<MangaBuffAccount?>(null) }
     var promoCodeText by remember { mutableStateOf("") }
+    var showBackgroundSettings by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
@@ -73,6 +74,12 @@ fun MangaBuffAppUI(
             TopAppBar(
                 title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
                 actions = {
+                    IconButton(onClick = { showBackgroundSettings = true }) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Фоновая работа"
+                        )
+                    }
                     if (webViewContainer != null) {
                         TextButton(
                             onClick = { viewModel.setDebugWebViewVisible(!debugWebViewVisible) }
@@ -149,6 +156,12 @@ fun MangaBuffAppUI(
                 )
             }
         }
+    }
+
+    if (showBackgroundSettings) {
+        BackgroundSettingsDialog(
+            onDismiss = { showBackgroundSettings = false }
+        )
     }
 
     // ДИАЛОГ ПРОСМОТРА БАЛАНСА НА САЙТЕ ПО КЛИКУ НА АВАТАР
