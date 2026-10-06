@@ -2493,15 +2493,80 @@ class MangaBuffAutomation(
                                         if (closeVisible) {
                                             clearInterval(watchTimer);
 
-                                            requestNativeCloseTap(close);
+                                            /*
+                                             * The rewarded-ad close control must be pressed by the
+                                             * real user. Do not synthesize a touchscreen click here.
+                                             * We only expose the exact control state and then watch for
+                                             * the real close to disappear from the ad surface.
+                                             */
+                                            var closeRect = null;
+                                            try {
+                                                closeRect = getTopViewportRect(close);
+                                            } catch (e) {}
 
                                             AndroidAds.onStateLog(
                                                 "AD_CLOSE_AVAILABLE",
                                                 "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s action=MANUAL_REQUIRED"
+                                                "s action=MANUAL_REQUIRED" +
+                                                (closeRect
+                                                    ? " x=" + (closeRect.left + closeRect.width / 2) +
+                                                      " y=" + (closeRect.top + closeRect.height / 2) +
+                                                      " rect=" + closeRect.width + "x" + closeRect.height
+                                                    : " rect=unavailable")
                                             );
 
-                                            verifyReward(0);
+                                            var manualCloseStartedAt = Date.now();
+                                            var manualClosePoll = null;
+
+                                            function waitForRealUserClose() {
+                                                if (finished) return;
+
+                                                var currentClose = findCloseButton();
+                                                var stillVisible = isVisibleElement(currentClose);
+
+                                                if (!stillVisible) {
+                                                    if (manualClosePoll) {
+                                                        clearTimeout(manualClosePoll);
+                                                        manualClosePoll = null;
+                                                    }
+
+                                                    AndroidAds.onStateLog(
+                                                        "AD_CLOSE_USER_CONFIRMED",
+                                                        "elapsed=" +
+                                                            Math.floor((Date.now() - manualCloseStartedAt) / 1000) +
+                                                            "s source=DOM_DISAPPEARED"
+                                                    );
+
+                                                    /*
+                                                     * The reward is still considered valid only after the
+                                                     * MangaBuff server reports the real +7 diamond increase.
+                                                     */
+                                                    verifyReward(0);
+                                                    return;
+                                                }
+
+                                                if (Date.now() - manualCloseStartedAt >= 15000) {
+                                                    AndroidAds.onStateLog(
+                                                        "AD_CLOSE_USER_WAIT_TIMEOUT",
+                                                        "waiting_for_real_user_close=true"
+                                                    );
+
+                                                    /*
+                                                     * Keep reward verification alive. This can still
+                                                     * confirm a server-side reward if Yandex credited it,
+                                                     * but we never generate the close tap ourselves.
+                                                     */
+                                                    verifyReward(0);
+                                                    return;
+                                                }
+
+                                                manualClosePoll = setTimeout(
+                                                    waitForRealUserClose,
+                                                    250
+                                                );
+                                            }
+
+                                            waitForRealUserClose();
                                             return;
                                         }
 
