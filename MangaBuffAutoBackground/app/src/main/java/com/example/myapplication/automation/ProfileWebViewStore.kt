@@ -22,7 +22,7 @@ import java.util.UUID
 class ProfileWebViewStore(
     private val context: Context,
     private val onLog: (LogEntry) -> Unit = {},
-    private val onRendererGone: (accountId: String) -> Unit = {}
+    private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
     private val activeWebViews = mutableMapOf<String, WebView>()
     private val attachDeferreds = mutableMapOf<String, CompletableDeferred<Unit>>()
@@ -129,7 +129,7 @@ class ProfileWebViewStore(
                         isError = true
                     )
                 )
-                onRendererGone(accountId)
+                if (view != null) onRendererGone(accountId, view)
 
                 return true
             }
