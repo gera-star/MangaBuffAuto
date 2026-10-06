@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val activeWebView by viewModel.activeWebView.collectAsState()
+                    val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
 
                     Box(modifier = Modifier.fillMaxSize()) {
                         // The automation WebView must have a real viewport even while running
@@ -59,14 +60,20 @@ class MainActivity : ComponentActivity() {
                             key(webView) {
                                 AndroidView(
                                     factory = { webView },
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .alpha(1f)
+                                    modifier = Modifier.fillMaxSize(),
+                                    update = {
+                                        it.visibility = if (debugWebViewVisible) {
+                                            android.view.View.VISIBLE
+                                        } else {
+                                            android.view.View.INVISIBLE
+                                        }
+                                    }
                                 )
                             }
                         }
 
-                        // Главный UI приложения
+                        // Главный UI приложения. Кнопка WEB внутри UI временно
+                        // переключает тот же самый WebView в видимый режим для ручной проверки рекламы.
                         MangaBuffAppUI(
                             viewModel = viewModel,
                             webViewContainer = activeWebView
