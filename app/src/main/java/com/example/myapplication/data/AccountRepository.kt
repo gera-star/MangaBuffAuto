@@ -12,6 +12,7 @@ class AccountRepository(context: Context) {
     companion object {
         private const val KEY_ACCOUNTS = "key_accounts"
         private const val KEY_SETTINGS = "key_settings"
+        private const val KEY_MINE_AUTO_EXCHANGE_MIGRATED = "key_mine_auto_exchange_manual_migrated"
     }
 
     fun getAccounts(): List<MangaBuffAccount> {
@@ -82,7 +83,17 @@ class AccountRepository(context: Context) {
     fun getSettings(): GlobalSettings {
         val json = prefs.getString(KEY_SETTINGS, null) ?: return GlobalSettings()
         return try {
-            gson.fromJson(json, GlobalSettings::class.java) ?: GlobalSettings()
+            val parsed = gson.fromJson(json, GlobalSettings::class.java) ?: GlobalSettings()
+            if (!prefs.getBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, false)) {
+                val migrated = parsed.copy(mineAutoExchange = false)
+                prefs.edit()
+                    .putString(KEY_SETTINGS, gson.toJson(migrated))
+                    .putBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, true)
+                    .apply()
+                migrated
+            } else {
+                parsed
+            }
         } catch (e: Exception) {
             GlobalSettings()
         }
