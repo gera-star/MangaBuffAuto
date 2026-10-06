@@ -6042,7 +6042,7 @@ class MangaBuffAutomation(
                                                     window.__mbNativeFingerBusy = false;
                                                     scheduleNext(pause);
                                                 }
-                                            }, duration + 850);
+                                            }, duration + 450);
                                         }
 
                                         // Give WebView one rendered frame to settle the reader
