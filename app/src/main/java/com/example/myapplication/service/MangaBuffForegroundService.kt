@@ -8,6 +8,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.BroadcastReceiver
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
@@ -15,8 +17,23 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.MainActivity
 import com.example.myapplication.R
+import com.example.myapplication.automation.BackgroundExecutionState
+import com.example.myapplication.data.LogEntry
 
 class MangaBuffForegroundService : Service() {
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    BackgroundExecutionState.setScreenOff(true)
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    BackgroundExecutionState.setScreenOff(false)
+                }
+            }
+        }
+    }
 
     companion object {
         const val CHANNEL_ID = "mangabuff_bot_channel"
@@ -73,6 +90,26 @@ class MangaBuffForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+
+        ContextCompat.registerReceiver(
+            this,
+            screenReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        BackgroundExecutionState.setScreenOff(!getSystemService(android.os.PowerManager::class.java).isInteractive)
+    }
+
+    override fun onDestroy() {
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (_: Exception) {
+        }
+        super.onDestroy()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
