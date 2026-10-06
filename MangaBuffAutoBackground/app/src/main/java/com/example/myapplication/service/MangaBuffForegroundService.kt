@@ -395,8 +395,8 @@ class MangaBuffForegroundService : Service() {
                 )
             } finally {
                 val currentJob = coroutineContext[Job]
-                if (accountJobs[accountId] === currentJob) {
-                    accountJobs.remove(accountId, currentJob)
+                if (currentJob != null && accountJobs[accountId] === currentJob) {
+                    accountJobs.remove(accountId)
                     automationRunner.stopAccount(accountId)
                     removePersistedRun(accountId)
                     publishStatus(accountId, "Готово", false, "", 0f)
