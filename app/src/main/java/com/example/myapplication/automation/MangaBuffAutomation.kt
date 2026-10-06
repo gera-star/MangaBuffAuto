@@ -5880,10 +5880,13 @@ class MangaBuffAutomation(
                                             // which made the bot descend too quickly.
                                             // Extra slow mode: reduce the already shortened swipe by another 60%.
                                             // This keeps the finger gesture natural but makes each step much smaller.
-                                            var startY = m.viewport * (0.54 + Math.random() * 0.02);
-                                            var endY = m.viewport * (0.45 + Math.random() * 0.02);
+                                            // Ultra-slow mode: reduce the current swipe length by ~60%.
+                                            // Keep the gesture large enough to pass Android touch-slop, but
+                                            // make many more short steps instead of rapidly crossing the page.
+                                            var startY = m.viewport * (0.525 + Math.random() * 0.009);
+                                            var endY = m.viewport * (0.475 + Math.random() * 0.009);
                                             var distance = startY - endY;
-                                            var maxDistance = Math.max(80, m.remaining - 4);
+                                            var maxDistance = Math.max(32, m.remaining - 4);
 
                                             if (distance > maxDistance) {
                                                 startY = Math.min(m.viewport * 0.56, endY + maxDistance);
@@ -5902,8 +5905,8 @@ class MangaBuffAutomation(
                                             var x1 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x));
                                             var x2 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x + xJitter));
 
-                                            var duration = 320 + Math.floor(Math.random() * 220);
-                                            var pause = 80 + Math.floor(Math.random() * 120);
+                                            var duration = 500 + Math.floor(Math.random() * 220);
+                                            var pause = 220 + Math.floor(Math.random() * 180);
                                             var beforeY = m.y;
                                             var sequence = ++swipeSequence;
 
@@ -5935,7 +5938,7 @@ class MangaBuffAutomation(
 
                                                 var after = metrics();
                                                 var deltaY = Math.abs(after.y - beforeY);
-                                                var moved = deltaY >= 80;
+                                                var moved = deltaY >= 20;
 
                                                 AndroidReaderBridge.onLogStep(
                                                     'READER: NATIVE_FINGER_SWIPE_RESULT seq=' + sequence +
