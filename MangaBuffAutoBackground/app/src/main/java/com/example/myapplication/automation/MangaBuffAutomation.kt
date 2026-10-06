@@ -4997,6 +4997,13 @@ class MangaBuffAutomation(
                                     }
 
                                     function stopScroll() {
+                                        try {
+                                            window.__mbBackgroundScrollRunning = false;
+                                            if (typeof AndroidReaderBridge !== 'undefined') {
+                                                AndroidReaderBridge.cancelBackgroundScroll();
+                                            }
+                                        } catch(e) {}
+
                                         if (window.__mbScrollTimer) {
                                             clearTimeout(window.__mbScrollTimer);
                                             window.__mbScrollTimer = null;
@@ -5798,24 +5805,123 @@ class MangaBuffAutomation(
                                     function humanScroll() {
                                         if (chapterDone) return;
 
-                                        // MangaBuff's native autoscroll is intentionally not used for the
-                                        // actual reader motion: its maximum practical speed is too slow
-                                        // (about 330 px/s on long chapters). Use one smooth native
-                                        // requestAnimationFrame loop instead. This keeps continuous
-                                        // scrolling without large jumps and still lets checkEnd() observe
-                                        // the dynamically growing document.
                                         try { stopScroll(); } catch(e) {}
 
-                                        var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000 px/s
-                                        var lastFrame = performance.now();
+                                        var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000
+                                        window.__mbFastScrollRunning = false;
+                                        window.__mbBackgroundScrollRunning = false;
+
+                                        /*
+                                         * This function is called by native Android when the screen
+                                         * turns off. It intentionally does NOT use setTimeout/rAF.
+                                         * Native Handler -> evaluateJavascript drives each step.
+                                         */
+                                        window.__mbBackgroundStep = function() {
+                                            if (chapterDone || !window.__mbBackgroundScrollRunning) {
+                                                try { AndroidReaderBridge.cancelBackgroundScroll(); } catch(e) {}
+                                                return;
+                                            }
+
+                                            if (!AndroidReaderBridge.isScreenOff()) {
+                                                window.__mbBackgroundScrollRunning = false;
+                                                try { AndroidReaderBridge.cancelBackgroundScroll(); } catch(e) {}
+                                                AndroidReaderBridge.onLogStep('READER: BACKGROUND_SCROLL_STOP screen=ON');
+                                                humanScroll();
+                                                return;
+                                            }
+
+                                            var scrollingElement =
+                                                document.scrollingElement ||
+                                                document.documentElement ||
+                                                document.body;
+
+                                            var y = Math.max(
+                                                window.scrollY || 0,
+                                                scrollingElement ? (scrollingElement.scrollTop || 0) : 0
+                                            );
+
+                                            var viewport = Math.max(
+                                                window.innerHeight || 0,
+                                                scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
+                                                1
+                                            );
+
+                                            var height = Math.max(
+                                                scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
+                                                document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                                                document.body ? (document.body.scrollHeight || 0) : 0
+                                            );
+
+                                            var remaining = Math.max(0, height - viewport - y);
+
+                                            // Approx. 180 ms between native calls. Keep the
+                                            // per-step movement below a large-screen jump.
+                                            var stepPx = Math.max(
+                                                260,
+                                                Math.min(680, speedPxPerSecond * 0.18)
+                                            );
+
+                                            if (remaining > 2) {
+                                                window.scrollBy(0, Math.min(stepPx, remaining));
+                                            }
+
+                                            checkEnd();
+                                        };
+
+                                        window.__mbScreenTurnedOff = function() {
+                                            if (chapterDone) return;
+
+                                            window.__mbFastScrollRunning = false;
+                                            window.__mbBackgroundScrollRunning = true;
+
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: BACKGROUND_SCROLL_SWITCH speed=' + speedPxPerSecond
+                                            );
+                                            AndroidReaderBridge.startBackgroundScroll();
+                                        };
+
+                                        window.__mbScreenTurnedOn = function() {
+                                            if (chapterDone) return;
+
+                                            if (window.__mbBackgroundScrollRunning) {
+                                                window.__mbBackgroundScrollRunning = false;
+                                                try { AndroidReaderBridge.cancelBackgroundScroll(); } catch(e) {}
+                                                AndroidReaderBridge.onLogStep('READER: BACKGROUND_SCROLL_STOP screen=ON');
+                                            }
+
+                                            humanScroll();
+                                        };
+
+                                        /*
+                                         * Important: if the screen is already locked before the
+                                         * reader script starts, switch immediately. Otherwise use
+                                         * the normal visible-screen smooth rAF mode.
+                                         */
+                                        if (AndroidReaderBridge.isScreenOff()) {
+                                            window.__mbScreenTurnedOff();
+                                            return;
+                                        }
+
                                         window.__mbFastScrollRunning = true;
 
                                         AndroidReaderBridge.onLogStep(
                                             'READER: FAST_SMOOTH_SCROLL_STARTED speed=' + speedPxPerSecond
                                         );
 
+                                        var lastFrame = performance.now();
+
                                         function tick(now) {
                                             if (chapterDone || !window.__mbFastScrollRunning) {
+                                                return;
+                                            }
+
+                                            /*
+                                             * The service also calls __mbScreenTurnedOff() directly on
+                                             * SCREEN_OFF. This extra check covers the case where the
+                                             * browser delivers one more animation frame before pausing.
+                                             */
+                                            if (AndroidReaderBridge.isScreenOff()) {
+                                                window.__mbScreenTurnedOff();
                                                 return;
                                             }
 
@@ -5846,8 +5952,6 @@ class MangaBuffAutomation(
 
                                             var remaining = Math.max(0, height - viewport - y);
 
-                                            // Slow down only in the final viewport so the existing
-                                            // bottom-stabilization logic can reliably settle.
                                             var currentSpeed = remaining < viewport * 1.5
                                                 ? Math.max(450, speedPxPerSecond * (remaining / (viewport * 1.5)))
                                                 : speedPxPerSecond;
