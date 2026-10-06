@@ -12,7 +12,9 @@ import android.content.IntentFilter
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.webkit.WebView
 import androidx.core.app.NotificationCompat
@@ -160,6 +162,7 @@ class MangaBuffForegroundService : Service() {
     private var currentMode: String = "IDLE"
     private var currentTaskType: TaskType? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -167,11 +170,30 @@ class MangaBuffForegroundService : Service() {
                 Intent.ACTION_SCREEN_OFF -> {
                     BackgroundExecutionState.setScreenOff(true)
                     emitLog(LogEntry(component = "BG", message = "SCREEN_STATE=OFF"))
+                    notifyReaderScreenChange("window.__mbScreenTurnedOff && window.__mbScreenTurnedOff();")
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     BackgroundExecutionState.setScreenOff(false)
                     emitLog(LogEntry(component = "BG", message = "SCREEN_STATE=ON"))
+                    notifyReaderScreenChange("window.__mbScreenTurnedOn && window.__mbScreenTurnedOn();")
                 }
+            }
+        }
+    }
+
+    private fun notifyReaderScreenChange(script: String) {
+        val webView = eventBus.activeWebView.value ?: return
+        mainHandler.post {
+            try {
+                webView.evaluateJavascript(script, null)
+            } catch (e: Exception) {
+                emitLog(
+                    LogEntry(
+                        component = "BG",
+                        message = "SCREEN_STATE_JS_NOTIFY_FAILED reason=${e.message}",
+                        isError = true
+                    )
+                )
             }
         }
     }
