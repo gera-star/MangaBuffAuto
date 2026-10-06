@@ -27,6 +27,7 @@ import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
