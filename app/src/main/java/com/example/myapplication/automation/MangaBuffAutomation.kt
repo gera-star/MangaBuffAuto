@@ -3167,6 +3167,13 @@ class MangaBuffAutomation(
 
                                     var minedOre = Math.max(0, currentOre() - initialOre);
                                     AndroidMine.onMineMined(minedOre);
+
+                                    if (!${settings.mineAutoExchange}) {
+                                        AndroidMine.onMineLog('AUTO_EXCHANGE_DISABLED_MANUAL_REQUIRED minedOre=' + minedOre);
+                                        AndroidMine.onMineComplete();
+                                        return;
+                                    }
+
                                     var header = document.querySelector('.main-mine__header_score');
                                     if (!header) {
                                         AndroidMine.onMineLog('CRYSTAL_HEADER_NOT_FOUND');
