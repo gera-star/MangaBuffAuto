@@ -679,6 +679,57 @@ class MangaBuffAutomation(
             .trim()
     }
 
+    private fun logWebViewNetworkRequest(
+        account: MangaBuffAccount,
+        request: WebResourceRequest
+    ) {
+        val url = request.url.toString()
+        if (!url.startsWith("https://mangabuff.ru")) return
+
+        val important = listOf(
+            "/addHistory",
+            "/balance",
+            "/mine",
+            "/battle",
+            "/quiz",
+            "/ads",
+            "/auth",
+            "/login",
+            "/api/"
+        )
+        if (important.none { url.contains(it, ignoreCase = true) }) return
+
+        val interestingHeaders = request.requestHeaders
+            .asSequence()
+            .filter { (name, _) ->
+                name.lowercase() in setOf(
+                    "accept",
+                    "accept-language",
+                    "content-type",
+                    "origin",
+                    "referer",
+                    "sec-ch-ua",
+                    "sec-ch-ua-mobile",
+                    "sec-ch-ua-platform",
+                    "sec-fetch-dest",
+                    "sec-fetch-mode",
+                    "sec-fetch-site",
+                    "x-requested-with",
+                    "x-csrf-token"
+                )
+            }
+            .sortedBy { it.first.lowercase() }
+            .joinToString(";") { (name, value) ->
+                "$name=${value.take(240)}"
+            }
+            .ifBlank { "none" }
+
+        log(
+            account.username,
+            "NET: WEBVIEW_REQUEST method=${request.method} url=$url headers=$interestingHeaders"
+        )
+    }
+
     private fun getBaseHeaders(account: MangaBuffAccount): Headers {
         val builder = Headers.Builder()
             .add("User-Agent", account.getSafeUserAgent())
@@ -4374,10 +4425,17 @@ class MangaBuffAutomation(
                     view: WebView?,
                     request: WebResourceRequest?
                 ): WebResourceResponse? {
-                    val urlStr = request?.url?.toString() ?: ""
-                    if (urlStr.contains("/addHistory")) {
-                        val method = request?.method ?: "POST"
-                        log(account.username, "READER: MB_HISTORY_SHOULD_INTERCEPT url=$urlStr method=$method")
+                    if (request != null) {
+                        logWebViewNetworkRequest(account, request)
+
+                        val urlStr = request.url.toString()
+                        if (urlStr.contains("/addHistory")) {
+                            log(
+                                account.username,
+                                "READER: MB_HISTORY_SHOULD_INTERCEPT " +
+                                    "url=$urlStr method=${request.method}"
+                            )
+                        }
                     }
                     return super.shouldInterceptRequest(view, request)
                 }
