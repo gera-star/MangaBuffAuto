@@ -353,27 +353,17 @@ class MangaBuffAutomation(
                 send(MotionEvent.ACTION_UP, endX, endY)
 
                 /*
-                 * Controlled inertia:
-                 * the old implementation accidentally produced enormous flings
-                 * because MOVE event timestamps were artificial. The gesture is
-                 * now dispatched in real time, so we can safely add a bounded
-                 * native fling after ACTION_UP.
+                 * Controlled inertia experiment: increase the post-release velocity
+                 * so the reader behaves more like a real phone swipe. The gesture
+                 * itself is still dispatched with real wall-clock MotionEvent times;
+                 * only this bounded native continuation is being changed.
                  *
-                 * Upward finger movement => positive WebView scroll velocity.
-                 * Keep the velocity in a deliberate 1500..3000 px/s range.
-                 * This gives the reader a clearly visible but controlled native inertia.
+                 * 2400 px/s was too weak on a high-density device (~800 CSS px/s
+                 * at density 3), producing only about 210-220 CSS px of continuation
+                 * in the logs. 4800 px/s should roughly double that continuation
+                 * while avoiding the old synthetic-timestamp runaway fling.
                  */
-                /*
-                 * Do not derive this from the synthetic finger velocity and do not
-                 * randomize it. The gesture itself is already a full 50-60% screen
-                 * swipe; the fling is only the short phone-like continuation after
-                 * release.
-                 *
-                 * 2400 px/s is deliberately moderate: visible inertia without the
-                 * old runaway behaviour. The JS reader scheduler waits long enough
-                 * for this fling to finish before starting the next finger swipe.
-                 */
-                val inertiaVelocity = 2400
+                val inertiaVelocity = 4800
 
                 log(
                     "SYSTEM",
