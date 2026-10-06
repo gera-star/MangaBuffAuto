@@ -1,8 +1,12 @@
 package com.example.myapplication.ui
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
@@ -14,12 +18,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = AccountRepository(application)
-    private val _activeWebView = MutableStateFlow<android.webkit.WebView?>(null)
-    val activeWebView: StateFlow<android.webkit.WebView?> = _activeWebView.asStateFlow()
+    /*
+     * Debug/UI registry only. Automation never uses a single global WebView.
+     * Every WebView is addressed by accountId.
+     */
+    private val _webViewsByAccount =
+        MutableStateFlow<Map<String, android.webkit.WebView>>(emptyMap())
+    val webViewsByAccount: StateFlow<Map<String, android.webkit.WebView>> =
+        _webViewsByAccount.asStateFlow()
 
     // TEMP DEBUG: show the real automation WebView so the rewarded ad can be
     // inspected and its close button can be pressed manually.
@@ -30,50 +39,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _debugWebViewVisible.value = visible
     }
 
-    private val applicationContext = getApplication<Application>()
+    private val runtimeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val eventType = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_EVENT_TYPE).orEmpty()
+            val accountId = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_ACCOUNT_ID).orEmpty()
 
-    private fun observeBackgroundService() {
-        viewModelScope.launch {
-            MangaBuffForegroundService.eventBus.state.collect { state ->
-                _isRunning.value = state.isRunning
-            }
-        }
-
-        viewModelScope.launch {
-            MangaBuffForegroundService.eventBus.activeWebView.collect { webView ->
-                _activeWebView.value = webView
-            }
-        }
-
-        viewModelScope.launch {
-            MangaBuffForegroundService.eventBus.events.collect { event ->
-                when (event) {
-                    is com.example.myapplication.service.AutomationServiceEvent.Log ->
-                        addLog(event.entry)
-
-                    is com.example.myapplication.service.AutomationServiceEvent.AccountStatus ->
-                        updateAccountStatus(
-                            event.accountId,
-                            event.statusMessage,
-                            event.isRunning,
-                            event.currentTask,
-                            event.progress
+            when (eventType) {
+                MangaBuffForegroundService.EVENT_STATUS -> {
+                    updateAccountStatus(
+                        accountId,
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_STATUS)
+                            ?: intent?.getStringExtra(MangaBuffForegroundService.EXTRA_MESSAGE).orEmpty(),
+                        intent?.getBooleanExtra(MangaBuffForegroundService.EXTRA_IS_RUNNING, false) ?: false,
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_CURRENT_TASK).orEmpty(),
+                        intent?.getFloatExtra(MangaBuffForegroundService.EXTRA_PROGRESS, 0f) ?: 0f
+                    )
+                }
+                MangaBuffForegroundService.EVENT_LOG -> {
+                    addLog(
+                        LogEntry(
+                            username = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_USERNAME).orEmpty(),
+                            component = "BG",
+                            message = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_MESSAGE).orEmpty(),
+                            isError = intent?.getBooleanExtra(MangaBuffForegroundService.EXTRA_ERROR, false) ?: false
                         )
-
-                    is com.example.myapplication.service.AutomationServiceEvent.MangaActive ->
-                        updateActiveMangaUrl(event.accountId, event.url, event.title)
-
-                    is com.example.myapplication.service.AutomationServiceEvent.AccountStats ->
-                        updateAccountStats(
-                            event.accountId,
-                            event.diamonds,
-                            event.cardDrop,
-                            event.chapters,
-                            event.comments
+                    )
+                }
+                MangaBuffForegroundService.EVENT_STATS -> {
+                    updateAccountStats(
+                        accountId,
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_DIAMONDS).orEmpty(),
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_CARD_DROP).orEmpty(),
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_CHAPTERS).orEmpty(),
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_COMMENTS).orEmpty()
+                    )
+                }
+                MangaBuffForegroundService.EVENT_DAILY_STATS -> {
+                    updateDailyStats(
+                        accountId,
+                        DailyStats(
+                            day = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_DAY).orEmpty(),
+                            battles = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_BATTLES, 0) ?: 0,
+                            quiz = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_QUIZ, 0) ?: 0,
+                            ads = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_ADS, 0) ?: 0,
+                            mineOre = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_MINE_ORE, 0) ?: 0,
+                            mineExchangeOre = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_MINE_EXCHANGE_ORE, 0) ?: 0,
+                            mineDiamonds = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_MINE_DIAMONDS, 0) ?: 0,
+                            readerChapters = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_READER_CHAPTERS, 0) ?: 0,
+                            comments = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_DAILY_COMMENTS, 0) ?: 0
                         )
-
-                    is com.example.myapplication.service.AutomationServiceEvent.DailyStatsUpdate ->
-                        updateDailyStats(event.accountId, event.stats)
+                    )
+                }
+                MangaBuffForegroundService.EVENT_MANGA -> {
+                    updateActiveMangaUrl(
+                        accountId,
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_URL).orEmpty(),
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_TITLE).orEmpty()
+                    )
                 }
             }
         }
@@ -101,8 +123,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val showPromoDialog: StateFlow<Boolean> = _showPromoDialog.asStateFlow()
 
     init {
+        ContextCompat.registerReceiver(
+            getApplication(),
+            runtimeReceiver,
+            IntentFilter(MangaBuffForegroundService.ACTION_RUNTIME_EVENT),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         loadData()
-        observeBackgroundService()
+    }
+
+    override fun onCleared() {
+        try {
+            getApplication<Application>().unregisterReceiver(runtimeReceiver)
+        } catch (_: Exception) {
+        }
+        super.onCleared()
     }
 
     fun loadData() {
@@ -153,19 +188,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun reloadAccount(account: MangaBuffAccount) {
-        MangaBuffForegroundService.reloadAccount(applicationContext, account.id)
-        addLog(LogEntry(username = account.username, message = "Обновление страницы и переход на главную"))
+        MangaBuffForegroundService.reloadAccount(getApplication(), account.id)
+        addLog(
+            LogEntry(
+                username = account.username,
+                component = "BG",
+                message = "RELOAD_REQUESTED accountId=${account.id}"
+            )
+        )
     }
 
     fun skipCurrentManga(): Boolean {
-        MangaBuffForegroundService.skipCurrentManga(applicationContext)
-        addLog(LogEntry(message = "READER: SKIP_MANGA_BUTTON_DISPATCHED"))
+        addLog(
+            LogEntry(
+                component = "SECURITY",
+                message = "READER: SKIP_REJECTED accountId_REQUIRED",
+                isError = true
+            )
+        )
+        return false
+    }
+
+    fun skipCurrentManga(accountId: String): Boolean {
+        MangaBuffForegroundService.skipManga(getApplication(), accountId)
         return true
     }
 
     fun markCurrentMangaAsRead(): Boolean {
-        MangaBuffForegroundService.markCurrentMangaAsRead(applicationContext)
-        addLog(LogEntry(message = "READER: MARK_READ_BUTTON_DISPATCHED"))
+        addLog(
+            LogEntry(
+                component = "SECURITY",
+                message = "READER: MARK_READ_REJECTED accountId_REQUIRED",
+                isError = true
+            )
+        )
+        return false
+    }
+
+    fun markCurrentMangaAsRead(accountId: String): Boolean {
+        MangaBuffForegroundService.markRead(getApplication(), accountId)
         return true
     }
 
@@ -175,14 +236,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * /manga?hide_read=1 -> choose another manga -> start reading.
      */
     fun changeCurrentManga(accountId: String): Boolean {
-        MangaBuffForegroundService.markCurrentMangaAsRead(applicationContext, accountId)
+        val marked = MangaBuffForegroundService.markRead(getApplication(), accountId)
         addLog(
             LogEntry(
                 username = accountId,
-                message = "READER: CHANGE_MANGA_REQUESTED action=MARK_READ_THEN_CATALOG"
+                message = if (marked) {
+                    "READER: CHANGE_MANGA_REQUESTED action=MARK_READ_THEN_CATALOG"
+                } else {
+                    "READER: CHANGE_MANGA_NOT_AVAILABLE"
+                },
+                isError = !marked
             )
         )
-        return true
+        return marked
     }
 
     fun updateAccountTasks(
@@ -220,17 +286,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _accounts.update { list ->
             list.map { acc ->
                 if (acc.id == accountId) {
-                    val updated = acc.copy(
+                    acc.copy(
                         statusMessage = statusMessage,
                         isRunning = isRunning,
                         currentTask = currentTask,
                         taskProgress = progress,
                         lastRunTime = if (!isRunning) System.currentTimeMillis() else acc.lastRunTime
                     )
-                    updated
                 } else acc
             }
         }
+        _isRunning.value = _accounts.value.any { it.isRunning }
     }
 
     private fun updateAccountStats(
@@ -301,36 +367,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runTaskForAccount(account: MangaBuffAccount, taskType: TaskType) {
-        MangaBuffForegroundService.startAccountTask(applicationContext, account.id, taskType)
+        MangaBuffForegroundService.startAccount(getApplication(), account.id, taskType)
+        _isRunning.value = true
+        addLog(
+            LogEntry(
+                username = account.username,
+                component = "BG",
+                message = "START_REQUEST accountId=${account.id} taskType=${taskType.title}"
+            )
+        )
     }
 
     fun runTaskForAllAccounts(taskType: TaskType) {
-        if (MangaBuffForegroundService.isRunning()) {
-            MangaBuffForegroundService.stopAllTasks(applicationContext)
-        } else {
-            MangaBuffForegroundService.startAllTasks(applicationContext, taskType)
-        }
+        MangaBuffForegroundService.startAll(getApplication(), taskType)
+        _isRunning.value = _accounts.value.isNotEmpty()
+        addLog(
+            LogEntry(
+                component = "BG",
+                message = "START_ALL_REQUEST accounts=${_accounts.value.size} taskType=${taskType.title}"
+            )
+        )
     }
 
-    fun stopAccountTask(accountId: String) {
-        MangaBuffForegroundService.stopAccountTask(applicationContext, accountId)
-
+    private fun stopAllTasksState() {
         _accounts.update { list ->
             list.map { acc ->
-                if (acc.id == accountId) {
-                    acc.copy(
-                        isRunning = false,
-                        taskProgress = 0f,
-                        statusMessage = "Остановлено пользователем"
-                    )
-                } else acc
+                acc.copy(
+                    isRunning = false,
+                    taskProgress = 0f,
+                    statusMessage = if (acc.statusMessage?.contains("Завершено") == true) {
+                        acc.statusMessage
+                    } else {
+                        "Остановлено пользователем"
+                    }
+                )
             }
         }
         repository.saveAccounts(_accounts.value)
     }
 
+    fun stopAccountTask(accountId: String) {
+        MangaBuffForegroundService.stopAccount(getApplication(), accountId)
+    }
+
     fun stopAllTasks() {
-        MangaBuffForegroundService.stopAllTasks(applicationContext)
+        MangaBuffForegroundService.stopAll(getApplication())
+        stopAllTasksState()
+        _isRunning.value = false
         addLog(LogEntry(message = "Все задачи остановлены"))
     }
 
