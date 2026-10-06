@@ -13,18 +13,22 @@ import com.example.myapplication.data.TaskType
 import com.example.myapplication.service.MangaBuffForegroundService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlin.coroutines.coroutineContext
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = AccountRepository(application)
-    private val _activeWebView = MutableStateFlow<android.webkit.WebView?>(null)
-    val activeWebView: StateFlow<android.webkit.WebView?> = _activeWebView.asStateFlow()
+    /*
+     * Debug/UI registry only. Automation never uses a single global WebView.
+     * Every WebView is addressed by accountId.
+     */
+    private val _webViewsByAccount =
+        MutableStateFlow<Map<String, android.webkit.WebView>>(emptyMap())
+    val webViewsByAccount: StateFlow<Map<String, android.webkit.WebView>> =
+        _webViewsByAccount.asStateFlow()
 
     // TEMP DEBUG: show the real automation WebView so the rewarded ad can be
     // inspected and its close button can be pressed manually.
@@ -50,12 +54,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onDailyStatsUpdate = { accountId, stats ->
             updateDailyStats(accountId, stats)
         },
-        onWebViewAssigned = { webView ->
-            _activeWebView.value = webView
+        onWebViewAssigned = { accountId, webView ->
+            _webViewsByAccount.update { current -> current + (accountId to webView) }
         },
-        onWebViewCleared = { webView ->
-            if (_activeWebView.value == webView) {
-                _activeWebView.value = null
+        onWebViewCleared = { accountId, webView ->
+            _webViewsByAccount.update { current ->
+                if (current[accountId] === webView) current - accountId else current
             }
         }
     )
@@ -331,17 +335,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         addLog(LogEntry(message = "Параметры выполнения обновлены"))
     }
 
-    fun runTaskForAccount(account: MangaBuffAccount, taskType: TaskType) {
+    private fun launchAccountJob(account: MangaBuffAccount, taskType: TaskType) {
         accountJobs[account.id]?.cancel()
         accountJobs.remove(account.id)
         automationRunner.stopAccount(account.id)
 
         _isRunning.value = true
         acquireWakeLock()
-        MangaBuffForegroundService.startService(getApplication(), "Выполнение задач (${account.username})...")
+
+        _accounts.update { list ->
+            list.map { acc ->
+                if (acc.id == account.id) {
+                    acc.copy(isRunning = true, taskProgress = 0f, statusMessage = "Запуск...")
+                } else acc
+            }
+        }
 
         println("JOB: START accountId=${account.id}")
-        accountJobs[account.id] = viewModelScope.launch {
+        val job = viewModelScope.launch {
             try {
                 automationRunner.runForAccount(account, _settings.value, taskType)
             } catch (e: CancellationException) {
@@ -355,11 +366,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     accountJobs.remove(account.id)
                     println("JOB: COMPLETE accountId=${account.id}")
                 }
-                if (accountJobs.isEmpty()) {
-                    _isRunning.value = false
-                    releaseWakeLock()
-                    MangaBuffForegroundService.stopService(getApplication())
-                }
+
                 _accounts.update { list ->
                     list.map { acc ->
                         if (acc.id == account.id) {
@@ -372,40 +379,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 repository.saveAccounts(_accounts.value)
+
+                if (accountJobs.isEmpty()) {
+                    _isRunning.value = false
+                    releaseWakeLock()
+                    MangaBuffForegroundService.stopService(getApplication())
+                }
             }
         }
+
+        accountJobs[account.id] = job
+    }
+
+    fun runTaskForAccount(account: MangaBuffAccount, taskType: TaskType) {
+        MangaBuffForegroundService.startService(
+            getApplication(),
+            "Выполнение задач (${account.username})..."
+        )
+        launchAccountJob(account, taskType)
     }
 
     fun runTaskForAllAccounts(taskType: TaskType) {
         if (_isRunning.value) {
             stopAllTasks()
         }
+
         val enabledAccounts = _accounts.value
         if (enabledAccounts.isEmpty()) return
 
-        _isRunning.value = true
-        acquireWakeLock()
-        MangaBuffForegroundService.startService(getApplication(), "Выполнение задач на всех аккаунтах...")
+        MangaBuffForegroundService.startService(
+            getApplication(),
+            "Выполнение задач на ${enabledAccounts.size} аккаунтах..."
+        )
 
-        accountJobs["batch_all"] = viewModelScope.launch {
-            try {
-                for (account in enabledAccounts) {
-                    ensureActive()
-                    automationRunner.runForAccount(account, _settings.value, taskType)
-                }
-            } catch (e: CancellationException) {
-                addLog(LogEntry(message = "Пакетное выполнение остановлено пользователем"))
-            } catch (e: Exception) {
-                addLog(LogEntry(message = "Ошибка пакетного выполнения: ${e.message}", isError = true))
-            } finally {
-                accountJobs.remove("batch_all")
-                if (accountJobs.isEmpty()) {
-                    _isRunning.value = false
-                    releaseWakeLock()
-                    MangaBuffForegroundService.stopService(getApplication())
-                }
-                stopAllTasksState()
-            }
+        /*
+         * Each account gets its own child Job. There is deliberately no shared
+         * "batch_all" job: cancelling account A must never cancel account B.
+         */
+        enabledAccounts.forEach { account ->
+            launchAccountJob(account, taskType)
         }
     }
 
