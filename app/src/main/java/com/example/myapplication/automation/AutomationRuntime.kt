@@ -28,8 +28,8 @@ class AutomationRuntime(
     private val onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
-    private val onWebViewAssigned: (WebView) -> Unit = {},
-    private val onWebViewCleared: (WebView) -> Unit = {}
+    private val onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
+    private val onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
     private val runtimes = mutableMapOf<String, AccountRuntime>()
     private val automationEngines = mutableMapOf<String, MangaBuffAutomation>()
@@ -67,7 +67,7 @@ class AutomationRuntime(
     fun prepareAccount(account: MangaBuffAccount): AccountRuntime {
         onLog(LogEntry(username = account.username, component = "ACCOUNT", message = "START requested"))
         val (profileName, webView) = webViewStore.getOrCreateWebView(account.id, account.getSafeCookiesJson())
-        onWebViewAssigned(webView)
+        onWebViewAssigned(account.id, webView)
         val runtime = AccountRuntime(
             accountId = account.id,
             profileName = profileName,
@@ -114,7 +114,7 @@ class AutomationRuntime(
         val runtime = runtimes.remove(accountId)
         if (runtime != null) {
             runtime.state = AccountState.STOPPED
-            onWebViewCleared(runtime.webView)
+            onWebViewCleared(accountId, runtime.webView)
             webViewStore.releaseWebView(accountId)
             onLog(
                 LogEntry(
