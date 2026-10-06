@@ -5941,18 +5941,35 @@ class MangaBuffAutomation(
 
                                                 var after = metrics();
                                                 var deltaY = Math.abs(after.y - beforeY);
-                                                var moved = deltaY >= 20;
+
+                                                /*
+                                                 * The normal gesture is intentionally tiny (~35-50 CSS px).
+                                                 * Therefore a fixed "80 px means no progress" threshold is wrong:
+                                                 * it classified EVERY successful short swipe as stalled and
+                                                 * triggered the 552 px recovery swipe every third gesture.
+                                                 *
+                                                 * Judge progress relative to the actual requested finger travel.
+                                                 * A swipe only needs to move about one third of its intended
+                                                 * distance to count as a real scroll; tiny 1-10 px movements
+                                                 * remain genuine no-progress events.
+                                                 */
+                                                var progressThreshold = Math.max(
+                                                    12,
+                                                    Math.min(24, Math.floor(distance * 0.35))
+                                                );
+                                                var moved = deltaY >= progressThreshold;
 
                                                 AndroidReaderBridge.onLogStep(
                                                     'READER: NATIVE_FINGER_SWIPE_RESULT seq=' + sequence +
                                                     ' moved=' + moved +
+                                                    ' threshold=' + progressThreshold +
                                                     ' beforeY=' + Math.floor(beforeY) +
                                                     ' afterY=' + Math.floor(after.y) +
                                                     ' deltaY=' + Math.floor(after.y - beforeY) +
                                                     ' remaining=' + Math.floor(after.remaining)
                                                 );
 
-                                                if (after.remaining > 120 && deltaY < 80) {
+                                                if (after.remaining > 120 && deltaY < progressThreshold) {
                                                     swipeRecoveryAttempts++;
                                                     AndroidReaderBridge.onLogStep(
                                                         'READER: NATIVE_FINGER_SWIPE_NO_PROGRESS seq=' + sequence +
