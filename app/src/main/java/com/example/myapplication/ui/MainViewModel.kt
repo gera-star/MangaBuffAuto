@@ -392,23 +392,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 for (account in enabledAccounts) {
                     ensureActive()
-
-                    val accountJob = launch {
-                        automationRunner.runForAccount(
-                            account,
-                            _settings.value,
-                            taskType
-                        )
-                    }
-
-                    accountJobs[account.id] = accountJob
-                    try {
-                        accountJob.join()
-                    } finally {
-                        if (accountJobs[account.id] == accountJob) {
-                            accountJobs.remove(account.id)
-                        }
-                    }
+                    automationRunner.runForAccount(account, _settings.value, taskType)
                 }
             } catch (e: CancellationException) {
                 addLog(LogEntry(message = "Пакетное выполнение остановлено пользователем"))
