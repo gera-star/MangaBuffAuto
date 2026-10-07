@@ -39,11 +39,14 @@ class MainActivity : ComponentActivity() {
     private var edgeBackTracking = false
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        val edge = (32f * resources.displayMetrics.density).coerceAtLeast(24f)
+        val density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val edgePx = (40f * density).coerceAtLeast(28f)
+        val triggerPx = (64f * density).coerceAtLeast(48f)
+
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val fromLeft = event.x <= edge
-                val fromRight = event.x >= (resources.displayMetrics.widthPixels - edge)
+                val fromLeft = event.x <= edgePx
+                val fromRight = event.x >= (resources.displayMetrics.widthPixels - edgePx)
                 edgeBackTracking = fromLeft || fromRight
                 if (edgeBackTracking) {
                     edgeBackDownX = event.x
@@ -57,12 +60,21 @@ class MainActivity : ComponentActivity() {
                     val dx = event.x - edgeBackDownX
                     val dy = event.y - edgeBackDownY
                     val duration = android.os.SystemClock.uptimeMillis() - edgeBackDownAt
-                    val horizontal = kotlin.math.abs(dx) >= (72f * resources.displayMetrics.density)
-                    val mostlyHorizontal = kotlin.math.abs(dy) <= kotlin.math.abs(dx) * 0.8f
-                    val shortGesture = duration <= 600L
+                    val fromLeft = edgeBackDownX <= edgePx
+                    val fromRight = edgeBackDownX >= (resources.displayMetrics.widthPixels - edgePx)
+                    val towardCenter =
+                        (fromLeft && dx >= triggerPx) ||
+                            (fromRight && dx <= -triggerPx)
+                    val mostlyHorizontal = kotlin.math.abs(dy) <= kotlin.math.abs(dx) * 0.85f
+                    val shortGesture = duration <= 700L
 
-                    if (horizontal && mostlyHorizontal && shortGesture) {
-                        onBackPressedDispatcher.onBackPressed()
+                    if (towardCenter && mostlyHorizontal && shortGesture) {
+                        val webView = viewModel.activeWebView.value
+                        if (webView != null && webView.canGoBack()) {
+                            webView.goBack()
+                        } else {
+                            onBackPressedDispatcher.onBackPressed()
+                        }
                         edgeBackTracking = false
                         return true
                     }
