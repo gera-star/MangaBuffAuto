@@ -6311,6 +6311,7 @@ class MangaBuffAutomation(
             webView.addJavascriptInterface(CommentBridge(), "AndroidCommentBridge")
 
             fun injectScript() {
+                val text = commentPhrases.random()
                 val script = """
                     (function() {
                         try {
