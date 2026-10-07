@@ -1337,7 +1337,7 @@ class MangaBuffAutomation(
 
         log(
             account.username,
-            "BATTLE: START targetBattles=$" + battleTarget + " targetWins=" + BATTLE_WIN_TARGET
+            "BATTLE: START targetBattles=" + battleTarget + " targetWins=" + BATTLE_WIN_TARGET
         )
         updateStatus(
             account,
@@ -6661,7 +6661,7 @@ class MangaBuffAutomation(
             }
 
         return try {
-            log(account.username, "COMMENT: HTTP_POST_START chapterId=$" + chapterId)
+            log(account.username, "COMMENT: HTTP_POST_START chapterId=" + chapterId)
 
             var result = sendComment(csrf)
             var status = result.first
@@ -6683,7 +6683,7 @@ class MangaBuffAutomation(
             if (success) {
                 log(
                     account.username,
-                    "COMMENT: HTTP_POST_SUCCESS chapterId=$" + chapterId + " status=" + status
+                    "COMMENT: HTTP_POST_SUCCESS chapterId=" + chapterId + " status=" + status
                 )
             } else {
                 val safeBody = bodySnippet
@@ -6692,7 +6692,7 @@ class MangaBuffAutomation(
 
                 log(
                     account.username,
-                    "COMMENT: HTTP_POST_FAILED chapterId=$" +
+                    "COMMENT: HTTP_POST_FAILED chapterId=" +
                         chapterId + " status=" + status + " body=" + safeBody,
                     true
                 )
@@ -6702,7 +6702,7 @@ class MangaBuffAutomation(
         } catch (e: Exception) {
             log(
                 account.username,
-                "COMMENT: HTTP_POST_EXCEPTION chapterId=$" +
+                "COMMENT: HTTP_POST_EXCEPTION chapterId=" +
                     chapterId + " error=" + e.message,
                 true
             )
