@@ -1223,14 +1223,25 @@ class MangaBuffAutomation(
 
         refreshCsrfToken(account)
 
-        log(account.username, "STAT: REFRESH_BEFORE_START (Обновление баланса и статистики)")
-        val balanceResult = fetchAndLogBalanceInfo(account, webView)
+        if (taskType == TaskType.ADS) {
+            /*
+             * Pure ad test: runAdsTask() owns the /balance navigation and waits
+             * for the page before injecting the ad runner. Do not run the
+             * general balance/diagnostic pass first, because it installs its
+             * own WebViewClient and executes unrelated page diagnostics before
+             * the ad test gets control of the WebView.
+             */
+            log(account.username, "TASK: ADS_TEST_PREP skip_initial_balance_refresh")
+        } else {
+            log(account.username, "STAT: REFRESH_BEFORE_START (Обновление баланса и статистики)")
+            val balanceResult = fetchAndLogBalanceInfo(account, webView)
 
-        if (balanceResult.contains("Требуется повторный вход") ||
-            account.getSafeStatusMessage().contains("Требуется повторный вход")
-        ) {
-            log(account.username, "AUTH: ABORTING_TASKS due to expired session")
-            return
+            if (balanceResult.contains("Требуется повторный вход") ||
+                account.getSafeStatusMessage().contains("Требуется повторный вход")
+            ) {
+                log(account.username, "AUTH: ABORTING_TASKS due to expired session")
+                return
+            }
         }
 
         if (taskType == TaskType.ALL || taskType == TaskType.BATTLE) {
