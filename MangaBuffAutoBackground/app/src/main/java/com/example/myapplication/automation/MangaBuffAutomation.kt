@@ -1375,7 +1375,6 @@ class MangaBuffAutomation(
                     winCount++
                     addDaily(account) {
                         it.copy(
-                            battleAttempts = it.battleAttempts + 1,
                             battles = it.battles + 1
                         )
                     }
@@ -1388,9 +1387,9 @@ class MangaBuffAutomation(
 
                 is TaskResult.BattleLost -> {
                     battleCount++
-                    addDaily(account) {
-                        it.copy(battleAttempts = it.battleAttempts + 1)
-                    }
+                    // DailyStats currently stores wins, not attempts.
+                    // battleCount above tracks the number of completed rounds for this run.
+                    addDaily(account) { it }
                     log(
                         account.username,
                         "BATTLE: RESULT=LOSS battles=" + battleCount +
