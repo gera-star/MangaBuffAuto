@@ -1106,7 +1106,6 @@ class MangaBuffAutomation(
 
                 when (result) {
                     is TaskResult.BattleFinished -> {
-                        addDaily(account) { it.copy(battles = it.battles + result.wins) }
                         log(account.username, "BATTLE: TASK_SUCCESS battles=" + result.battles + " wins=" + result.wins + " elapsed=" + elapsed + "ms")
                     }
                     is TaskResult.Success -> {
@@ -1211,7 +1210,12 @@ class MangaBuffAutomation(
                 is TaskResult.BattleWon -> {
                     battleCount++
                     winCount++
-                    addDaily(account) { it.copy(battleAttempts = it.battleAttempts + 1) }
+                    addDaily(account) {
+                        it.copy(
+                            battleAttempts = it.battleAttempts + 1,
+                            battles = it.battles + 1
+                        )
+                    }
                     log(account.username, "BATTLE: RESULT=WIN battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
                 }
                 is TaskResult.BattleLost -> {
