@@ -131,6 +131,7 @@ fun MangaBuffAppUI(
             when (activeTab) {
                 0 -> AccountsTab(
                     accounts = accounts,
+                    battleTarget = settings.battleTargetCount,
                     onRunTask = { account, type -> viewModel.runTaskForAccount(account, type) },
                     onStopAccount = { account -> viewModel.stopAccountTask(account.id) },
                     onStopAll = { viewModel.stopAllTasks() },
@@ -374,6 +375,7 @@ fun MangaBuffAppUI(
 @Composable
 fun AccountsTab(
     accounts: List<MangaBuffAccount>,
+    battleTarget: Int,
     onRunTask: (MangaBuffAccount, TaskType) -> Unit,
     onStopAccount: (MangaBuffAccount) -> Unit,
     onStopAll: () -> Unit,
@@ -417,6 +419,7 @@ fun AccountsTab(
             items(accounts, key = { it.id }) { account ->
                 AccountCard(
                     account = account,
+                    battleTarget = battleTarget,
                     onRunTask = { type -> onRunTask(account, type) },
                     onStopAccount = { onStopAccount(account) },
                     onDelete = { onDelete(account) },
@@ -433,6 +436,7 @@ fun AccountsTab(
 @Composable
 fun AccountCard(
     account: MangaBuffAccount,
+    battleTarget: Int,
     onRunTask: (TaskType) -> Unit,
     onStopAccount: () -> Unit,
     onDelete: () -> Unit,
@@ -664,7 +668,7 @@ fun AccountCard(
                         }
                     }
 
-                    TaskSwitchRow("🃏 Бои", "${dailyBattles} побед", account.battleEnabled) { b ->
+                    TaskSwitchRow("🃏 Бои", "${battleTarget}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
                     }
                     TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
@@ -1059,6 +1063,35 @@ fun LogsTab(
     logs: List<LogEntry>,
     onClearLogs: () -> Unit
 ) {
+    val visibleLogs = remember(logs) {
+        logs.filter { entry ->
+            val m = entry.message.removePrefix("BG:").trim()
+            m.startsWith("SERVICE_") ||
+                m.startsWith("WAKELOCK_") ||
+                m.startsWith("SCREEN_") ||
+                m.startsWith("HEARTBEAT") ||
+                m.startsWith("NATIVE_HEARTBEAT") ||
+                m.startsWith("BACKGROUND_") ||
+                m.startsWith("AUTOMATION_") ||
+                m.startsWith("NO_UI_ATTACHMENT") ||
+                m.startsWith("RENDERER_") ||
+                m.startsWith("START_REQUEST") ||
+                m.startsWith("START_ALL_REQUEST") ||
+                m.startsWith("SERVICE_START") ||
+                m.startsWith("SERVICE_START_ALL") ||
+                m.startsWith("SERVICE_DESTROYED") ||
+                m.startsWith("ACCOUNT_START") ||
+                m.startsWith("ACCOUNT_FINISHED") ||
+                m.startsWith("ACCOUNT_ABORTED") ||
+                m.startsWith("ACCOUNT_CANCELLED") ||
+                m.startsWith("SERVICE_CANCELLED") ||
+                m.startsWith("SERVICE_FAILED") ||
+                m.startsWith("STOP_ALL") ||
+                m.startsWith("STOP_ACCOUNT") ||
+                m.startsWith("RESTORE_PERSISTED_RUNS") ||
+                m.startsWith("ALL_TASKS_STOPPED_BY_USER")
+        }
+    }
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -1075,9 +1108,9 @@ fun LogsTab(
         }
     }
 
-    LaunchedEffect(logs.size) {
-        if (isAtBottom.value && logs.isNotEmpty()) {
-            listState.animateScrollToItem(logs.size - 1)
+    LaunchedEffect(visibleLogs.size) {
+        if (isAtBottom.value && visibleLogs.isNotEmpty()) {
+            listState.animateScrollToItem(visibleLogs.size - 1)
         }
     }
 
@@ -1087,11 +1120,11 @@ fun LogsTab(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Логи (${logs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Тест фонового режима (${visibleLogs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = onClearLogs,
-                    enabled = logs.isNotEmpty()
+                    enabled = visibleLogs.isNotEmpty()
                 ) {
                     Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -1099,7 +1132,7 @@ fun LogsTab(
                 }
                 OutlinedButton(
                     onClick = {
-                        val fullText = logs.joinToString("\n") { log ->
+                        val fullText = visibleLogs.joinToString("\n") { log ->
                             val timeStr = dateFormat.format(Date(log.timestamp))
                             val levelStr = if (log.isError) "ERROR" else "INFO"
                             val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
@@ -1120,7 +1153,7 @@ fun LogsTab(
             }
         }
 
-        if (logs.isEmpty()) {
+        if (visibleLogs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Логи пока пусты", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
             }
@@ -1130,7 +1163,7 @@ fun LogsTab(
                 modifier = Modifier.fillMaxSize().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(logs) { log ->
+                items(visibleLogs) { log ->
                     val timeStr = dateFormat.format(Date(log.timestamp))
                     val levelStr = if (log.isError) "ERROR" else "INFO"
                     val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
