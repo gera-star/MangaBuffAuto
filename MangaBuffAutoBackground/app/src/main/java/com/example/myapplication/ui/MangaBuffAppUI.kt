@@ -1144,7 +1144,7 @@ fun LogsTab(
                         clipboard.setPrimaryClip(clip)
                         Toast.makeText(context, "Лог скопирован", Toast.LENGTH_SHORT).show()
                     },
-                    enabled = logs.isNotEmpty()
+                    enabled = visibleLogs.isNotEmpty()
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
