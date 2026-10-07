@@ -340,6 +340,233 @@ class MangaBuffAutomation(
         }, 120L)
     }
 
+    /**
+     * Dispatches a real local WebView tap using physical pixels.
+     * AccessibilityNodeInfo bounds are screen coordinates in physical pixels,
+     * so this helper intentionally does NOT apply WebView density conversion.
+     */
+    private fun dispatchNativeLocalTap(
+        accountUsername: String,
+        webView: WebView,
+        localX: Float,
+        localY: Float
+    ) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post {
+                dispatchNativeLocalTap(accountUsername, webView, localX, localY)
+            }
+            return
+        }
+
+        if (!webView.isAttachedToWindow) {
+            log(accountUsername, "ADS: ACCESSIBILITY_TAP_SKIPPED webview_detached", true)
+            return
+        }
+
+        val px = localX.coerceIn(1f, (webView.width - 2).coerceAtLeast(1).toFloat())
+        val py = localY.coerceIn(1f, (webView.height - 2).coerceAtLeast(1).toFloat())
+        val downTime = SystemClock.uptimeMillis()
+
+        val downEvent = MotionEvent.obtain(
+            downTime, downTime, MotionEvent.ACTION_DOWN, px, py, 0
+        ).apply {
+            source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+        }
+
+        val downConsumed = try {
+            webView.dispatchTouchEvent(downEvent)
+        } finally {
+            downEvent.recycle()
+        }
+
+        mainHandler.postDelayed({
+            if (!webView.isAttachedToWindow) {
+                log(accountUsername, "ADS: ACCESSIBILITY_TAP_UP_SKIPPED webview_detached", true)
+                return@postDelayed
+            }
+
+            val upTime = SystemClock.uptimeMillis()
+            val upEvent = MotionEvent.obtain(
+                downTime, upTime, MotionEvent.ACTION_UP, px, py, 0
+            ).apply {
+                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            }
+
+            val upConsumed = try {
+                webView.dispatchTouchEvent(upEvent)
+            } finally {
+                upEvent.recycle()
+            }
+
+            log(
+                accountUsername,
+                "ADS: ACCESSIBILITY_NATIVE_TAP localX=" + px +
+                    " localY=" + py +
+                    " downConsumed=" + downConsumed +
+                    " upConsumed=" + upConsumed
+            )
+        }, 120L)
+    }
+
+    /**
+     * Finds the real Yandex rewarded "Получить награду" control through the
+     * Android accessibility tree exposed by Chromium/WebView. This is needed
+     * because the rewarded UI can live in a cross-origin iframe invisible to
+     * page JavaScript.
+     */
+    private fun autoClaimRewardFromAccessibility(
+        accountUsername: String,
+        webView: WebView
+    ): Boolean {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post {
+                autoClaimRewardFromAccessibility(accountUsername, webView)
+            }
+            return false
+        }
+
+        if (!webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) {
+            log(
+                accountUsername,
+                "ADS: ACCESSIBILITY_SCAN_SKIP attached=" + webView.isAttachedToWindow +
+                    " size=" + webView.width + "x" + webView.height,
+                true
+            )
+            return false
+        }
+
+        val root = try {
+            webView.createAccessibilityNodeInfo()
+        } catch (e: Exception) {
+            log(
+                accountUsername,
+                "ADS: ACCESSIBILITY_SCAN_ERROR root=" + e.message,
+                true
+            )
+            return false
+        }
+
+        val queue = ArrayDeque<Pair<android.view.accessibility.AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+
+        data class Candidate(
+            val node: android.view.accessibility.AccessibilityNodeInfo,
+            val label: String,
+            val bounds: android.graphics.Rect,
+            val exact: Boolean,
+            val clickable: Boolean
+        )
+
+        val candidates = mutableListOf<Candidate>()
+        var visited = 0
+        val maxVisited = 600
+
+        while (queue.isNotEmpty() && visited < maxVisited) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+
+            val label = buildString {
+                node.text?.toString()?.let { append(it) }
+                node.contentDescription?.toString()?.let {
+                    if (isNotEmpty()) append(" ")
+                    append(it)
+                }
+            }.replace("\\s+".toRegex(), " ").trim()
+
+            val normalized = label.lowercase()
+            val exact = normalized.contains("получить награду")
+            val rewardLike = exact ||
+                (normalized.contains("получить") && normalized.contains("наград")) ||
+                normalized.contains("claim reward") ||
+                normalized.contains("get reward")
+
+            if (rewardLike && node.isVisibleToUser) {
+                val bounds = android.graphics.Rect()
+                try {
+                    node.getBoundsInScreen(bounds)
+                } catch (_: Exception) {
+                    bounds.setEmpty()
+                }
+
+                if (!bounds.isEmpty) {
+                    candidates += Candidate(
+                        node = node,
+                        label = label,
+                        bounds = bounds,
+                        exact = exact,
+                        clickable = node.isClickable
+                    )
+                }
+            }
+
+            if (depth < 14) {
+                for (i in 0 until node.childCount) {
+                    try {
+                        node.getChild(i)?.let { child ->
+                            queue.add(child to (depth + 1))
+                        }
+                    } catch (_: Exception) {
+                        // The ad accessibility subtree can change during transitions.
+                    }
+                }
+            }
+        }
+
+        log(
+            accountUsername,
+            "ADS: ACCESSIBILITY_SCAN visited=" + visited +
+                " candidates=" + candidates.size
+        )
+
+        val candidate = candidates.sortedWith(
+            compareByDescending<Candidate> { it.exact }
+                .thenByDescending { it.clickable }
+                .thenBy { it.bounds.width().toLong() * it.bounds.height().toLong() }
+        ).firstOrNull() ?: return false
+
+        log(
+            accountUsername,
+            "ADS: ACCESSIBILITY_REWARD_FOUND text=" + candidate.label.take(180) +
+                " clickable=" + candidate.clickable +
+                " bounds=" + candidate.bounds.toShortString()
+        )
+
+        try {
+            if (candidate.node.performAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
+                )
+            ) {
+                log(
+                    accountUsername,
+                    "ADS: ACCESSIBILITY_REWARD_ACTION_CLICK success=true"
+                )
+                return true
+            }
+        } catch (e: Exception) {
+            log(
+                accountUsername,
+                "ADS: ACCESSIBILITY_REWARD_ACTION_CLICK error=" + e.message,
+                true
+            )
+        }
+
+        val location = IntArray(2)
+        webView.getLocationOnScreen(location)
+        val centerX = candidate.bounds.centerX().toFloat() - location[0]
+        val centerY = candidate.bounds.centerY().toFloat() - location[1]
+
+        log(
+            accountUsername,
+            "ADS: ACCESSIBILITY_REWARD_ACTION_CLICK fallback_tap " +
+                "screen=" + candidate.bounds.centerX() + "," + candidate.bounds.centerY() +
+                " webViewOrigin=" + location[0] + "," + location[1] +
+                " local=" + centerX + "," + centerY
+        )
+
+        dispatchNativeLocalTap(accountUsername, webView, centerX, centerY)
+        return true
+    }
+
     private fun dispatchNativeSwipe(
         webView: WebView,
         x1: Float,
@@ -1994,6 +2221,42 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun onAutoRewardClaimRequested() {
+                    mainHandler.post {
+                        val success = try {
+                            autoClaimRewardFromAccessibility(account.username, webView)
+                        } catch (e: Exception) {
+                            log(
+                                account.username,
+                                "ADS: ACCESSIBILITY_REWARD_EXCEPTION error=" + e.message,
+                                true
+                            )
+                            false
+                        }
+
+                        log(
+                            account.username,
+                            "ADS: ACCESSIBILITY_REWARD_REQUEST result=" + success
+                        )
+
+                        try {
+                            webView.evaluateJavascript(
+                                "window.__mbAdsAccessibilityClaimResult && " +
+                                    "window.__mbAdsAccessibilityClaimResult(" +
+                                    success + ");",
+                                null
+                            )
+                        } catch (e: Exception) {
+                            log(
+                                account.username,
+                                "ADS: ACCESSIBILITY_CALLBACK_ERROR error=" + e.message,
+                                true
+                            )
+                        }
+                    }
+                }
+
+                @JavascriptInterface
                 fun onCloseTapRequested(x: Float, y: Float, source: String) {
                     log(
                         account.username,
@@ -2053,6 +2316,36 @@ class MangaBuffAutomation(
                                 // We intentionally never synthesize the rewarded-ad tap.
                                 var closeWasVisible = false;
                                 var closeAvailableLogged = false;
+
+                                var rewardClaimAttempts = 0;
+                                var rewardClaimPending = false;
+                                var rewardClaimFinished = false;
+
+                                window.__mbAdsAccessibilityClaimResult = function(success) {
+                                    rewardClaimPending = false;
+
+                                    if (finished) return;
+
+                                    AndroidAds.onStateLog(
+                                        "ACCESSIBILITY_REWARD_RESULT",
+                                        "success=" + !!success +
+                                            " attempts=" + rewardClaimAttempts
+                                    );
+
+                                    if (success) {
+                                        rewardClaimFinished = true;
+                                        clearInterval(watchTimer);
+
+                                        AndroidAds.onStateLog(
+                                            "REWARD_BUTTON_CLICKED",
+                                            "source=ANDROID_ACCESSIBILITY"
+                                        );
+
+                                        setTimeout(function() {
+                                            verifyReward(0);
+                                        }, 750);
+                                    }
+                                };
 
                                 function textOf(el) {
                                     return (el && (el.innerText || el.textContent) || "")
@@ -2697,14 +2990,43 @@ class MangaBuffAutomation(
                                     });
                                 }
 
+                                function requestRewardClaim() {
+                                    if (
+                                        finished ||
+                                        rewardClaimFinished ||
+                                        rewardClaimPending ||
+                                        rewardClaimAttempts >= 20
+                                    ) {
+                                        return;
+                                    }
+
+                                    rewardClaimPending = true;
+                                    rewardClaimAttempts++;
+
+                                    AndroidAds.onStateLog(
+                                        "REWARD_BUTTON_SEARCH",
+                                        "attempt=" + rewardClaimAttempts +
+                                            " source=ANDROID_ACCESSIBILITY"
+                                    );
+
+                                    try {
+                                        AndroidAds.onAutoRewardClaimRequested();
+                                    } catch (e) {
+                                        rewardClaimPending = false;
+                                        AndroidAds.onStateLog(
+                                            "ACCESSIBILITY_REWARD_REQUEST_EXCEPTION",
+                                            "error=" + (e && e.message ? e.message : String(e))
+                                        );
+                                    }
+                                }
+
                                 function startAdMonitoring() {
                                     /*
-                                     * The rewarded ad is already opened by the real MangaBuff
-                                     * click handler. Do not intercept Yandex rendering and do not
-                                     * synthesize a reward. We only keep a small observer alive:
-                                     *   1) allow the real fullscreen ad to run,
-                                     *   2) wait at least 32s before looking for close/reward state,
-                                     *   3) confirm the real +7 diamond reward from the balance.
+                                     * The real MangaBuff handler has already opened the Yandex
+                                     * Rewarded ad. After the minimum viewing period, the fullscreen
+                                     * reward control may be inside a cross-origin iframe and therefore
+                                     * invisible to page JavaScript. Use Android accessibility to press
+                                     * the actual "Получить награду" control.
                                      */
                                     var adStartedAt = Date.now();
                                     var ownWatchDurationMs = 32000;
@@ -2716,7 +3038,7 @@ class MangaBuffAutomation(
                                     );
 
                                     watchTimer = setInterval(function() {
-                                        if (finished) {
+                                        if (finished || rewardClaimFinished) {
                                             clearInterval(watchTimer);
                                             return;
                                         }
@@ -2737,70 +3059,23 @@ class MangaBuffAutomation(
                                             return;
                                         }
 
-                                        var close = findCloseButton();
-                                        var closeVisible = isVisibleElement(close);
+                                        requestRewardClaim();
 
-                                        AndroidAds.onStateLog(
-                                            "CLOSE_SEARCH",
-                                            "elapsed=" + Math.floor(elapsed / 1000) +
-                                            "s found=" + !!close +
-                                            " visible=" + closeVisible
-                                        );
-
-                                        if (closeVisible) {
-                                            closeWasVisible = true;
-
-                                            if (!closeAvailableLogged) {
-                                                closeAvailableLogged = true;
-
-                                                var closeRect = null;
-                                                try {
-                                                    closeRect = getTopViewportRect(close);
-                                                } catch (e) {}
-
-                                                AndroidAds.onStateLog(
-                                                    "AD_CLOSE_AVAILABLE",
-                                                    "elapsed=" + Math.floor(elapsed / 1000) +
-                                                    "s action=MANUAL_REQUIRED" +
-                                                    (closeRect
-                                                        ? " x=" + (closeRect.left + closeRect.width / 2) +
-                                                          " y=" + (closeRect.top + closeRect.height / 2) +
-                                                          " rect=" + closeRect.width + "x" + closeRect.height
-                                                        : " rect=unavailable")
-                                                );
-                                            }
-                                        } else if (closeWasVisible) {
-                                            closeWasVisible = false;
+                                        if (
+                                            rewardClaimAttempts >= 20 &&
+                                            !rewardClaimPending &&
+                                            !rewardClaimFinished &&
+                                            !window.__mbAdsRewardClaimTimeoutLogged
+                                        ) {
+                                            window.__mbAdsRewardClaimTimeoutLogged = true;
+                                            AndroidAds.onStateLog(
+                                                "AD_REWARD_STAGE_TIMEOUT",
+                                                "accessibility_reward_control_not_found"
+                                            );
                                             clearInterval(watchTimer);
-
-                                            AndroidAds.onStateLog(
-                                                "AD_CLOSE_USER_CONFIRMED",
-                                                "source=DOM_DISAPPEARED elapsed=" +
-                                                    Math.floor(elapsed / 1000) + "s"
-                                            );
-
-                                            verifyReward(0);
-                                            return;
-                                        }
-
-                                        /*
-                                         * The live Yandex fullscreen can be cross-origin, so its
-                                         * close button may be invisible to the parent document.
-                                         * Start server verification after the minimum viewing time;
-                                         * success is accepted only when MangaBuff reports +7.
-                                         */
-                                        if (!window.__mbAdsManualVerifyStarted) {
-                                            window.__mbAdsManualVerifyStarted = true;
-
-                                            AndroidAds.onStateLog(
-                                                "AD_CLOSE_MANUAL_REQUIRED",
-                                                "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s DEBUG_VISIBLE_AD=true; waiting_for_real_user_close"
-                                            );
-
                                             verifyReward(0);
                                         }
-                                    }, 250);
+                                    }, 750);
                                 }
 
                                 function tryFindAndClick() {
