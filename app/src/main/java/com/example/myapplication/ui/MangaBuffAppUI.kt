@@ -391,7 +391,6 @@ fun AccountsTab(
             items(accounts, key = { it.id }) { account ->
                 AccountCard(
                     account = account,
-                    battleTarget = battleTarget,
                     onRunTask = { type -> onRunTask(account, type) },
                     onStopAccount = { onStopAccount(account) },
                     onDelete = { onDelete(account) },
@@ -408,7 +407,6 @@ fun AccountsTab(
 @Composable
 fun AccountCard(
     account: MangaBuffAccount,
-    battleTarget: Int,
     onRunTask: (TaskType) -> Unit,
     onStopAccount: () -> Unit,
     onDelete: () -> Unit,
@@ -641,7 +639,7 @@ fun AccountCard(
                         }
                     }
 
-                    TaskSwitchRow("🃏 Бои", "$battleTarget(боев)/$dailyBattles победы", account.battleEnabled) { b ->
+                    TaskSwitchRow("🃏 Бои", "$dailyBattleAttempts боев / $dailyBattles победы", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
                     }
                     TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
@@ -1038,30 +1036,20 @@ fun LogsTab(
 ) {
     val visibleLogs = remember(logs) {
         logs.filter { entry ->
-            val raw = entry.message
-            val m = raw.removePrefix("BG:").trim()
-
-            m.startsWith("SERVICE_") ||
-                m.startsWith("WAKELOCK_") ||
+            val m = entry.message
+            entry.component == "BG" ||
+                m.startsWith("BG:") ||
+                m.contains("[BG]") ||
+                m.startsWith("HEARTBEAT") ||
+                m.startsWith("BACKGROUND_") ||
+                m.startsWith("SCROLL_PROGRESS") ||
+                m.startsWith("END_CANDIDATE") ||
+                m.startsWith("BOTTOM_STABILIZATION") ||
                 m.startsWith("SCREEN_OFF") ||
                 m.startsWith("SCREEN_ON") ||
-                m.startsWith("SCREEN_CHANGE") ||
-                m.startsWith("HEARTBEAT") ||
-                m.startsWith("NATIVE_HEARTBEAT") ||
-                m.startsWith("BACKGROUND_") ||
-                m.startsWith("AUTOMATION_") ||
-                m.startsWith("NO_UI_ATTACHMENT") ||
                 m.startsWith("RENDERER_") ||
-                m.startsWith("START_REQUEST") ||
-                m.startsWith("SERVICE_START") ||
-                m.startsWith("SERVICE_DESTROYED") ||
-                m.startsWith("ACCOUNT_START") ||
-                m.startsWith("ACCOUNT_FINISHED") ||
-                m.startsWith("ACCOUNT_ABORTED") ||
-                m.startsWith("ACCOUNT_CANCELLED") ||
-                m.startsWith("RUNNER_STOP") ||
-                m.startsWith("STOP_ALL") ||
-                m.startsWith("STOP_ACCOUNT")
+                m.contains("WAKELOCK") ||
+                m.contains("SERVICE_")
         }
     }
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
@@ -1092,7 +1080,7 @@ fun LogsTab(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Тест фонового режима (${visibleLogs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Логи (${visibleLogs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = onClearLogs,
