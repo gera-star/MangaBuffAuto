@@ -1064,16 +1064,26 @@ fun LogsTab(
     logs: List<LogEntry>,
     onClearLogs: () -> Unit
 ) {
-    var adsOnly by remember { mutableStateOf(true) }
+    var logFilter by remember { mutableStateOf("comments") }
 
-    val visibleLogs = remember(logs, adsOnly) {
+    val visibleLogs = remember(logs, logFilter) {
         logs.filter { entry ->
             val message = entry.message.removePrefix("BG:").trim()
-            val isAdLog =
-                message.startsWith("TASK: ADS") ||
-                    message.startsWith("ADS:")
 
-            if (adsOnly) isAdLog else !isAdLog
+            when (logFilter) {
+                "comments" ->
+                    message.startsWith("TASK: COMMENT") ||
+                        message.startsWith("COMMENT:")
+                "ads" ->
+                    message.startsWith("TASK: ADS") ||
+                        message.startsWith("ADS:")
+                else -> {
+                    !message.startsWith("TASK: COMMENT") &&
+                        !message.startsWith("COMMENT:") &&
+                        !message.startsWith("TASK: ADS") &&
+                        !message.startsWith("ADS:")
+                }
+            }
         }
     }
 
@@ -1093,7 +1103,7 @@ fun LogsTab(
         }
     }
 
-    LaunchedEffect(visibleLogs.size, adsOnly) {
+    LaunchedEffect(visibleLogs.size, logFilter) {
         if (isAtBottom.value && visibleLogs.isNotEmpty()) {
             listState.animateScrollToItem(visibleLogs.size - 1)
         }
@@ -1102,7 +1112,11 @@ fun LogsTab(
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
             Text(
-                if (adsOnly) "Реклама (" + visibleLogs.size + ")" else "Всё остальное (" + visibleLogs.size + ")",
+                when (logFilter) {
+                    "comments" -> "Комментарии (" + visibleLogs.size + ")"
+                    "ads" -> "Реклама (" + visibleLogs.size + ")"
+                    else -> "Всё остальное (" + visibleLogs.size + ")"
+                },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -1111,10 +1125,13 @@ fun LogsTab(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(onClick = { adsOnly = true }) {
+                OutlinedButton(onClick = { logFilter = "comments" }) {
+                    Text("Комментарии")
+                }
+                OutlinedButton(onClick = { logFilter = "ads" }) {
                     Text("Реклама")
                 }
-                OutlinedButton(onClick = { adsOnly = false }) {
+                OutlinedButton(onClick = { logFilter = "other" }) {
                     Text("Всё остальное")
                 }
             }
@@ -1142,7 +1159,7 @@ fun LogsTab(
                         }
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         val clip = android.content.ClipData.newPlainText(
-                            if (adsOnly) "MangaBuff Ads Logs" else "MangaBuff Other Logs",
+                            when (logFilter) { "comments" -> "MangaBuff Comment Logs"; "ads" -> "MangaBuff Ads Logs"; else -> "MangaBuff Other Logs" },
                             fullText
                         )
                         clipboard.setPrimaryClip(clip)
@@ -1160,7 +1177,7 @@ fun LogsTab(
         if (visibleLogs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    if (adsOnly) "Рекламных логов пока нет" else "Остальных логов пока нет",
+                    when (logFilter) { "comments" -> "Логов комментариев пока нет"; "ads" -> "Рекламных логов пока нет"; else -> "Остальных логов пока нет" },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.outline
                 )
