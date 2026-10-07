@@ -2699,22 +2699,15 @@ class MangaBuffAutomation(
 
                                 function startAdMonitoring() {
                                     /*
-                                     * Do not depend on Yandex's internal countdown.
-                                     * MangaBuff/Yandex markup changes frequently, while
-                                     * the required viewing window is 30 seconds.
-                                     *
-                                     * Our flow is deliberately simple:
-                                     *   WATCH_CLICKED
-                                     *       -> own 30s timer
-                                     *       -> find close button
-                                     *       -> click close
-                                     *       -> verify reward
-                                     *
-                                     * The Yandex timer is only diagnostic now.
+                                     * The rewarded ad is already opened by the real MangaBuff
+                                     * click handler. Do not intercept Yandex rendering and do not
+                                     * synthesize a reward. We only keep a small observer alive:
+                                     *   1) allow the real fullscreen ad to run,
+                                     *   2) wait at least 32s before looking for close/reward state,
+                                     *   3) confirm the real +7 diamond reward from the balance.
                                      */
                                     var adStartedAt = Date.now();
                                     var ownWatchDurationMs = 32000;
-                                    var hardTimeoutMs = 35000;
                                     var lastSecondLogged = -1;
 
                                     AndroidAds.onStateLog(
@@ -2732,161 +2725,28 @@ class MangaBuffAutomation(
                                         var remainingMs = Math.max(0, ownWatchDurationMs - elapsed);
                                         var remainingSec = Math.ceil(remainingMs / 1000);
 
-                                        // Log only when the displayed second changes.
                                         if (remainingSec !== lastSecondLogged) {
                                             lastSecondLogged = remainingSec;
-
-                                            if (remainingSec > 0) {
-                                                AndroidAds.onStateLog(
-                                                    "OUR_TIMER",
-                                                    "remaining=" + remainingSec + "s"
-                                                );
-                                            } else {
-                                                AndroidAds.onStateLog(
-                                                    "OUR_TIMER",
-                                                    "remaining=0s close_search=true"
-                                                );
-                                            }
+                                            AndroidAds.onStateLog(
+                                                "OUR_TIMER",
+                                                "remaining=" + remainingSec + "s"
+                                            );
                                         }
 
-                                        /*
-                                         * Before 30 seconds we intentionally do not click
-                                         * anything, even if Yandex already exposes the close
-                                         * control. This is our hard minimum viewing period.
-                                         */
                                         if (elapsed < ownWatchDurationMs) {
                                             return;
                                         }
 
-                                        var yandexSeconds = readYandexTimerSeconds();
-                                        if (yandexSeconds === null && !window.__mbYandexRewardHookState.rewarded) {
-                                            logYandexSurfaceDiagnostics(false);
-                                        }
-                                        var yandexRewarded = !!(
-                                            window.__mbYandexRewardHookState &&
-                                            window.__mbYandexRewardHookState.rewarded
-                                        );
-
-                                        /*
-                                         * The live RSYA fullscreen used by MangaBuff is normally
-                                         * the 30-second rewarded format. Its controls can live in
-                                         * a cross-origin iframe, so the parent page cannot inspect
-                                         * the Yandex timer/callback. After our 32s minimum, allow
-                                         * a short safety margin and perform the real native close
-                                         * tap. The reward is considered successful only after the
-                                         * MangaBuff balance confirms the +7 diamonds.
-                                         */
-                                        var yandexReady = yandexRewarded ||
-                                            (yandexSeconds !== null && yandexSeconds <= 0) ||
-                                            elapsed >= ownWatchDurationMs;
-
-                                        if (!yandexReady) {
-                                            AndroidAds.onStateLog(
-                                                "AD_WAIT_YANDEX_REWARD",
-                                                "ownElapsed=" + Math.floor(elapsed / 1000) +
-                                                "s yandexTimer=" + (yandexSeconds === null ? "?" : yandexSeconds) +
-                                                " rewarded=" + yandexRewarded
-                                            );
-
-                                            if (elapsed >= hardTimeoutMs && !yandexReady) {
-                                                /*
-                                                 * The Yandex timer/callback is not always observable
-                                                 * from the MangaBuff document (the live ad can be hosted
-                                                 * in a cross-origin frame). Do not deadlock the task in
-                                                 * that case. 65s is above the documented 60s maximum
-                                                 * rewarded countdown, so use the native close as a final
-                                                 * watchdog and let the server balance decide whether the
-                                                 * reward actually happened.
-                                                 */
-                                                clearInterval(watchTimer);
-
-                                                AndroidAds.onStateLog(
-                                                    "AD_HARD_TIMEOUT_CLOSE",
-                                                    "elapsed=" + Math.floor(elapsed / 1000) +
-                                                    "s yandexTimer=" +
-                                                    (yandexSeconds === null ? "?" : yandexSeconds) +
-                                                    " rewarded=" + yandexRewarded
-                                                );
-
-                                                /*
-                                                 * The ad may be hosted in a cross-origin fullscreen iframe.
-                                                 * At this point the parent document cannot safely press its X.
-                                                 * Do not synthesize a rewarded-ad click. Instead keep the
-                                                 * session alive, continue checking the real server balance,
-                                                 * and wait for the user to close the visible ad.
-                                                 */
-                                                AndroidAds.onStateLog(
-                                                    "AD_HARD_TIMEOUT_WAIT_USER",
-                                                    "elapsed=" + Math.floor(elapsed / 1000) +
-                                                    "s action=MANUAL_REQUIRED"
-                                                );
-
-                                                clearInterval(watchTimer);
-
-                                                /*
-                                                 * Start reward verification immediately. If MangaBuff has
-                                                 * already credited +7, this finishes without requiring DOM
-                                                 * access to the cross-origin Yandex iframe.
-                                                 */
-                                                verifyReward(0);
-
-                                                /*
-                                                 * Keep a lightweight diagnostic watcher alive so a real
-                                                 * user close can be recorded even when the close button
-                                                 * itself is inaccessible to the parent document.
-                                                 */
-                                                var userCloseWatchStartedAt = Date.now();
-                                                var userCloseWatch = null;
-
-                                                function watchForUserCloseAfterTimeout() {
-                                                    if (finished) {
-                                                        if (userCloseWatch) clearTimeout(userCloseWatch);
-                                                        return;
-                                                    }
-
-                                                    var currentClose = findCloseButton();
-                                                    var stillVisible = isVisibleElement(currentClose);
-
-                                                    if (!stillVisible) {
-                                                        AndroidAds.onStateLog(
-                                                            "AD_CLOSE_USER_CONFIRMED",
-                                                            "source=POST_TIMEOUT_DOM_DISAPPEARED"
-                                                        );
-                                                        return;
-                                                    }
-
-                                                    if (Date.now() - userCloseWatchStartedAt >= 30000) {
-                                                        AndroidAds.onStateLog(
-                                                            "AD_CLOSE_USER_WAIT_TIMEOUT",
-                                                            "source=POST_TIMEOUT"
-                                                        );
-                                                        return;
-                                                    }
-
-                                                    userCloseWatch = setTimeout(
-                                                        watchForUserCloseAfterTimeout,
-                                                        250
-                                                    );
-                                                                 var close = findCloseButton();
+                                        var close = findCloseButton();
                                         var closeVisible = isVisibleElement(close);
 
                                         AndroidAds.onStateLog(
                                             "CLOSE_SEARCH",
                                             "elapsed=" + Math.floor(elapsed / 1000) +
                                             "s found=" + !!close +
-                                            " visible=" + closeVisible +
-                                            " yandexTimer=" + (yandexSeconds === null ? "?" : yandexSeconds) +
-                                            " rewarded=" + yandexRewarded
+                                            " visible=" + closeVisible
                                         );
 
-                                        /*
-                                         * Keep the monitoring loop alive after the X becomes available.
-                                         * Previously we stopped the loop at this point, which meant that
-                                         * a real user close could not be reliably observed afterwards.
-                                         *
-                                         * We only diagnose the control and its geometry here. The actual
-                                         * rewarded-ad close remains a real user interaction.
-                                         */
                                         if (closeVisible) {
                                             closeWasVisible = true;
 
@@ -2909,20 +2769,9 @@ class MangaBuffAutomation(
                                                         : " rect=unavailable")
                                                 );
                                             }
-
-                                            return;
-                                        }
-
-                                        /*
-                                         * If the close control was previously visible and is now gone,
-                                         * record that the ad surface changed after the user interaction.
-                                         * The reward is still accepted only after the server confirms +7.
-                                         *
-                                         * For cross-origin Yandex iframes this is best-effort: the parent
-                                         * document may not be able to see the internal close state.
-                                         */
-                                        if (closeWasVisible && !closeVisible) {
+                                        } else if (closeWasVisible) {
                                             closeWasVisible = false;
+                                            clearInterval(watchTimer);
 
                                             AndroidAds.onStateLog(
                                                 "AD_CLOSE_USER_CONFIRMED",
@@ -2934,35 +2783,23 @@ class MangaBuffAutomation(
                                             return;
                                         }
 
-                                       250
-                                                );
-                                            }
-
-                                            waitForRealUserClose();
-                                            return;
-                                        }
-
+                                        /*
+                                         * The live Yandex fullscreen can be cross-origin, so its
+                                         * close button may be invisible to the parent document.
+                                         * Start server verification after the minimum viewing time;
+                                         * success is accepted only when MangaBuff reports +7.
+                                         */
                                         if (!window.__mbAdsManualVerifyStarted) {
                                             window.__mbAdsManualVerifyStarted = true;
 
-                                            /*
-                                             * TEMP DEBUG MODE:
-                                             * The automation WebView is intentionally visible and the
-                                             * native fallback tap is disabled here. This lets the developer
-                                             * physically see the real Yandex fullscreen ad and press its
-                                             * real X/close control. Reward confirmation still comes only
-                                             * from MangaBuff server balance (+7 diamonds).
-                                             */
                                             AndroidAds.onStateLog(
                                                 "AD_CLOSE_MANUAL_REQUIRED",
                                                 "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s yandexReady=true; DEBUG_VISIBLE_AD=true; waiting_for_real_user_close"
+                                                "s DEBUG_VISIBLE_AD=true; waiting_for_real_user_close"
                                             );
 
                                             verifyReward(0);
                                         }
-
-
                                     }, 250);
                                 }
 
