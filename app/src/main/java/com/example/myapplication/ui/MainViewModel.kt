@@ -296,6 +296,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     acc.copy(
                         dailyStatsDay = stats.day,
                         dailyBattles = stats.battles,
+                        dailyBattleAttempts = stats.battleAttempts,
                         dailyQuiz = stats.quiz,
                         dailyAds = stats.ads,
                         dailyMineOre = stats.mineOre,
