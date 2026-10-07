@@ -31,6 +31,65 @@ import com.example.myapplication.ui.theme.MyApplicationTheme
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
+    private var edgeBackDownX = 0f
+    private var edgeBackDownY = 0f
+    private var edgeBackDownAt = 0L
+    private var edgeBackTracking = false
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        val density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val edgePx = (40f * density).coerceAtLeast(28f)
+        val triggerPx = (64f * density).coerceAtLeast(48f)
+
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                val fromLeft = event.x <= edgePx
+                val fromRight = event.x >= (resources.displayMetrics.widthPixels - edgePx)
+                edgeBackTracking = fromLeft || fromRight
+                if (edgeBackTracking) {
+                    edgeBackDownX = event.x
+                    edgeBackDownY = event.y
+                    edgeBackDownAt = android.os.SystemClock.uptimeMillis()
+                }
+            }
+
+            android.view.MotionEvent.ACTION_UP,
+            android.view.MotionEvent.ACTION_CANCEL -> {
+                if (edgeBackTracking && event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                    val dx = event.x - edgeBackDownX
+                    val dy = event.y - edgeBackDownY
+                    val duration = android.os.SystemClock.uptimeMillis() - edgeBackDownAt
+                    val fromLeft = edgeBackDownX <= edgePx
+                    val fromRight = edgeBackDownX >= (resources.displayMetrics.widthPixels - edgePx)
+                    val towardCenter =
+                        (fromLeft && dx >= triggerPx) ||
+                            (fromRight && dx <= -triggerPx)
+                    val mostlyHorizontal =
+                        kotlin.math.abs(dy) <= kotlin.math.abs(dx) * 0.85f
+                    val shortGesture = duration <= 700L
+
+                    if (towardCenter && mostlyHorizontal && shortGesture) {
+                        val webView = AutomationWebViewRegistry.webViewsByAccount.value.values
+                            .firstOrNull { !it.isDestroyed }
+
+                        if (webView != null && webView.canGoBack()) {
+                            webView.goBack()
+                        } else {
+                            onBackPressedDispatcher.onBackPressed()
+                        }
+
+                        edgeBackTracking = false
+                        return true
+                    }
+                }
+
+                edgeBackTracking = false
+            }
+        }
+
+        return super.dispatchTouchEvent(event)
+    }
+
     private val requestNotificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
 
