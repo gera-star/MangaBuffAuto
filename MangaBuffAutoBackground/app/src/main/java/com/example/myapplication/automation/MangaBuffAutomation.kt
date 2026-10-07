@@ -1387,9 +1387,7 @@ class MangaBuffAutomation(
 
                 is TaskResult.BattleLost -> {
                     battleCount++
-                    // DailyStats currently stores wins, not attempts.
-                    // battleCount above tracks the number of completed rounds for this run.
-                    addDaily(account) { it }
+                    // Losses are completed rounds, but DailyStats currently stores wins only.
                     log(
                         account.username,
                         "BATTLE: RESULT=LOSS battles=" + battleCount +
