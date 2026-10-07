@@ -389,6 +389,7 @@ class MangaBuffAutomation(
             DailyStats(
                 day = account.dailyStatsDay,
                 battles = account.dailyBattles,
+                battleAttempts = account.dailyBattleAttempts,
                 quiz = account.dailyQuiz,
                 ads = account.dailyAds,
                 mineOre = account.dailyMineOre,
@@ -1210,10 +1211,12 @@ class MangaBuffAutomation(
                 is TaskResult.BattleWon -> {
                     battleCount++
                     winCount++
+                    addDaily(account) { it.copy(battleAttempts = it.battleAttempts + 1) }
                     log(account.username, "BATTLE: RESULT=WIN battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
                 }
                 is TaskResult.BattleLost -> {
                     battleCount++
+                    addDaily(account) { it.copy(battleAttempts = it.battleAttempts + 1) }
                     log(account.username, "BATTLE: RESULT=LOSS battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
                 }
                 is TaskResult.Cancelled -> return TaskResult.Cancelled
