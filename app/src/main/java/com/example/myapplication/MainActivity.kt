@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.FrameLayout
@@ -29,6 +30,47 @@ import com.example.myapplication.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
+
+    private var edgeBackDownX = 0f
+    private var edgeBackDownY = 0f
+    private var edgeBackDownAt = 0L
+    private var edgeBackTracking = false
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val edge = (32f * resources.displayMetrics.density).coerceAtLeast(24f)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val fromLeft = event.x <= edge
+                val fromRight = event.x >= (resources.displayMetrics.widthPixels - edge)
+                edgeBackTracking = fromLeft || fromRight
+                if (edgeBackTracking) {
+                    edgeBackDownX = event.x
+                    edgeBackDownY = event.y
+                    edgeBackDownAt = android.os.SystemClock.uptimeMillis()
+                }
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (edgeBackTracking && event.actionMasked == MotionEvent.ACTION_UP) {
+                    val dx = event.x - edgeBackDownX
+                    val dy = event.y - edgeBackDownY
+                    val duration = android.os.SystemClock.uptimeMillis() - edgeBackDownAt
+                    val horizontal = kotlin.math.abs(dx) >= (72f * resources.displayMetrics.density)
+                    val mostlyHorizontal = kotlin.math.abs(dy) <= kotlin.math.abs(dx) * 0.8f
+                    val shortGesture = duration <= 600L
+
+                    if (horizontal && mostlyHorizontal && shortGesture) {
+                        onBackPressedDispatcher.onBackPressed()
+                        edgeBackTracking = false
+                        return true
+                    }
+                }
+                edgeBackTracking = false
+            }
+        }
+
+        return super.dispatchTouchEvent(event)
+    }
 
     private val requestNotificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
