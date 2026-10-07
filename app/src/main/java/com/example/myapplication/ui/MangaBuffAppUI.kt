@@ -1112,7 +1112,7 @@ fun LogsTab(
             }
         }
 
-        if (logs.isEmpty()) {
+        if (visibleLogs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Логи пока пусты", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
             }
