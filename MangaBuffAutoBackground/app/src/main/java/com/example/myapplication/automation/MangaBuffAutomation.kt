@@ -2996,17 +2996,7 @@ class MangaBuffAutomation(
                                         : (window.innerWidth || 384);
                                 var VERIFIED_CLOSE_FALLBACK_X = Math.max(20.0, verifiedViewportWidth - 20.0);
                                 var VERIFIED_CLOSE_FALLBACK_Y = 20.0;
-                                var nativeCloseAttempts = 0;
-                                var nativeCloseRetryTimer = null;
-                                var nativeCloseRequested = false;
                                 var verifiedFallbackRequested = false;
-
-                                function finishNativeCloseRetryTimer() {
-                                    if (nativeCloseRetryTimer) {
-                                        clearTimeout(nativeCloseRetryTimer);
-                                        nativeCloseRetryTimer = null;
-                                    }
-                                }
 
                                 function verifyAfterNativeClose() {
                                     setTimeout(function() {
