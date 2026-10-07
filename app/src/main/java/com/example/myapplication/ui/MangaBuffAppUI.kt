@@ -131,6 +131,7 @@ fun MangaBuffAppUI(
             when (activeTab) {
                 0 -> AccountsTab(
                     accounts = accounts,
+                    battleTarget = settings.battleTargetCount,
                     onRunTask = { account, type -> viewModel.runTaskForAccount(account, type) },
                     onStopAccount = { account -> viewModel.stopAccountTask(account.id) },
                     onStopAll = { viewModel.stopAllTasks() },
@@ -346,6 +347,7 @@ fun MangaBuffAppUI(
 @Composable
 fun AccountsTab(
     accounts: List<MangaBuffAccount>,
+    battleTarget: Int,
     onRunTask: (MangaBuffAccount, TaskType) -> Unit,
     onStopAccount: (MangaBuffAccount) -> Unit,
     onStopAll: () -> Unit,
@@ -636,7 +638,7 @@ fun AccountCard(
                         }
                     }
 
-                    TaskSwitchRow("🃏 Бои", "${dailyBattles} побед", account.battleEnabled) { b ->
+                    TaskSwitchRow("🃏 Бои", "${battleTarget}/${dailyBattles} победы", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
                     }
                     TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
@@ -1028,6 +1030,16 @@ private fun CompactNumberField(
 
 @Composable
 fun LogsTab(
+
+    val visibleLogs = remember(logs) {
+        logs.filter { entry ->
+            entry.component == "BG" ||
+            entry.message.startsWith("BG:") ||
+            entry.message.contains("[BG]") ||
+            entry.message.startsWith("BACKGROUND_") ||
+            entry.message.startsWith("RENDERER_")
+        }
+    }
     logs: List<LogEntry>,
     onClearLogs: () -> Unit
 ) {
@@ -1047,9 +1059,9 @@ fun LogsTab(
         }
     }
 
-    LaunchedEffect(logs.size) {
-        if (isAtBottom.value && logs.isNotEmpty()) {
-            listState.animateScrollToItem(logs.size - 1)
+    LaunchedEffect(visibleLogs.size) {
+        if (isAtBottom.value && visibleLogs.isNotEmpty()) {
+            listState.animateScrollToItem(visibleLogs.size - 1)
         }
     }
 
@@ -1059,11 +1071,11 @@ fun LogsTab(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Логи (${logs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Логи (${visibleLogs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = onClearLogs,
-                    enabled = logs.isNotEmpty()
+                    enabled = visibleLogs.isNotEmpty()
                 ) {
                     Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -1071,7 +1083,7 @@ fun LogsTab(
                 }
                 OutlinedButton(
                     onClick = {
-                        val fullText = logs.joinToString("\n") { log ->
+                        val fullText = visibleLogs.joinToString("\n") { log ->
                             val timeStr = dateFormat.format(Date(log.timestamp))
                             val levelStr = if (log.isError) "ERROR" else "INFO"
                             val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
@@ -1083,7 +1095,7 @@ fun LogsTab(
                         clipboard.setPrimaryClip(clip)
                         Toast.makeText(context, "Лог скопирован", Toast.LENGTH_SHORT).show()
                     },
-                    enabled = logs.isNotEmpty()
+                    enabled = visibleLogs.isNotEmpty()
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -1102,7 +1114,7 @@ fun LogsTab(
                 modifier = Modifier.fillMaxSize().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(logs, key = { it.timestamp.toString() + it.message.hashCode() }) { log ->
+                items(visibleLogs, key = { it.timestamp.toString() + it.message.hashCode() }) { log ->
                     val timeStr = dateFormat.format(Date(log.timestamp))
                     val levelStr = if (log.isError) "ERROR" else "INFO"
                     val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
