@@ -607,6 +607,7 @@ fun AccountCard(
                     val today = currentStatsDay()
                     val isToday = account.dailyStatsDay == today
                     val dailyBattles = if (isToday) account.dailyBattles else 0
+                    val dailyBattleAttempts = if (isToday) account.dailyBattleAttempts else 0
                     val dailyQuiz = if (isToday) account.dailyQuiz else 0
                     val dailyAds = if (isToday) account.dailyAds else 0
                     val dailyMineOre = if (isToday) account.dailyMineOre else 0
@@ -638,7 +639,7 @@ fun AccountCard(
                         }
                     }
 
-                    TaskSwitchRow("🃏 Бои", "${battleTarget}/${dailyBattles} победы", account.battleEnabled) { b ->
+                    TaskSwitchRow("🃏 Бои", "$dailyBattleAttempts боев / $dailyBattles победы", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
                     }
                     TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
