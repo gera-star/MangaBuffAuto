@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -46,6 +47,8 @@ enum class ReaderScrollMode {
 
 sealed class TaskResult {
     data object Success : TaskResult()
+    data object BattleWon : TaskResult()
+    data object BattleLost : TaskResult()
     data object Skipped : TaskResult()
     data object Cancelled : TaskResult()
     data class Failed(val reason: String) : TaskResult()
@@ -138,6 +141,7 @@ class MangaBuffAutomation(
         private const val COMMENT_DELAY_MS = 4000L
 
         private const val BATTLE_COOLDOWN_MS = 2000L
+        private const val BATTLE_WIN_TARGET = 2
 
         private const val BALANCE_WATCHDOG_MS = 15_000L
     }
@@ -1238,7 +1242,6 @@ class MangaBuffAutomation(
 
                 when (result) {
                     is TaskResult.Success -> {
-                        addDaily(account) { it.copy(battles = it.battles + settings.battleTargetCount.coerceAtLeast(0)) }
                         log(account.username, "BATTLE: TASK_SUCCESS elapsed=${elapsed}ms")
                     }
                     is TaskResult.Failed -> log(account.username, "BATTLE: TASK_FAILED reason=${result.reason}", true)
@@ -1270,9 +1273,14 @@ class MangaBuffAutomation(
                 log(account.username, "TASK: ADS_END elapsed=" + (SystemClock.elapsedRealtime() - start) + "ms success=" + adsSuccess)
                 fetchAndLogBalanceInfo(account, webView)
                 if (!adsSuccess) {
-                    updateStatus(account, "❌ Реклама не подтверждена", false, "Реклама", 0f)
-                    log(account.username, "TASK: ACCOUNT_ABORTED reason=ADS_FAILED", true)
-                    return
+                    updateStatus(
+                        account,
+                        "⚠️ Реклама: награда не подтверждена — продолжаем",
+                        true,
+                        "Реклама",
+                        0f
+                    )
+                    log(account.username, "TASK: ADS_FAILED_CONTINUE reason=REWARD_NOT_CONFIRMED", true)
                 }
             }
         }
@@ -1323,36 +1331,96 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ): TaskResult {
-        val battleTarget = settings.battleTargetCount
-        log(account.username, "BATTLE: START target=$battleTarget current=0")
+        val battleTarget = settings.battleTargetCount.coerceAtLeast(0)
         var battleCount = 0
+        var winCount = 0
 
-        updateStatus(account, "⚔️ Бои $battleCount/$battleTarget", true, "Бои", 0f)
+        log(
+            account.username,
+            "BATTLE: START targetBattles=$" + battleTarget + " targetWins=" + BATTLE_WIN_TARGET
+        )
+        updateStatus(
+            account,
+            "⚔️ $" + battleTarget + "(боев)/" + winCount + " победы",
+            true,
+            "Бои",
+            0f
+        )
 
         while (battleCount < battleTarget) {
             coroutineContext.ensureActive()
-            val progress = if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f
-            updateStatus(account, "⚔️ Бои $battleCount/$battleTarget", true, "Бои", progress)
 
-            when (val roundResult = runSingleBattleRound(account, webView, battleCount + 1, battleTarget)) {
-                is TaskResult.Success -> {
+            val progress = if (battleTarget > 0) {
+                battleCount.toFloat() / battleTarget
+            } else {
+                1f
+            }
+
+            updateStatus(
+                account,
+                "⚔️ $" + battleTarget + "(боев)/" + winCount + " победы",
+                true,
+                "Бои",
+                progress
+            )
+
+            when (val roundResult = runSingleBattleRound(
+                account,
+                webView,
+                battleCount + 1,
+                battleTarget
+            )) {
+                is TaskResult.BattleWon -> {
                     battleCount++
-                    log(account.username, "BATTLE: COMPLETED count=$battleCount/$battleTarget")
-                    updateStatus(account, "⚔️ Бои $battleCount/$battleTarget", true, "Бои", if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f)
-
-                    if (battleCount < battleTarget) {
-                        log(account.username, "BATTLE: COOLDOWN_START duration=2000")
-                        delay(BATTLE_COOLDOWN_MS)
-                        log(account.username, "BATTLE: COOLDOWN_DONE")
+                    winCount++
+                    addDaily(account) {
+                        it.copy(
+                            battleAttempts = it.battleAttempts + 1,
+                            battles = it.battles + 1
+                        )
                     }
+                    log(
+                        account.username,
+                        "BATTLE: RESULT=WIN battles=" + battleCount +
+                            "/" + battleTarget + " wins=" + winCount
+                    )
                 }
+
+                is TaskResult.BattleLost -> {
+                    battleCount++
+                    addDaily(account) {
+                        it.copy(battleAttempts = it.battleAttempts + 1)
+                    }
+                    log(
+                        account.username,
+                        "BATTLE: RESULT=LOSS battles=" + battleCount +
+                            "/" + battleTarget + " wins=" + winCount
+                    )
+                }
+
                 is TaskResult.Cancelled -> return TaskResult.Cancelled
                 is TaskResult.Failed -> return roundResult
-                else -> return TaskResult.Failed("unknown_error")
+                else -> return TaskResult.Failed("unexpected_battle_round_result")
+            }
+
+            updateStatus(
+                account,
+                "⚔️ $" + battleTarget + "(боев)/" + winCount + " победы",
+                true,
+                "Бои",
+                if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f
+            )
+
+            if (battleCount < battleTarget) {
+                delay(BATTLE_COOLDOWN_MS)
             }
         }
 
-        log(account.username, "BATTLE: TARGET_REACHED $battleCount/$battleTarget")
+        log(
+            account.username,
+            "BATTLE: TARGET_REACHED battles=" + battleCount +
+                "/" + battleTarget + " wins=" + winCount
+        )
         log(account.username, "BATTLE: REWARDS_START")
         claimBattleRewards(account, webView)
         log(account.username, "BATTLE: REWARDS_COMPLETED")
@@ -1417,35 +1485,18 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
-                fun onSkipClicked() {
-                    // The JS bridge callback runs off the WebView UI thread.
-                    // Return the completed round to runBattleTask on the main thread.
-                    // The next round will open /battle itself.
-                    log(account.username, "BATTLE: RETURN_TO_BATTLE_REQUEST")
+                fun onBattleResult(result: String) {
+                    val normalized = result.trim().lowercase()
+                    log(account.username, "BATTLE: RESULT_DETECTED value=" + normalized)
 
                     mainHandler.post {
                         if (!continuation.isActive) return@post
 
-                        try {
-                            log(account.username, "BATTLE: RETURN_TO_BATTLE")
-                            webView.loadUrl("https://mangabuff.ru/battle")
-
-                            // IMPORTANT:
-                            // This callback means the current battle has reached
-                            // "К итогам". The round is finished here. Without
-                            // resuming the continuation, runBattleTask stays at
-                            // 0/20 forever and never increments battleCount.
-                            safeResume(TaskResult.Success)
-                        } catch (e: Exception) {
-                            log(
-                                account.username,
-                                "BATTLE: RETURN_TO_BATTLE_ERROR error=" + e.javaClass.simpleName + ": " + e.message,
-                                true
-                            )
-                            safeResume(
-                                TaskResult.Failed(
-                                    "return_to_battle_exception=" + e.javaClass.simpleName + ":" + e.message
-                                )
+                        when (normalized) {
+                            "win", "победа" -> safeResume(TaskResult.BattleWon)
+                            "loss", "lose", "поражение" -> safeResume(TaskResult.BattleLost)
+                            else -> safeResume(
+                                TaskResult.Failed("unknown_battle_result=" + normalized)
                             )
                         }
                     }
@@ -1476,25 +1527,66 @@ class MangaBuffAutomation(
                                             return (btn.textContent || '').trim() === 'К итогам' && !btn.disabled;
                                         });
 
+                                    function waitForResultPanel(startedAt) {
+                                        var panel = document.querySelector('.battle-finish-panel');
+                                        var title = panel
+                                            ? panel.querySelector('.battle-finish-panel__title')
+                                            : null;
+                                        var resultText = title
+                                            ? (title.textContent || '').replace(/\\s+/g, ' ').trim()
+                                            : '';
+
+                                        if (title && /^победа$/i.test(resultText)) {
+                                            AndroidBattleBridge.onStateLog(
+                                                'RESULT_PANEL',
+                                                'title=Победа class=' + (panel.className || '')
+                                            );
+                                            AndroidBattleBridge.onBattleResult('win');
+                                            return;
+                                        }
+
+                                        if (title && /^поражение$/i.test(resultText)) {
+                                            AndroidBattleBridge.onStateLog(
+                                                'RESULT_PANEL',
+                                                'title=Поражение class=' + (panel.className || '')
+                                            );
+                                            AndroidBattleBridge.onBattleResult('loss');
+                                            return;
+                                        }
+
+                                        if (Date.now() - startedAt >= 15000) {
+                                            AndroidBattleBridge.onRoundFailed('result_panel_timeout');
+                                            return;
+                                        }
+
+                                        setTimeout(function() {
+                                            waitForResultPanel(startedAt);
+                                        }, 300);
+                                    }
+
                                     if (skip) {
-                                        AndroidBattleBridge.onStateLog('RESULTS_BUTTON_FOUND', 'Кнопка К итогам найдена');
+                                        AndroidBattleBridge.onStateLog(
+                                            'RESULTS_BUTTON_FOUND',
+                                            'Кнопка К итогам найдена'
+                                        );
                                         skip.click();
-                                        AndroidBattleBridge.onSkipClicked();
+                                        waitForResultPanel(Date.now());
                                         return;
                                     }
 
                                     var elapsed = 0;
                                     var timer = setInterval(function() {
                                         elapsed += 500;
-                                        var btn = Array.from(document.querySelectorAll('button.battle-control__button--skip'))
-                                            .find(function(x) {
-                                                return (x.textContent || '').trim() === 'К итогам' && !x.disabled;
-                                            });
+                                        var btn = Array.from(
+                                            document.querySelectorAll('button.battle-control__button--skip')
+                                        ).find(function(x) {
+                                            return (x.textContent || '').trim() === 'К итогам' && !x.disabled;
+                                        });
 
                                         if (btn) {
                                             clearInterval(timer);
                                             btn.click();
-                                            AndroidBattleBridge.onSkipClicked();
+                                            waitForResultPanel(Date.now());
                                         } else if (elapsed >= 30000) {
                                             clearInterval(timer);
                                             AndroidBattleBridge.onRoundFailed('skip_button_timeout');
@@ -6457,196 +6549,164 @@ class MangaBuffAutomation(
         account: MangaBuffAccount,
         webView: WebView,
         targetUrl: String
-    ): Boolean = suspendCancellableCoroutine { continuation ->
+    ): Boolean {
+        val cleanTarget = targetUrl
+            .substringBefore('?')
+            .substringBefore('#')
+            .trim()
+            .ifBlank {
+                webView.url.orEmpty()
+                    .substringBefore('?')
+                    .substringBefore('#')
+                    .trim()
+            }
 
-        var resumed = false
+        if (!cleanTarget.startsWith("https://mangabuff.ru/manga/")) {
+            log(account.username, "COMMENT: NON_CHAPTER_URL", true)
+            return false
+        }
 
-        fun safeResume(result: Boolean) {
-            if (!resumed && continuation.isActive) {
-                resumed = true
-                continuation.resume(result)
+        val chapterId = activeChapterContext
+            ?.takeIf { it.accountId == account.id }
+            ?.chapterId
+            ?.takeIf { it.isNotBlank() }
+            ?: Regex("/manga/[^/]+/[^/]+/(\\d+)$")
+                .find(cleanTarget)
+                ?.groupValues
+                ?.getOrNull(1)
+            ?: cleanTarget.substringAfterLast('/')
+                .takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+
+        if (chapterId.isNullOrBlank()) {
+            log(
+                account.username,
+                "COMMENT: CHAPTER_ID_NOT_FOUND url=$cleanTarget",
+                true
+            )
+            return false
+        }
+
+        val commentText = commentPhrases.random()
+        var csrf = account.getSafeCsrfToken().trim()
+
+        suspend fun loadCsrfFromChapter(): String = withContext(Dispatchers.IO) {
+            try {
+                val headers = getBaseHeaders(account).newBuilder()
+                    .set("Referer", cleanTarget)
+                    .set("Accept", "text/html,application/xhtml+xml")
+                    .build()
+
+                val request = Request.Builder()
+                    .url(cleanTarget)
+                    .headers(headers)
+                    .get()
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use ""
+                    val html = response.body?.string().orEmpty()
+                    Jsoup.parse(html)
+                        .selectFirst("meta[name=csrf-token]")
+                        ?.attr("content")
+                        .orEmpty()
+                        .trim()
+                }
+            } catch (e: Exception) {
+                log(
+                    account.username,
+                    "COMMENT: CSRF_FETCH_ERROR " + e.message,
+                    true
+                )
+                ""
             }
         }
 
-        mainHandler.post {
+        if (csrf.isBlank()) {
+            csrf = loadCsrfFromChapter()
+        }
 
-            class CommentBridge {
+        if (csrf.isBlank()) {
+            log(account.username, "COMMENT: CSRF_TOKEN_NOT_FOUND", true)
+            return false
+        }
 
-                @JavascriptInterface
-                fun onCommentLog(msg: String) {
-                    log(account.username, "COMMENT: $msg")
-                }
+        suspend fun sendComment(token: String): Pair<Int, String> =
+            withContext(Dispatchers.IO) {
+                val form = FormBody.Builder()
+                    .add("content", commentText)
+                    .add("commentable_type", "mangaChapter")
+                    .add("commentable_id", chapterId)
+                    .add("_token", token)
+                    .build()
 
-                @JavascriptInterface
-                fun onCommentResult(success: Boolean) {
-                    safeResume(success)
+                val headers = getBaseHeaders(account).newBuilder()
+                    .set("Referer", cleanTarget)
+                    .set("Accept", "application/json, text/plain, */*")
+                    .set("X-Requested-With", "XMLHttpRequest")
+                    .set("X-CSRF-TOKEN", token)
+                    .build()
+
+                val request = Request.Builder()
+                    .url("https://mangabuff.ru/comments")
+                    .headers(headers)
+                    .post(form)
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    Pair(
+                        response.code,
+                        response.body?.string().orEmpty().take(300)
+                    )
                 }
             }
 
-            try { webView.removeJavascriptInterface("AndroidCommentBridge") } catch (_: Exception) {}
-            webView.addJavascriptInterface(CommentBridge(), "AndroidCommentBridge")
+        return try {
+            log(account.username, "COMMENT: HTTP_POST_START chapterId=$" + chapterId)
 
-            fun injectScript() {
-                val available = commentPhrases.indices
-                    .filter { it !in recentCommentIndexes }
-                    .ifEmpty { commentPhrases.indices.toList() }
+            var result = sendComment(csrf)
+            var status = result.first
+            var bodySnippet = result.second
 
-                val index = available.random()
-                recentCommentIndexes.add(index)
-                if (recentCommentIndexes.size > 5) {
-                    recentCommentIndexes.removeAt(0)
+            if (status == 419) {
+                log(account.username, "COMMENT: CSRF_EXPIRED retrying")
+                val refreshedCsrf = loadCsrfFromChapter()
+
+                if (refreshedCsrf.isNotBlank()) {
+                    csrf = refreshedCsrf
+                    result = sendComment(csrf)
+                    status = result.first
+                    bodySnippet = result.second
                 }
-
-                val text = commentPhrases[index]
-                log(account.username, "COMMENT: TEXT_SELECTED index=$index text=\"$text\"")
-
-                val script = """
-                    (function() {
-                        try {
-                            function visible(el) {
-                                if (!el) return false;
-                                var s = getComputedStyle(el);
-                                return (s.display !== 'none' && s.visibility !== 'hidden' && (el.offsetWidth > 0 || el.offsetHeight > 0));
-                            }
-
-                            function findEditor() {
-                                var selectors = [
-                                    'textarea[name="text"]',
-                                    'textarea.comments__input',
-                                    'textarea.comments__textarea',
-                                    '.comments textarea',
-                                    'textarea[placeholder]',
-                                    '[contenteditable="true"]',
-                                    'input[name="text"]'
-                                ];
-                                for (var i = 0; i < selectors.length; i++) {
-                                    var list = Array.from(document.querySelectorAll(selectors[i]));
-                                    var found = list.find(visible);
-                                    if (found) return found;
-                                }
-                                return null;
-                            }
-
-                            function sendButton() {
-                                var exact = document.querySelector('button.comments__send-btn');
-                                if (exact && visible(exact) && !exact.disabled) return exact;
-                                return null;
-                            }
-
-                            var pagePath = window.location.pathname || '';
-                            if (!(new RegExp("^/manga/[^/]+/[0-9]+/[0-9]+$")).test(pagePath)) {
-                                AndroidCommentBridge.onCommentLog('COMMENT_SKIP_NON_CHAPTER_URL path=' + pagePath);
-                                AndroidCommentBridge.onCommentResult(false);
-                                return;
-                            }
-
-                            function waitForEditor(done) {
-                                var started = Date.now();
-                                var maxWait = 15000;
-
-                                function poll() {
-                                    var found = findEditor();
-                                    if (found) {
-                                        done(found);
-                                        return;
-                                    }
-
-                                    var elapsed = Date.now() - started;
-                                    if (elapsed >= maxWait) {
-                                        AndroidCommentBridge.onCommentLog('EDITOR_NOT_FOUND_TIMEOUT after=' + elapsed + 'ms');
-                                        AndroidCommentBridge.onCommentResult(false);
-                                        return;
-                                    }
-
-                                    AndroidCommentBridge.onCommentLog('EDITOR_WAIT elapsed=' + elapsed + 'ms');
-                                    setTimeout(poll, 500);
-                                }
-
-                                poll();
-                            }
-
-                            waitForEditor(function(editor) {
-                            var value = ${com.google.gson.Gson().toJson(text)};
-                            editor.focus();
-
-                            if (editor.isContentEditable) {
-                                editor.textContent = value;
-                            } else {
-                                var descriptor = Object.getOwnPropertyDescriptor(
-                                    Object.getPrototypeOf(editor),
-                                    'value'
-                                );
-                                if (descriptor && descriptor.set) {
-                                    descriptor.set.call(editor, value);
-                                } else {
-                                    editor.value = value;
-                                }
-                            }
-
-                            editor.dispatchEvent(new Event('input', { bubbles: true }));
-                            editor.dispatchEvent(new Event('change', { bubbles: true }));
-
-                            AndroidCommentBridge.onCommentLog('COMMENT_TEXT_FILLED');
-
-                            var btn = sendButton();
-                            if (!btn) {
-                                AndroidCommentBridge.onCommentLog('COMMENT_SEND_BUTTON_NOT_FOUND');
-                                AndroidCommentBridge.onCommentResult(false);
-                                return;
-                            }
-
-                            AndroidCommentBridge.onCommentLog('COMMENT_SEND_BUTTON_FOUND');
-                            btn.click();
-                            AndroidCommentBridge.onCommentLog('COMMENT_SEND_CLICK');
-
-                            var elapsed = 0;
-                            var timer = setInterval(function() {
-                                elapsed += 500;
-                                var current = findEditor();
-                                var empty = current
-                                    ? (current.isContentEditable
-                                        ? ((current.innerText || '').trim() === '')
-                                        : ((current.value || '').trim() === ''))
-                                    : false;
-
-                                if (empty) {
-                                    clearInterval(timer);
-                                    AndroidCommentBridge.onCommentLog('COMMENT_DOM_CONFIRMED');
-                                    AndroidCommentBridge.onCommentResult(true);
-                                } else if (elapsed >= 12000) {
-                                    clearInterval(timer);
-                                    AndroidCommentBridge.onCommentLog('COMMENT_VERIFY_TIMEOUT_AFTER_CLICK');
-                                    AndroidCommentBridge.onCommentResult(true);
-                                }
-                            }, 500);
-
-
-                            });                        } catch(e) {
-                            AndroidCommentBridge.onCommentLog('COMMENT_EXCEPTION ' + e.message);
-                            AndroidCommentBridge.onCommentResult(false);
-                        }
-                    })();
-                """.trimIndent()
-
-                webView.evaluateJavascript(script, null)
             }
 
-            val currentUrl = webView.url ?: ""
-            val cleanTarget = targetUrl.substringBefore('?').substringBefore('#')
-            val cleanCurrent = currentUrl.substringBefore('?').substringBefore('#')
-
-            if (cleanCurrent.isNotBlank() && (cleanCurrent == cleanTarget || cleanCurrent.startsWith(cleanTarget))) {
-                injectScript()
+            val success = status in 200..299
+            if (success) {
+                log(
+                    account.username,
+                    "COMMENT: HTTP_POST_SUCCESS chapterId=$" + chapterId + " status=" + status
+                )
             } else {
-                webView.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        mainHandler.postDelayed({
-                            if (continuation.isActive) injectScript()
-                        }, 1200L)
-                    }
-                }
-                webView.loadUrl(targetUrl)
+                val safeBody = bodySnippet
+                    .replace(Regex("\\s+"), " ")
+                    .take(180)
+
+                log(
+                    account.username,
+                    "COMMENT: HTTP_POST_FAILED chapterId=$" +
+                        chapterId + " status=" + status + " body=" + safeBody,
+                    true
+                )
             }
+
+            success
+        } catch (e: Exception) {
+            log(
+                account.username,
+                "COMMENT: HTTP_POST_EXCEPTION chapterId=$" +
+                    chapterId + " error=" + e.message,
+                true
+            )
+            false
         }
     }
 
@@ -6686,6 +6746,7 @@ class MangaBuffAutomation(
 
             if (result) {
                 successCount++
+                addDaily(account) { it.copy(comments = it.comments + 1) }
             } else {
                 failedCount++
             }
