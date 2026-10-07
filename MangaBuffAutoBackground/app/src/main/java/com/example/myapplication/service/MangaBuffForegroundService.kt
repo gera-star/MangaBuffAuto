@@ -81,6 +81,7 @@ class MangaBuffForegroundService : Service() {
         const val EXTRA_COMMENTS = "EXTRA_COMMENTS"
         const val EXTRA_DAY = "EXTRA_DAY"
         const val EXTRA_BATTLES = "EXTRA_BATTLES"
+        const val EXTRA_BATTLE_ATTEMPTS = "EXTRA_BATTLE_ATTEMPTS"
         const val EXTRA_QUIZ = "EXTRA_QUIZ"
         const val EXTRA_ADS = "EXTRA_ADS"
         const val EXTRA_MINE_ORE = "EXTRA_MINE_ORE"
@@ -606,6 +607,7 @@ class MangaBuffForegroundService : Service() {
             extras = {
                 putExtra(EXTRA_DAY, stats.day)
                 putExtra(EXTRA_BATTLES, stats.battles)
+                putExtra(EXTRA_BATTLE_ATTEMPTS, stats.battleAttempts)
                 putExtra(EXTRA_QUIZ, stats.quiz)
                 putExtra(EXTRA_ADS, stats.ads)
                 putExtra(EXTRA_MINE_ORE, stats.mineOre)
