@@ -1033,11 +1033,20 @@ fun LogsTab(
 
     val visibleLogs = remember(logs) {
         logs.filter { entry ->
+            val m = entry.message
             entry.component == "BG" ||
-            entry.message.startsWith("BG:") ||
-            entry.message.contains("[BG]") ||
-            entry.message.startsWith("BACKGROUND_") ||
-            entry.message.startsWith("RENDERER_")
+                m.startsWith("BG:") ||
+                m.contains("[BG]") ||
+                m.startsWith("HEARTBEAT") ||
+                m.startsWith("BACKGROUND_") ||
+                m.startsWith("SCROLL_PROGRESS") ||
+                m.startsWith("END_CANDIDATE") ||
+                m.startsWith("BOTTOM_STABILIZATION") ||
+                m.startsWith("SCREEN_OFF") ||
+                m.startsWith("SCREEN_ON") ||
+                m.startsWith("RENDERER_") ||
+                m.contains("WAKELOCK") ||
+                m.contains("SERVICE_")
         }
     }
     logs: List<LogEntry>,
