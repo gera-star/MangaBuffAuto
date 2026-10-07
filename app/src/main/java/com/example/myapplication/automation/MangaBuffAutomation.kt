@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -1198,13 +1199,13 @@ class MangaBuffAutomation(
         var winCount = 0
 
         log(account.username, "BATTLE: START targetBattles=" + battleTarget)
-        updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои", 0f)
+        updateStatus(account, "⚔️ " + battleTarget + "(боев)/" + winCount + " победы", true, "Бои", 0f)
 
         while (battleCount < battleTarget) {
             coroutineContext.ensureActive()
 
             val progress = if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f
-            updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои", progress)
+            updateStatus(account, "⚔️ " + battleTarget + "(боев)/" + winCount + " победы", true, "Бои", progress)
 
             when (val roundResult = runSingleBattleRound(account, webView, battleCount + 1, battleTarget)) {
                 is TaskResult.BattleWon -> {
@@ -1228,7 +1229,7 @@ class MangaBuffAutomation(
                 else -> return TaskResult.Failed("unexpected_battle_round_result")
             }
 
-            updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои",
+            updateStatus(account, "⚔️ " + battleTarget + "(боев)/" + winCount + " победы", true, "Бои",
                 if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f)
 
             if (battleCount < battleTarget) {
@@ -1338,17 +1339,20 @@ class MangaBuffAutomation(
                                         });
 
                                     function waitForResultPanel(startedAt) {
-                                        var title = document.querySelector('.battle-finish-panel__title');
-                                        if (title) {
-                                            var text = (title.textContent || '').replace(/\\s+/g, ' ').trim();
-                                            if (/победа/i.test(text)) {
-                                                AndroidBattleBridge.onBattleResult('win');
-                                                return;
-                                            }
-                                            if (/поражение/i.test(text)) {
-                                                AndroidBattleBridge.onBattleResult('loss');
-                                                return;
-                                            }
+                                        var panel = document.querySelector('.battle-finish-panel');
+                                        var title = panel ? panel.querySelector('.battle-finish-panel__title') : null;
+                                        var finishText = title
+                                            ? (title.textContent || '').replace(/\\s+/g, ' ').trim()
+                                            : '';
+                                        if (title && /^победа$/i.test(finishText)) {
+                                            AndroidBattleBridge.onStateLog('RESULT_PANEL', 'title=Победа class=' + (panel.className || ''));
+                                            AndroidBattleBridge.onBattleResult('win');
+                                            return;
+                                        }
+                                        if (title && /^поражение$/i.test(finishText)) {
+                                            AndroidBattleBridge.onStateLog('RESULT_PANEL', 'title=Поражение class=' + (panel.className || ''));
+                                            AndroidBattleBridge.onBattleResult('loss');
+                                            return;
                                         }
                                         if (Date.now() - startedAt >= 12000) {
                                             AndroidBattleBridge.onRoundFailed('result_panel_timeout');
@@ -1694,7 +1698,15 @@ class MangaBuffAutomation(
                     }
                     AdWatchResult.Failed -> {
                         log(account.username, "ADS: WATCH_FAILED completed=" + adsDone + "/" + target, true)
-                        return false
+                        updateStatus(
+                            account,
+                            "📺 Реклама: награда не подтверждена — пропуск",
+                            false,
+                            "Реклама",
+                            if (target > 0) adsDone.toFloat() / target else 1f
+                        )
+                        log(account.username, "TASK: ADS_END successCount=" + adsDone + " target=" + target + " success=false")
+                        return true
                     }
                 }
             }
@@ -6279,178 +6291,120 @@ class MangaBuffAutomation(
         account: MangaBuffAccount,
         webView: WebView,
         targetUrl: String
-    ): Boolean = suspendCancellableCoroutine { continuation ->
+    ): Boolean {
+        val cleanTarget = targetUrl
+            .substringBefore('?')
+            .substringBefore('#')
+            .trim()
+            .ifBlank { webView.url.orEmpty().substringBefore('?').substringBefore('#').trim() }
 
-        var resumed = false
+        if (!cleanTarget.startsWith("https://mangabuff.ru/manga/")) {
+            log(account.username, "COMMENT: NON_CHAPTER_URL", true)
+            return false
+        }
 
-        fun safeResume(result: Boolean) {
-            if (!resumed && continuation.isActive) {
-                resumed = true
-                continuation.resume(result)
+        val chapterId = activeChapterContext
+            ?.takeIf { it.accountId == account.id }
+            ?.chapterId
+            ?.takeIf { it.isNotBlank() }
+            ?: Regex("/manga/[^/]+/[^/]+/(\\d+)$").find(cleanTarget)?.groupValues?.getOrNull(1)
+            ?: cleanTarget.substringAfterLast('/').takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+
+        if (chapterId.isNullOrBlank()) {
+            log(account.username, "COMMENT: CHAPTER_ID_NOT_FOUND url=$cleanTarget", true)
+            return false
+        }
+
+        val commentText = commentPhrases.random()
+        var csrf = account.getSafeCsrfToken().trim()
+
+        suspend fun loadCsrfFromChapter(): String = withContext(Dispatchers.IO) {
+            try {
+                val headers = getBaseHeaders(account).newBuilder()
+                    .set("Referer", cleanTarget)
+                    .set("Accept", "text/html,application/xhtml+xml")
+                    .build()
+                val request = Request.Builder()
+                    .url(cleanTarget)
+                    .headers(headers)
+                    .get()
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use ""
+                    val html = response.body?.string().orEmpty()
+                    Jsoup.parse(html)
+                        .selectFirst("meta[name=csrf-token]")
+                        ?.attr("content")
+                        .orEmpty()
+                        .trim()
+                }
+            } catch (e: Exception) {
+                log(account.username, "COMMENT: CSRF_FETCH_ERROR \${e.message}", true)
+                ""
             }
         }
 
-        mainHandler.post {
-            class CommentBridge {
-                @JavascriptInterface
-                fun onCommentLog(msg: String) {
-                    log(account.username, "COMMENT: " + msg)
-                }
+        if (csrf.isBlank()) csrf = loadCsrfFromChapter()
 
-                @JavascriptInterface
-                fun onTapRequested(x: Float, y: Float, source: String) {
-                    mainHandler.post {
-                        try {
-                            dispatchNativeTap(account.username, webView, x, y)
-                        } catch (e: Exception) {
-                            log(account.username, "COMMENT: NATIVE_TAP_ERROR " + e.message, true)
-                        }
-                    }
-                }
+        if (csrf.isBlank()) {
+            log(account.username, "COMMENT: CSRF_TOKEN_NOT_FOUND", true)
+            return false
+        }
 
-                @JavascriptInterface
-                fun onCommentResult(success: Boolean) {
-                    safeResume(success)
+        suspend fun sendComment(token: String): Pair<Int, String> = withContext(Dispatchers.IO) {
+            val form = FormBody.Builder()
+                .add("content", commentText)
+                .add("commentable_type", "mangaChapter")
+                .add("commentable_id", chapterId)
+                .add("_token", token)
+                .build()
+
+            val headers = getBaseHeaders(account).newBuilder()
+                .set("Referer", cleanTarget)
+                .set("Accept", "application/json, text/plain, */*")
+                .set("X-Requested-With", "XMLHttpRequest")
+                .set("X-CSRF-TOKEN", token)
+                .build()
+
+            val request = Request.Builder()
+                .url("https://mangabuff.ru/comments")
+                .headers(headers)
+                .post(form)
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                Pair(response.code, response.body?.string().orEmpty().take(300))
+            }
+        }
+
+        return try {
+            log(account.username, "COMMENT: HTTP_POST_START chapterId=$chapterId")
+            var (status, bodySnippet) = sendComment(csrf)
+
+            if (status == 419) {
+                log(account.username, "COMMENT: CSRF_EXPIRED retrying")
+                val refreshedCsrf = loadCsrfFromChapter()
+                if (refreshedCsrf.isNotBlank()) {
+                    csrf = refreshedCsrf
+                    val retry = sendComment(csrf)
+                    status = retry.first
+                    bodySnippet = retry.second
                 }
             }
 
-            try { webView.removeJavascriptInterface("AndroidCommentBridge") } catch (_: Exception) {}
-            webView.addJavascriptInterface(CommentBridge(), "AndroidCommentBridge")
-
-            fun injectScript() {
-                val text = commentPhrases.random()
-                val script = """
-                    (function() {
-                        try {
-                            var commentText = ${com.google.gson.Gson().toJson(text)};
-
-                            function visible(el) {
-                                if (!el) return false;
-                                var r = el.getBoundingClientRect();
-                                var s = getComputedStyle(el);
-                                return r.width > 0 && r.height > 0 &&
-                                       s.display !== 'none' &&
-                                       s.visibility !== 'hidden' &&
-                                       parseFloat(s.opacity || '1') > 0;
-                            }
-
-                            function center(el) {
-                                var r = el.getBoundingClientRect();
-                                return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-                            }
-
-                            function openButton() {
-                                var icon = document.querySelector('i.icon-comment');
-                                return icon ? (icon.closest('button,a,[role="button"],.reader-menu__item') || icon) : null;
-                            }
-
-                            function closeWindow(done) {
-                                var close = document.querySelector('.reader-comments__close');
-                                if (close && visible(close)) {
-                                    var c = center(close);
-                                    AndroidCommentBridge.onTapRequested(c.x, c.y, 'close');
-                                }
-                                setTimeout(done, 700);
-                            }
-
-                            function fillAndSend(attempt) {
-                                var form = document.querySelector('.comments__send-form');
-                                var textarea = form ? form.querySelector('textarea') : null;
-                                var send = form ? form.querySelector('.comments__send-btn') : null;
-
-                                if (!form || !visible(form) || !textarea || !send) {
-                                    if (attempt >= 30) {
-                                        AndroidCommentBridge.onCommentLog('FORM_TIMEOUT');
-                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
-                                        return;
-                                    }
-                                    setTimeout(function() { fillAndSend(attempt + 1); }, 500);
-                                    return;
-                                }
-
-                                AndroidCommentBridge.onCommentLog('FORM_FOUND');
-
-                                try {
-                                    textarea.focus();
-                                    var setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-                                    if (setter && setter.set) setter.set.call(textarea, commentText);
-                                    else textarea.value = commentText;
-
-                                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-                                    textarea.dispatchEvent(new Event('change', { bubbles: true }));
-                                    AndroidCommentBridge.onCommentLog('TEXT_ENTERED');
-                                } catch (e) {
-                                    AndroidCommentBridge.onCommentLog('INPUT_ERROR=' + (e.message || e));
-                                    closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
-                                    return;
-                                }
-
-                                setTimeout(function() {
-                                    var currentForm = document.querySelector('.comments__send-form');
-                                    var button = currentForm ? currentForm.querySelector('.comments__send-btn') : null;
-
-                                    if (!button || !visible(button) || button.disabled) {
-                                        AndroidCommentBridge.onCommentLog('SEND_NOT_READY');
-                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
-                                        return;
-                                    }
-
-                                    var bc = center(button);
-                                    AndroidCommentBridge.onCommentLog('SEND_REQUEST');
-                                    AndroidCommentBridge.onTapRequested(bc.x, bc.y, 'send');
-
-                                    setTimeout(function() {
-                                        var f = document.querySelector('.comments__send-form');
-                                        var t = f ? f.querySelector('textarea') : null;
-                                        var sent = !f || !visible(f) || (t && String(t.value || '').trim() === '');
-
-                                        AndroidCommentBridge.onCommentLog(sent ? 'SEND_CONFIRMED' : 'SEND_NOT_CONFIRMED');
-                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(!!sent); });
-                                    }, 1800);
-                                }, 350);
-                            }
-
-                            var path = window.location.pathname || '';
-                            if (!/^\/manga\/[^/]+\/[0-9]+\/[0-9]+$/.test(path)) {
-                                AndroidCommentBridge.onCommentLog('NON_CHAPTER_URL');
-                                AndroidCommentBridge.onCommentResult(false);
-                                return;
-                            }
-
-                            var open = openButton();
-                            if (!open || !visible(open)) {
-                                AndroidCommentBridge.onCommentLog('BUTTON_NOT_FOUND');
-                                AndroidCommentBridge.onCommentResult(false);
-                                return;
-                            }
-
-                            AndroidCommentBridge.onCommentLog('BUTTON_FOUND');
-                            var oc = center(open);
-                            AndroidCommentBridge.onTapRequested(oc.x, oc.y, 'open');
-                            setTimeout(function() { fillAndSend(1); }, 700);
-                        } catch (e) {
-                            AndroidCommentBridge.onCommentLog('EXCEPTION=' + (e.message || e));
-                            AndroidCommentBridge.onCommentResult(false);
-                        }
-                    })();
-                """.trimIndent()
-
-                webView.evaluateJavascript(script, null)
-            }
-
-            val current = webView.url.orEmpty().substringBefore('?').substringBefore('#')
-            val cleanTarget = targetUrl.substringBefore('?').substringBefore('#')
-
-            if (current == cleanTarget || current.startsWith(cleanTarget)) {
-                injectScript()
+            val success = status in 200..299
+            if (success) {
+                addDaily(account) { it.copy(comments = it.comments + 1) }
+                log(account.username, "COMMENT: HTTP_POST_SUCCESS chapterId=$chapterId status=$status")
             } else {
-                webView.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        mainHandler.postDelayed({ if (continuation.isActive) injectScript() }, 900L)
-                    }
-                }
-                webView.loadUrl(targetUrl)
+                val safeBody = bodySnippet.replace(Regex("\\s+"), " ").take(180)
+                log(account.username, "COMMENT: HTTP_POST_FAILED chapterId=$chapterId status=$status body=$safeBody", true)
             }
+            success
+        } catch (e: Exception) {
+            log(account.username, "COMMENT: HTTP_POST_EXCEPTION chapterId=$chapterId error=\${e.message}", true)
+            false
         }
     }
 
