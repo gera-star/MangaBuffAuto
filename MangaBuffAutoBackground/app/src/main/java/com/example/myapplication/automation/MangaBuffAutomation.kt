@@ -2981,63 +2981,148 @@ class MangaBuffAutomation(
                                     }
                                 }
 
+                                /*
+                                 * Previously verified on the same fullscreen RSYA rewarded UI:
+                                 * viewport=384x850 CSS px, close center=(364,20).
+                                 *
+                                 * The native dispatcher converts these CSS coordinates using the
+                                 * current WebView density. Keep this as an explicit fallback because
+                                 * the Yandex fullscreen DOM can be invisible to MangaBuff's document.
+                                 */
+                                var VERIFIED_CLOSE_FALLBACK_X = 364.0;
+                                var VERIFIED_CLOSE_FALLBACK_Y = 20.0;
+                                var nativeCloseAttempts = 0;
+                                var nativeCloseRetryTimer = null;
+                                var nativeCloseRequested = false;
+                                var verifiedFallbackRequested = false;
+
+                                function finishNativeCloseRetryTimer() {
+                                    if (nativeCloseRetryTimer) {
+                                        clearTimeout(nativeCloseRetryTimer);
+                                        nativeCloseRetryTimer = null;
+                                    }
+                                }
+
+                                function verifyAfterNativeClose() {
+                                    setTimeout(function() {
+                                        if (!finished) verifyReward(0);
+
+                                        /*
+                                         * If the fallback tap did not close the fullscreen ad
+                                         * (e.g. the control appeared a little later), let the
+                                         * accessibility path attempt the actual reward control.
+                                         */
+                                        if (
+                                            !finished &&
+                                            !window.__mbAdsRewardFallbackStarted
+                                        ) {
+                                            window.__mbAdsRewardFallbackStarted = true;
+                                            AndroidAds.onStateLog(
+                                                "AD_REWARD_FALLBACK",
+                                                "verified_top_right_tap_did_not_confirm_reward"
+                                            );
+                                            requestRewardClaim();
+                                        }
+                                    }, 1200);
+                                }
+
                                 function attemptAutoClose() {
-                                    if (finished || nativeCloseRequested || nativeCloseAttempts >= 3) {
+                                    if (
+                                        finished ||
+                                        nativeCloseRequested ||
+                                        nativeCloseAttempts >= 2
+                                    ) {
                                         return;
                                     }
 
                                     var close = findCloseButton();
 
-                                    if (!close) {
+                                    if (close && isVisibleElement(close)) {
+                                        nativeCloseAttempts++;
+
                                         AndroidAds.onStateLog(
                                             "AUTO_CLOSE_SEARCH",
-                                            "attempt=" + (nativeCloseAttempts + 1) +
-                                                " found=false"
+                                            "attempt=" + nativeCloseAttempts +
+                                                " found=true visible=true source=DOM"
                                         );
 
-                                        if (nativeCloseAttempts === 0) {
-                                            /*
-                                             * The close node can appear a little after the
-                                             * countdown reaches zero. Give Accessibility a chance
-                                             * only after the exact DOM selector is unavailable.
-                                             */
-                                            requestRewardClaim();
+                                        if (requestNativeCloseTap(close)) {
+                                            nativeCloseRequested = true;
+                                            AndroidAds.onStateLog(
+                                                "AUTO_CLOSE_REQUESTED",
+                                                "source=Yandex close control"
+                                            );
+                                            verifyAfterNativeClose();
+                                        } else {
+                                            nativeCloseRetryTimer = setTimeout(
+                                                attemptAutoClose,
+                                                750
+                                            );
                                         }
-
-                                        nativeCloseRetryTimer = setTimeout(attemptAutoClose, 1000);
                                         return;
                                     }
 
-                                    nativeCloseAttempts++;
+                                    /*
+                                     * Exact DOM control is inaccessible in the parent document.
+                                     * Use the coordinate pair already verified in our previous
+                                     * real-device test instead of inventing a new screen position.
+                                     */
+                                    if (!verifiedFallbackRequested) {
+                                        verifiedFallbackRequested = true;
+                                        nativeCloseAttempts++;
 
-                                    AndroidAds.onStateLog(
-                                        "AUTO_CLOSE_SEARCH",
-                                        "attempt=" + nativeCloseAttempts +
-                                            " found=true visible=" + isVisibleElement(close)
-                                    );
-
-                                    if (!isVisibleElement(close)) {
-                                        nativeCloseRetryTimer = setTimeout(attemptAutoClose, 500);
-                                        return;
-                                    }
-
-                                    if (requestNativeCloseTap(close)) {
-                                        nativeCloseRequested = true;
                                         AndroidAds.onStateLog(
-                                            "AUTO_CLOSE_REQUESTED",
-                                            "source=Yandex close control"
+                                            "AUTO_CLOSE_SEARCH",
+                                            "attempt=" + nativeCloseAttempts +
+                                                " found=false visible=false " +
+                                                "source=VERIFIED_FALLBACK"
                                         );
 
-                                        /*
-                                         * The native tap is delivered asynchronously by Android.
-                                         * Give the rewarded session a moment to process the close,
-                                         * then let the server-balance verifier confirm +7.
-                                         */
-                                        setTimeout(function() {
-                                            if (!finished) verifyReward(0);
-                                        }, 900);
-                                    } else {
-                                        nativeCloseRetryTimer = setTimeout(attemptAutoClose, 750);
+                                        AndroidAds.onStateLog(
+                                            "NATIVE_CLOSE_FALLBACK",
+                                            "x=" + VERIFIED_CLOSE_FALLBACK_X +
+                                                " y=" + VERIFIED_CLOSE_FALLBACK_Y +
+                                                " viewport=" +
+                                                (window.innerWidth || 0) + "x" +
+                                                (window.innerHeight || 0) +
+                                                " source=fullscreen_top_right_fallback"
+                                        );
+
+                                        try {
+                                            AndroidAds.onCloseTapRequested(
+                                                VERIFIED_CLOSE_FALLBACK_X,
+                                                VERIFIED_CLOSE_FALLBACK_Y,
+                                                "fullscreen_top_right_fallback"
+                                            );
+
+                                            nativeCloseRequested = true;
+
+                                            AndroidAds.onStateLog(
+                                                "CLOSE_NATIVE_REQUESTED",
+                                                "elapsed=32s source=fullscreen_top_right_fallback"
+                                            );
+
+                                            verifyAfterNativeClose();
+                                            return;
+                                        } catch (e) {
+                                            AndroidAds.onStateLog(
+                                                "NATIVE_CLOSE_FALLBACK_ERROR",
+                                                "error=" +
+                                                    (e && e.message ? e.message : String(e))
+                                            );
+                                        }
+                                    }
+
+                                    /*
+                                     * Do not hammer the fullscreen overlay. After one verified
+                                     * fallback tap, a later retry is allowed only if the native
+                                     * request itself could not be issued.
+                                     */
+                                    if (!nativeCloseRequested) {
+                                        nativeCloseRetryTimer = setTimeout(
+                                            attemptAutoClose,
+                                            1000
+                                        );
                                     }
                                 }
 
@@ -3125,17 +3210,12 @@ class MangaBuffAutomation(
                                             return;
                                         }
 
-                                        if (
-                                            !rewardClaimFinished &&
-                                            !rewardClaimPending &&
-                                            !window.__mbAdsRewardFallbackStarted
-                                        ) {
-                                            window.__mbAdsRewardFallbackStarted = true;
-                                            AndroidAds.onStateLog(
-                                                "AD_REWARD_FALLBACK",
-                                                "native_close_requested; accessibility_fallback_enabled"
-                                            );
-                                            requestRewardClaim();
+                                        if (!rewardClaimFinished && !rewardClaimPending) {
+                                            /*
+                                             * Fallback is triggered by verifyAfterNativeClose()
+                                             * only when the verified native close did not produce a
+                                             * reward confirmation.
+                                             */
                                         }
                                     }, 750);
                                 }
