@@ -637,6 +637,7 @@ fun AccountCard(
                     val today = currentStatsDay()
                     val isToday = account.dailyStatsDay == today
                     val dailyBattles = if (isToday) account.dailyBattles else 0
+                    val dailyBattleAttempts = if (isToday) account.dailyBattleAttempts else 0
                     val dailyQuiz = if (isToday) account.dailyQuiz else 0
                     val dailyAds = if (isToday) account.dailyAds else 0
                     val dailyMineOre = if (isToday) account.dailyMineOre else 0
@@ -668,7 +669,7 @@ fun AccountCard(
                         }
                     }
 
-                    TaskSwitchRow("🃏 Бои", "${battleTarget}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
+                    TaskSwitchRow("🃏 Бои", "${dailyBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
                     }
                     TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
@@ -1115,13 +1116,17 @@ fun LogsTab(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Тест фонового режима (${visibleLogs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Text(
+                "Тест фонового режима (${visibleLogs.size})",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedButton(
                     onClick = onClearLogs,
                     enabled = visibleLogs.isNotEmpty()
