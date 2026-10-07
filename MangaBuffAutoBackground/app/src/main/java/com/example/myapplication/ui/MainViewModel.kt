@@ -80,6 +80,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         DailyStats(
                             day = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_DAY).orEmpty(),
                             battles = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_BATTLES, 0) ?: 0,
+                            battleAttempts = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_BATTLE_ATTEMPTS, 0) ?: 0,
                             quiz = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_QUIZ, 0) ?: 0,
                             ads = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_ADS, 0) ?: 0,
                             mineOre = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_MINE_ORE, 0) ?: 0,
