@@ -2783,61 +2783,41 @@ class MangaBuffAutomation(
                                         );
                                     }
 
-                                    if (exact && exact.width > 0 && exact.height > 0) {
+                                    if (!exact || exact.width <= 0 || exact.height <= 0) {
                                         AndroidAds.onStateLog(
-                                            "NATIVE_CLOSE_AVAILABLE",
-                                            "x=" + (exact.left + exact.width / 2) +
-                                            " y=" + (exact.top + exact.height / 2) +
-                                            " rect=" + exact.width + "x" + exact.height +
-                                            " action=MANUAL_REQUIRED"
+                                            "NATIVE_CLOSE_UNAVAILABLE",
+                                            "close_control_found_but_geometry_unavailable"
                                         );
-                                    } else {
-                                        try {
-                                            var frames = Array.from(document.querySelectorAll("iframe"));
-                                            var best = null;
-                                            var bestArea = 0;
-
-                                            frames.forEach(function(frame) {
-                                                try {
-                                                    var r = frame.getBoundingClientRect();
-                                                    var area = Math.max(0, r.width) * Math.max(0, r.height);
-                                                    if (
-                                                        r.width >= width * 0.8 &&
-                                                        r.height >= height * 0.8 &&
-                                                        area > bestArea
-                                                    ) {
-                                                        bestArea = area;
-                                                        best = r;
-                                                    }
-                                                } catch (e) {}
-                                            });
-
-                                            if (best) {
-                                                AndroidAds.onStateLog(
-                                                    "NATIVE_CLOSE_IFRAME_RECT",
-                                                    "left=" + best.left +
-                                                    " top=" + best.top +
-                                                    " width=" + best.width +
-                                                    " height=" + best.height +
-                                                    " action=DIAGNOSTIC_ONLY"
-                                                );
-                                            }
-                                        } catch (e) {
-                                            AndroidAds.onStateLog(
-                                                "NATIVE_CLOSE_IFRAME_RECT_ERROR",
-                                                "error=" + (e && e.message ? e.message : String(e))
-                                            );
-                                        }
-
-                                        AndroidAds.onStateLog(
-                                            "NATIVE_CLOSE_MANUAL_REQUIRED",
-                                            "close_control_inaccessible_to_parent_document viewport=" +
-                                                width + "x" + height
-                                        );
+                                        return false;
                                     }
 
-                                    return false;
+                                    var tapX = exact.left + exact.width / 2;
+                                    var tapY = exact.top + exact.height / 2;
+
+                                    AndroidAds.onStateLog(
+                                        "NATIVE_CLOSE_AUTO_TAP",
+                                        "x=" + tapX +
+                                            " y=" + tapY +
+                                            " rect=" + exact.width + "x" + exact.height +
+                                            " selector=data-fullscreen-element:close"
+                                    );
+
+                                    try {
+                                        AndroidAds.onCloseTapRequested(
+                                            tapX,
+                                            tapY,
+                                            "Yandex data-fullscreen-element=close"
+                                        );
+                                        return true;
+                                    } catch (e) {
+                                        AndroidAds.onStateLog(
+                                            "NATIVE_CLOSE_AUTO_TAP_ERROR",
+                                            "error=" + (e && e.message ? e.message : String(e))
+                                        );
+                                        return false;
+                                    }
                                 }
+
                                 function verifyReward(attempt) {
                                     if (finished) return;
 
@@ -2990,6 +2970,77 @@ class MangaBuffAutomation(
                                     });
                                 }
 
+                                var nativeCloseAttempts = 0;
+                                var nativeCloseRetryTimer = null;
+                                var nativeCloseRequested = false;
+
+                                function finishNativeCloseRetryTimer() {
+                                    if (nativeCloseRetryTimer) {
+                                        clearTimeout(nativeCloseRetryTimer);
+                                        nativeCloseRetryTimer = null;
+                                    }
+                                }
+
+                                function attemptAutoClose() {
+                                    if (finished || nativeCloseRequested || nativeCloseAttempts >= 3) {
+                                        return;
+                                    }
+
+                                    var close = findCloseButton();
+
+                                    if (!close) {
+                                        AndroidAds.onStateLog(
+                                            "AUTO_CLOSE_SEARCH",
+                                            "attempt=" + (nativeCloseAttempts + 1) +
+                                                " found=false"
+                                        );
+
+                                        if (nativeCloseAttempts === 0) {
+                                            /*
+                                             * The close node can appear a little after the
+                                             * countdown reaches zero. Give Accessibility a chance
+                                             * only after the exact DOM selector is unavailable.
+                                             */
+                                            requestRewardClaim();
+                                        }
+
+                                        nativeCloseRetryTimer = setTimeout(attemptAutoClose, 1000);
+                                        return;
+                                    }
+
+                                    nativeCloseAttempts++;
+
+                                    AndroidAds.onStateLog(
+                                        "AUTO_CLOSE_SEARCH",
+                                        "attempt=" + nativeCloseAttempts +
+                                            " found=true visible=" + isVisibleElement(close)
+                                    );
+
+                                    if (!isVisibleElement(close)) {
+                                        nativeCloseRetryTimer = setTimeout(attemptAutoClose, 500);
+                                        return;
+                                    }
+
+                                    if (requestNativeCloseTap(close)) {
+                                        nativeCloseRequested = true;
+                                        AndroidAds.onStateLog(
+                                            "AUTO_CLOSE_REQUESTED",
+                                            "source=Yandex close control"
+                                        );
+
+                                        /*
+                                         * The native tap is delivered asynchronously by Android.
+                                         * Give the rewarded session a moment to process the close,
+                                         * then let the server-balance verifier confirm +7.
+                                         */
+                                        setTimeout(function() {
+                                            if (!finished) verifyReward(0);
+                                        }, 900);
+                                    } else {
+                                        nativeCloseRetryTimer = setTimeout(attemptAutoClose, 750);
+                                    }
+                                }
+
                                 function requestRewardClaim() {
                                     if (
                                         finished ||
@@ -3022,11 +3073,15 @@ class MangaBuffAutomation(
 
                                 function startAdMonitoring() {
                                     /*
-                                     * The real MangaBuff handler has already opened the Yandex
-                                     * Rewarded ad. After the minimum viewing period, the fullscreen
-                                     * reward control may be inside a cross-origin iframe and therefore
-                                     * invisible to page JavaScript. Use Android accessibility to press
-                                     * the actual "Получить награду" control.
+                                     * Exact Yandex close markup confirmed for this rewarded format:
+                                     *   [data-fullscreen-element="close"]
+                                     *     [data-survey-fullscreen-control]
+                                     *       <svg width="40" height="40">...</svg>
+                                     *
+                                     * After the minimum viewing period, press that REAL close
+                                     * control through the native WebView. Accessibility remains
+                                     * only as a fallback when the cross-origin/iframe DOM is not
+                                     * exposed to page JavaScript.
                                      */
                                     var adStartedAt = Date.now();
                                     var ownWatchDurationMs = 32000;
@@ -3038,8 +3093,9 @@ class MangaBuffAutomation(
                                     );
 
                                     watchTimer = setInterval(function() {
-                                        if (finished || rewardClaimFinished) {
+                                        if (finished) {
                                             clearInterval(watchTimer);
+                                            finishNativeCloseRetryTimer();
                                             return;
                                         }
 
@@ -3059,21 +3115,27 @@ class MangaBuffAutomation(
                                             return;
                                         }
 
-                                        requestRewardClaim();
+                                        /*
+                                         * First preference: exact Yandex close control.
+                                         * Secondary preference: Android accessibility reward
+                                         * control if the close node is not visible to page JS.
+                                         */
+                                        if (!nativeCloseRequested) {
+                                            attemptAutoClose();
+                                            return;
+                                        }
 
                                         if (
-                                            rewardClaimAttempts >= 20 &&
-                                            !rewardClaimPending &&
                                             !rewardClaimFinished &&
-                                            !window.__mbAdsRewardClaimTimeoutLogged
+                                            !rewardClaimPending &&
+                                            !window.__mbAdsRewardFallbackStarted
                                         ) {
-                                            window.__mbAdsRewardClaimTimeoutLogged = true;
+                                            window.__mbAdsRewardFallbackStarted = true;
                                             AndroidAds.onStateLog(
-                                                "AD_REWARD_STAGE_TIMEOUT",
-                                                "accessibility_reward_control_not_found"
+                                                "AD_REWARD_FALLBACK",
+                                                "native_close_requested; accessibility_fallback_enabled"
                                             );
-                                            clearInterval(watchTimer);
-                                            verifyReward(0);
+                                            requestRewardClaim();
                                         }
                                     }, 750);
                                 }
