@@ -8,6 +8,7 @@ import java.util.Locale
 data class DailyStats(
     val day: String = "",
     val battles: Int = 0,
+    val battleAttempts: Int = 0,
     val quiz: Int = 0,
     val ads: Int = 0,
     val mineOre: Int = 0,
@@ -44,6 +45,7 @@ data class MangaBuffAccount(
     val commentProgress: String = "0/13",
     val dailyStatsDay: String = "",
     val dailyBattles: Int = 0,
+    val dailyBattleAttempts: Int = 0,
     val dailyQuiz: Int = 0,
     val dailyAds: Int = 0,
     val dailyMineOre: Int = 0,
