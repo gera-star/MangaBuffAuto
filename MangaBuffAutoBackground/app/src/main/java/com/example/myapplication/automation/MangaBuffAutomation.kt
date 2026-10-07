@@ -465,6 +465,7 @@ class MangaBuffAutomation(
             DailyStats(
                 day = account.dailyStatsDay,
                 battles = account.dailyBattles,
+                battleAttempts = account.dailyBattleAttempts,
                 quiz = account.dailyQuiz,
                 ads = account.dailyAds,
                 mineOre = account.dailyMineOre,
@@ -1375,23 +1376,32 @@ class MangaBuffAutomation(
                     winCount++
                     addDaily(account) {
                         it.copy(
+                            battleAttempts = it.battleAttempts + 1,
                             battles = it.battles + 1
                         )
                     }
                     log(
                         account.username,
                         "BATTLE: RESULT=WIN battles=" + battleCount +
-                            "/" + battleTarget + " wins=" + winCount
+                            "/" + battleTarget + " wins=" + winCount +
+                            " dailyAttempts=" + dailyStats.battleAttempts +
+                            " dailyWins=" + dailyStats.battles
                     )
                 }
 
                 is TaskResult.BattleLost -> {
                     battleCount++
-                    // Losses are completed rounds, but DailyStats currently stores wins only.
+                    addDaily(account) {
+                        it.copy(
+                            battleAttempts = it.battleAttempts + 1
+                        )
+                    }
                     log(
                         account.username,
                         "BATTLE: RESULT=LOSS battles=" + battleCount +
-                            "/" + battleTarget + " wins=" + winCount
+                            "/" + battleTarget + " wins=" + winCount +
+                            " dailyAttempts=" + dailyStats.battleAttempts +
+                            " dailyWins=" + dailyStats.battles
                     )
                 }
 
@@ -2041,7 +2051,7 @@ class MangaBuffAutomation(
 
                                 function findWatchButton() {
                                     var direct = document.querySelector(
-                                        ".wallet-panel__action.user-quest__watch-ads-btn"
+                                        "button.wallet-panel__action.wallet-panel__action--ads.user-quest__watch-ads-btn"
                                     );
                                     if (direct) return direct;
 
@@ -3108,6 +3118,11 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
+                                    AndroidAds.onStateLog(
+                                        "WATCH_BUTTON_CLICKED",
+                                        "button=.wallet-panel__action--ads.user-quest__watch-ads-btn data-count=" +
+                                            (btn.getAttribute("data-count") || "")
+                                    );
                                     AndroidAds.onStateLog("WATCH_CLICKED", "Клик по кнопке рекламы");
                                     startAdMonitoring();
                                 }
