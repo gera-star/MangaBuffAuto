@@ -3035,38 +3035,24 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
-                                    var close = findCloseButton();
-
-                                    if (close && isVisibleElement(close)) {
-                                        nativeCloseAttempts++;
-
-                                        AndroidAds.onStateLog(
-                                            "AUTO_CLOSE_SEARCH",
-                                            "attempt=" + nativeCloseAttempts +
-                                                " found=true visible=true source=DOM"
-                                        );
-
-                                        if (requestNativeCloseTap(close)) {
-                                            nativeCloseRequested = true;
-                                            AndroidAds.onStateLog(
-                                                "AUTO_CLOSE_REQUESTED",
-                                                "source=Yandex close control"
-                                            );
-                                            verifyAfterNativeClose();
-                                        } else {
-                                            nativeCloseRetryTimer = setTimeout(
-                                                attemptAutoClose,
-                                                750
-                                            );
-                                        }
-                                        return;
-                                    }
-
                                     /*
-                                     * Exact DOM control is inaccessible in the parent document.
-                                     * Use the coordinate pair already verified in our previous
-                                     * real-device test instead of inventing a new screen position.
+                                     * IMPORTANT:
+                                     * The Yandex fullscreen close element can be discovered in
+                                     * the injected DOM, but its getBoundingClientRect() coordinates
+                                     * are NOT guaranteed to be coordinates of the parent WebView.
+                                     * The previous test proved this: the DOM returned a point near
+                                     * the bottom of the WebView and the native tap opened the ad's
+                                     * Google Play destination instead of closing the ad.
+                                     *
+                                     * Therefore NEVER dispatch a native tap using the DOM rect here.
+                                     * Use the previously verified fullscreen top-right point.
                                      */
+                                    AndroidAds.onStateLog(
+                                        "AUTO_CLOSE_SEARCH",
+                                        "attempt=" + (nativeCloseAttempts + 1) +
+                                            " dom_coordinate_tap=DISABLED source=VERIFIED_FALLBACK"
+                                    );
+
                                     if (!verifiedFallbackRequested) {
                                         verifiedFallbackRequested = true;
                                         nativeCloseAttempts++;
