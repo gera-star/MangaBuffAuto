@@ -1030,7 +1030,9 @@ private fun CompactNumberField(
 
 @Composable
 fun LogsTab(
-
+    logs: List<LogEntry>,
+    onClearLogs: () -> Unit
+) {
     val visibleLogs = remember(logs) {
         logs.filter { entry ->
             val m = entry.message
@@ -1049,9 +1051,6 @@ fun LogsTab(
                 m.contains("SERVICE_")
         }
     }
-    logs: List<LogEntry>,
-    onClearLogs: () -> Unit
-) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
