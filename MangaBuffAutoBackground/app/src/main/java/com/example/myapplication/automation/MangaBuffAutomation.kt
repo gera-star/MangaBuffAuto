@@ -2982,9 +2982,15 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * The verified fullscreen close control is 40x40 CSS px and sits
-                                 * flush against the top-right corner of the Yandex fullscreen layer.
-                                 * Its center is therefore viewportWidth - 20, 20.
+                                 * The native "Вернуться в UI" button is drawn over the WebView at:
+                                 *   top = 64dp, end = 12dp.
+                                 *
+                                 * The real Yandex fullscreen close cross observed in this layout is
+                                 * immediately above the final "U" of that button. The 40x40 CSS px
+                                 * close control is therefore centered about 20px above the button's
+                                 * top edge and 20px left of the button's right edge:
+                                 *   X = viewportWidth - (12 + 20)
+                                 *   Y = 64 - 20
                                  *
                                  * Do not use getBoundingClientRect() from the injected page here:
                                  * that rect may belong to a nested/cross-origin Yandex frame and is
@@ -2994,8 +3000,9 @@ class MangaBuffAutomation(
                                     window.visualViewport && window.visualViewport.width
                                         ? window.visualViewport.width
                                         : (window.innerWidth || 384);
-                                var VERIFIED_CLOSE_FALLBACK_X = Math.max(20.0, verifiedViewportWidth - 20.0);
-                                var VERIFIED_CLOSE_FALLBACK_Y = 20.0;
+                                var VERIFIED_CLOSE_FALLBACK_X =
+                                    Math.max(20.0, verifiedViewportWidth - 32.0);
+                                var VERIFIED_CLOSE_FALLBACK_Y = 44.0;
                                 var verifiedFallbackRequested = false;
 
                                 function verifyAfterNativeClose() {
