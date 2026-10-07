@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
 
                     if (towardCenter && mostlyHorizontal && shortGesture) {
                         val webView = AutomationWebViewRegistry.webViewsByAccount.value.values
-                            .firstOrNull { !it.isDestroyed }
+                            .firstOrNull()
 
                         if (webView != null && webView.canGoBack()) {
                             webView.goBack()
