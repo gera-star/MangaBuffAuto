@@ -2158,107 +2158,8 @@ class MangaBuffAutomation(
                                  * Hook it as an additional completion signal and diagnostic.
                                  * The MangaBuff server balance remains authoritative.
                                  */
-                                function installYandexRewardHook() {
-                                    try {
-                                        if (window.__mbYandexRewardHookState) return true;
+                                window.__mbYandexRewardHookState = { rewarded: false, callbackValue: null };
 
-                                        window.__mbYandexRewardHookState = {
-                                            installed: false,
-                                            rewarded: false,
-                                            callbackValue: null
-                                        };
-
-                                        function tryInstall() {
-                                            try {
-                                                var adv = window.Ya &&
-                                                    window.Ya.Context &&
-                                                    window.Ya.Context.AdvManager;
-
-                                                if (!adv || typeof adv.render !== "function") return false;
-                                                if (adv.__mbOriginalRender) {
-                                                    window.__mbYandexRewardHookState.installed = true;
-                                                    return true;
-                                                }
-
-                                                var originalRender = adv.render;
-                                                adv.__mbOriginalRender = originalRender;
-
-                                                adv.render = function(options) {
-                                                    try {
-                                                        if (options && typeof options.onRewarded === "function") {
-                                                            var originalOnRewarded = options.onRewarded;
-                                                            var wrappedOptions = Object.assign({}, options);
-
-                                                            wrappedOptions.onRewarded = function(isRewarded) {
-                                                                window.__mbYandexRewardHookState.callbackValue = !!isRewarded;
-                                                                window.__mbYandexRewardHookState.rewarded = !!isRewarded;
-
-                                                                AndroidAds.onStateLog(
-                                                                    "YANDEX_REWARDED_CALLBACK",
-                                                                    "isRewarded=" + !!isRewarded
-                                                                );
-
-                                                                try {
-                                                                    return originalOnRewarded.apply(this, arguments);
-                                                                } finally {
-                                                                    if (isRewarded) {
-                                                                        setTimeout(function() {
-                                                                            try { verifyReward(0); } catch (e) {}
-                                                                        }, 250);
-                                                                    }
-                                                                }
-                                                            };
-
-                                                            return originalRender.call(this, wrappedOptions);
-                                                        }
-                                                    } catch (e) {
-                                                        AndroidAds.onStateLog(
-                                                            "YANDEX_REWARD_HOOK_ERROR",
-                                                            "error=" + (e && e.message ? e.message : String(e))
-                                                        );
-                                                    }
-
-                                                    return originalRender.apply(this, arguments);
-                                                };
-
-                                                window.__mbYandexRewardHookState.installed = true;
-                                                AndroidAds.onStateLog("YANDEX_REWARD_HOOK", "installed");
-                                                return true;
-                                            } catch (e) {
-                                                return false;
-                                            }
-                                        }
-
-                                        if (!tryInstall()) {
-                                            var tries = 0;
-                                            var retry = setInterval(function() {
-                                                if (finished || window.__mbYandexRewardHookState.rewarded) {
-                                                    clearInterval(retry);
-                                                    return;
-                                                }
-
-                                                tries++;
-                                                if (tryInstall() || tries >= 40) {
-                                                    clearInterval(retry);
-                                                    if (!window.__mbYandexRewardHookState.installed) {
-                                                        AndroidAds.onStateLog(
-                                                            "YANDEX_REWARD_HOOK",
-                                                            "not_installed_after_40_tries"
-                                                        );
-                                                    }
-                                                }
-                                            }, 250);
-                                        }
-
-                                        return true;
-                                    } catch (e) {
-                                        AndroidAds.onStateLog(
-                                            "YANDEX_REWARD_HOOK_ERROR",
-                                            "error=" + (e && e.message ? e.message : String(e))
-                                        );
-                                        return false;
-                                    }
-                                }
                                 var initialButton = findWatchButton();
                                 var initialDiamond = readDiamondBalance(document);
                                 var initialButtonCount = readButtonCount(initialButton);
@@ -3118,8 +3019,6 @@ class MangaBuffAutomation(
                                     initialButton = btn;
                                     initialButtonCount = readButtonCount(btn);
                                     initialDiamond = readDiamondBalance(document);
-
-                                    installYandexRewardHook();
 
                                     try {
                                         btn.click();
