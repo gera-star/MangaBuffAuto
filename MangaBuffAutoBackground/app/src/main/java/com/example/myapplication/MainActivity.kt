@@ -162,7 +162,7 @@ class MainActivity : ComponentActivity() {
                                                     FrameLayout.LayoutParams.WRAP_CONTENT
                                                 ).apply {
                                                     gravity = Gravity.TOP or Gravity.END
-                                                    topMargin = (12 * resources.displayMetrics.density).toInt()
+                                                    topMargin = (64 * resources.displayMetrics.density).toInt()
                                                     marginEnd = (12 * resources.displayMetrics.density).toInt()
                                                 }
                                             )
