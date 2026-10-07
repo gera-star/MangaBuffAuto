@@ -24,6 +24,8 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.example.myapplication.ui.MainViewModel
 import com.example.myapplication.ui.MangaBuffAppUI
 import com.example.myapplication.ui.theme.MyApplicationTheme
@@ -147,6 +149,19 @@ class MainActivity : ComponentActivity() {
                                                     marginEnd = (12 * resources.displayMetrics.density).toInt()
                                                 }
                                             )
+
+                                            ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
+                                                val statusBarTop = insets
+                                                    .getInsets(WindowInsetsCompat.Type.statusBars())
+                                                    .top
+                                                val lp = returnButton.layoutParams as FrameLayout.LayoutParams
+                                                lp.topMargin =
+                                                    statusBarTop +
+                                                        (12 * resources.displayMetrics.density).toInt()
+                                                returnButton.layoutParams = lp
+                                                insets
+                                            }
+                                            ViewCompat.requestApplyInsets(this)
 
                                             tag = returnButton
                                         }
