@@ -2982,14 +2982,19 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * Previously verified on the same fullscreen RSYA rewarded UI:
-                                 * viewport=384x850 CSS px, close center=(364,20).
+                                 * The verified fullscreen close control is 40x40 CSS px and sits
+                                 * flush against the top-right corner of the Yandex fullscreen layer.
+                                 * Its center is therefore viewportWidth - 20, 20.
                                  *
-                                 * The native dispatcher converts these CSS coordinates using the
-                                 * current WebView density. Keep this as an explicit fallback because
-                                 * the Yandex fullscreen DOM can be invisible to MangaBuff's document.
+                                 * Do not use getBoundingClientRect() from the injected page here:
+                                 * that rect may belong to a nested/cross-origin Yandex frame and is
+                                 * not necessarily in the parent WebView coordinate space.
                                  */
-                                var VERIFIED_CLOSE_FALLBACK_X = 364.0;
+                                var verifiedViewportWidth =
+                                    window.visualViewport && window.visualViewport.width
+                                        ? window.visualViewport.width
+                                        : (window.innerWidth || 384);
+                                var VERIFIED_CLOSE_FALLBACK_X = Math.max(20.0, verifiedViewportWidth - 20.0);
                                 var VERIFIED_CLOSE_FALLBACK_Y = 20.0;
                                 var nativeCloseAttempts = 0;
                                 var nativeCloseRetryTimer = null;
