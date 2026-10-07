@@ -44,6 +44,9 @@ enum class ReaderScrollMode {
 
 sealed class TaskResult {
     data object Success : TaskResult()
+    data object BattleWon : TaskResult()
+    data object BattleLost : TaskResult()
+    data class BattleFinished(val battles: Int, val wins: Int) : TaskResult()
     data object Skipped : TaskResult()
     data object Cancelled : TaskResult()
     data class Failed(val reason: String) : TaskResult()
@@ -1101,11 +1104,14 @@ class MangaBuffAutomation(
                 val elapsed = SystemClock.elapsedRealtime() - start
 
                 when (result) {
-                    is TaskResult.Success -> {
-                        addDaily(account) { it.copy(battles = it.battles + settings.battleTargetCount.coerceAtLeast(0)) }
-                        log(account.username, "BATTLE: TASK_SUCCESS elapsed=${elapsed}ms")
+                    is TaskResult.BattleFinished -> {
+                        addDaily(account) { it.copy(battles = it.battles + result.wins) }
+                        log(account.username, "BATTLE: TASK_SUCCESS battles=" + result.battles + " wins=" + result.wins + " elapsed=" + elapsed + "ms")
                     }
-                    is TaskResult.Failed -> log(account.username, "BATTLE: TASK_FAILED reason=${result.reason}", true)
+                    is TaskResult.Success -> {
+                        log(account.username, "BATTLE: TASK_SUCCESS elapsed=" + elapsed + "ms")
+                    }
+                    is TaskResult.Failed -> log(account.username, "BATTLE: TASK_FAILED reason=" + result.reason, true)
                     is TaskResult.Cancelled -> log(account.username, "BATTLE: TASK_CANCELLED")
                     else -> log(account.username, "BATTLE: TASK_FINISHED elapsed=${elapsed}ms")
                 }
@@ -1187,41 +1193,45 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ): TaskResult {
-        val battleTarget = settings.battleTargetCount
-        log(account.username, "BATTLE: START target=$battleTarget current=0")
+        val battleTarget = settings.battleTargetCount.coerceAtLeast(0)
         var battleCount = 0
+        var winCount = 0
 
-        updateStatus(account, "⚔️ Бои $battleCount/$battleTarget", true, "Бои", 0f)
+        log(account.username, "BATTLE: START targetBattles=" + battleTarget)
+        updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои", 0f)
 
         while (battleCount < battleTarget) {
             coroutineContext.ensureActive()
+
             val progress = if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f
-            updateStatus(account, "⚔️ Бои $battleCount/$battleTarget", true, "Бои", progress)
+            updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои", progress)
 
             when (val roundResult = runSingleBattleRound(account, webView, battleCount + 1, battleTarget)) {
-                is TaskResult.Success -> {
+                is TaskResult.BattleWon -> {
                     battleCount++
-                    log(account.username, "BATTLE: COMPLETED count=$battleCount/$battleTarget")
-                    updateStatus(account, "⚔️ Бои $battleCount/$battleTarget", true, "Бои", if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f)
-
-                    if (battleCount < battleTarget) {
-                        log(account.username, "BATTLE: COOLDOWN_START duration=2000")
-                        delay(BATTLE_COOLDOWN_MS)
-                        log(account.username, "BATTLE: COOLDOWN_DONE")
-                    }
+                    winCount++
+                    log(account.username, "BATTLE: RESULT=WIN battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
+                }
+                is TaskResult.BattleLost -> {
+                    battleCount++
+                    log(account.username, "BATTLE: RESULT=LOSS battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
                 }
                 is TaskResult.Cancelled -> return TaskResult.Cancelled
                 is TaskResult.Failed -> return roundResult
-                else -> return TaskResult.Failed("unknown_error")
+                else -> return TaskResult.Failed("unexpected_battle_round_result")
+            }
+
+            updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои",
+                if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f)
+
+            if (battleCount < battleTarget) {
+                delay(BATTLE_COOLDOWN_MS)
             }
         }
 
-        log(account.username, "BATTLE: TARGET_REACHED $battleCount/$battleTarget")
-        log(account.username, "BATTLE: REWARDS_START")
+        log(account.username, "BATTLE: TARGET_REACHED battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
         claimBattleRewards(account, webView)
-        log(account.username, "BATTLE: REWARDS_COMPLETED")
-
-        return TaskResult.Success
+        return TaskResult.BattleFinished(battleCount, winCount)
     }
 
     private suspend fun runSingleBattleRound(
@@ -1281,36 +1291,16 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
-                fun onSkipClicked() {
-                    // The JS bridge callback runs off the WebView UI thread.
-                    // Return the completed round to runBattleTask on the main thread.
-                    // The next round will open /battle itself.
-                    log(account.username, "BATTLE: RETURN_TO_BATTLE_REQUEST")
-
+                fun onBattleResult(result: String) {
+                    val normalized = result.trim().lowercase()
+                    log(account.username, "BATTLE: RESULT_DETECTED value=" + normalized)
                     mainHandler.post {
                         if (!continuation.isActive) return@post
-
-                        try {
-                            log(account.username, "BATTLE: RETURN_TO_BATTLE")
-                            webView.loadUrl("https://mangabuff.ru/battle")
-
-                            // IMPORTANT:
-                            // This callback means the current battle has reached
-                            // "К итогам". The round is finished here. Without
-                            // resuming the continuation, runBattleTask stays at
-                            // 0/20 forever and never increments battleCount.
-                            safeResume(TaskResult.Success)
-                        } catch (e: Exception) {
-                            log(
-                                account.username,
-                                "BATTLE: RETURN_TO_BATTLE_ERROR error=" + e.javaClass.simpleName + ": " + e.message,
-                                true
-                            )
-                            safeResume(
-                                TaskResult.Failed(
-                                    "return_to_battle_exception=" + e.javaClass.simpleName + ":" + e.message
-                                )
-                            )
+                        try { webView.loadUrl("https://mangabuff.ru/battle") } catch (_: Exception) {}
+                        when (normalized) {
+                            "win", "победа" -> safeResume(TaskResult.BattleWon)
+                            "loss", "lose", "поражение" -> safeResume(TaskResult.BattleLost)
+                            else -> safeResume(TaskResult.Failed("unknown_battle_result=" + normalized))
                         }
                     }
                 }
@@ -1340,10 +1330,30 @@ class MangaBuffAutomation(
                                             return (btn.textContent || '').trim() === 'К итогам' && !btn.disabled;
                                         });
 
+                                    function waitForResultPanel(startedAt) {
+                                        var title = document.querySelector('.battle-finish-panel__title');
+                                        if (title) {
+                                            var text = (title.textContent || '').replace(/\\s+/g, ' ').trim();
+                                            if (/победа/i.test(text)) {
+                                                AndroidBattleBridge.onBattleResult('win');
+                                                return;
+                                            }
+                                            if (/поражение/i.test(text)) {
+                                                AndroidBattleBridge.onBattleResult('loss');
+                                                return;
+                                            }
+                                        }
+                                        if (Date.now() - startedAt >= 12000) {
+                                            AndroidBattleBridge.onRoundFailed('result_panel_timeout');
+                                            return;
+                                        }
+                                        setTimeout(function() { waitForResultPanel(startedAt); }, 300);
+                                    }
+
                                     if (skip) {
                                         AndroidBattleBridge.onStateLog('RESULTS_BUTTON_FOUND', 'Кнопка К итогам найдена');
                                         skip.click();
-                                        AndroidBattleBridge.onSkipClicked();
+                                        waitForResultPanel(Date.now());
                                         return;
                                     }
 
@@ -1358,7 +1368,7 @@ class MangaBuffAutomation(
                                         if (btn) {
                                             clearInterval(timer);
                                             btn.click();
-                                            AndroidBattleBridge.onSkipClicked();
+                                            waitForResultPanel(Date.now());
                                         } else if (elapsed >= 30000) {
                                             clearInterval(timer);
                                             AndroidBattleBridge.onRoundFailed('skip_button_timeout');
@@ -2797,22 +2807,44 @@ class MangaBuffAutomation(
 
                                         if (!window.__mbAdsManualVerifyStarted) {
                                             window.__mbAdsManualVerifyStarted = true;
+                                            window.__mbAdsNativeCloseAttempts = 0;
 
-                                            /*
-                                             * TEMP DEBUG MODE:
-                                             * The automation WebView is intentionally visible and the
-                                             * native fallback tap is disabled here. This lets the developer
-                                             * physically see the real Yandex fullscreen ad and press its
-                                             * real X/close control. Reward confirmation still comes only
-                                             * from MangaBuff server balance (+7 diamonds).
-                                             */
+                                            function requestNativeClose() {
+                                                if (finished) return;
+
+                                                window.__mbAdsNativeCloseAttempts++;
+                                                var close = findCloseButton();
+                                                var rect = null;
+                                                try { rect = close ? getTopViewportRect(close) : null; } catch (e) {}
+
+                                                var x = rect ? (rect.left + rect.width / 2) : Math.max(1, window.innerWidth - 35);
+                                                var y = rect ? (rect.top + rect.height / 2) : 35;
+
+                                                AndroidAds.onStateLog(
+                                                    "AD_CLOSE_NATIVE_REQUEST",
+                                                    "attempt=" + window.__mbAdsNativeCloseAttempts +
+                                                    " x=" + x + " y=" + y +
+                                                    " source=" + (rect ? "DOM" : "TOP_RIGHT_FALLBACK")
+                                                );
+
+                                                AndroidAds.onCloseTapRequested(x, y, rect ? "DOM" : "TOP_RIGHT_FALLBACK");
+
+                                                setTimeout(function() {
+                                                    if (finished) return;
+                                                    verifyReward(0);
+
+                                                    if (window.__mbAdsNativeCloseAttempts < 3) {
+                                                        setTimeout(requestNativeClose, 1800);
+                                                    }
+                                                }, 1200);
+                                            }
+
                                             AndroidAds.onStateLog(
-                                                "AD_CLOSE_MANUAL_REQUIRED",
-                                                "elapsed=" + Math.floor(elapsed / 1000) +
-                                                "s yandexReady=true; DEBUG_VISIBLE_AD=true; waiting_for_real_user_close"
+                                                "AD_CLOSE_NATIVE_ENABLED",
+                                                "elapsed=" + Math.floor(elapsed / 1000) + "s"
                                             );
 
-                                            verifyReward(0);
+                                            requestNativeClose();
                                         }
 
 
@@ -6252,12 +6284,21 @@ class MangaBuffAutomation(
         }
 
         mainHandler.post {
-
             class CommentBridge {
-
                 @JavascriptInterface
                 fun onCommentLog(msg: String) {
-                    log(account.username, "COMMENT: $msg")
+                    log(account.username, "COMMENT: " + msg)
+                }
+
+                @JavascriptInterface
+                fun onTapRequested(x: Float, y: Float, source: String) {
+                    mainHandler.post {
+                        try {
+                            dispatchNativeTap(account.username, webView, x, y)
+                        } catch (e: Exception) {
+                            log(account.username, "COMMENT: NATIVE_TAP_ERROR " + e.message, true)
+                        }
+                    }
                 }
 
                 @JavascriptInterface
@@ -6270,142 +6311,117 @@ class MangaBuffAutomation(
             webView.addJavascriptInterface(CommentBridge(), "AndroidCommentBridge")
 
             fun injectScript() {
-                val available = commentPhrases.indices
-                    .filter { it !in recentCommentIndexes }
-                    .ifEmpty { commentPhrases.indices.toList() }
-
-                val index = available.random()
-                recentCommentIndexes.add(index)
-                if (recentCommentIndexes.size > 5) {
-                    recentCommentIndexes.removeAt(0)
-                }
-
-                val text = commentPhrases[index]
-                log(account.username, "COMMENT: TEXT_SELECTED index=$index text=\"$text\"")
-
                 val script = """
                     (function() {
                         try {
+                            var commentText = ${com.google.gson.Gson().toJson(text)};
+
                             function visible(el) {
                                 if (!el) return false;
+                                var r = el.getBoundingClientRect();
                                 var s = getComputedStyle(el);
-                                return (s.display !== 'none' && s.visibility !== 'hidden' && (el.offsetWidth > 0 || el.offsetHeight > 0));
+                                return r.width > 0 && r.height > 0 &&
+                                       s.display !== 'none' &&
+                                       s.visibility !== 'hidden' &&
+                                       parseFloat(s.opacity || '1') > 0;
                             }
 
-                            function findEditor() {
-                                var selectors = [
-                                    'textarea[name="text"]',
-                                    'textarea.comments__input',
-                                    'textarea.comments__textarea',
-                                    '.comments textarea',
-                                    'textarea[placeholder]',
-                                    '[contenteditable="true"]',
-                                    'input[name="text"]'
-                                ];
-                                for (var i = 0; i < selectors.length; i++) {
-                                    var list = Array.from(document.querySelectorAll(selectors[i]));
-                                    var found = list.find(visible);
-                                    if (found) return found;
+                            function center(el) {
+                                var r = el.getBoundingClientRect();
+                                return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                            }
+
+                            function openButton() {
+                                var icon = document.querySelector('i.icon-comment');
+                                return icon ? (icon.closest('button,a,[role="button"],.reader-menu__item') || icon) : null;
+                            }
+
+                            function closeWindow(done) {
+                                var close = document.querySelector('.reader-comments__close');
+                                if (close && visible(close)) {
+                                    var c = center(close);
+                                    AndroidCommentBridge.onTapRequested(c.x, c.y, 'close');
                                 }
-                                return null;
+                                setTimeout(done, 700);
                             }
 
-                            function sendButton() {
-                                var exact = document.querySelector('button.comments__send-btn');
-                                if (exact && visible(exact) && !exact.disabled) return exact;
-                                return null;
+                            function fillAndSend(attempt) {
+                                var form = document.querySelector('.comments__send-form');
+                                var textarea = form ? form.querySelector('textarea') : null;
+                                var send = form ? form.querySelector('.comments__send-btn') : null;
+
+                                if (!form || !visible(form) || !textarea || !send) {
+                                    if (attempt >= 30) {
+                                        AndroidCommentBridge.onCommentLog('FORM_TIMEOUT');
+                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
+                                        return;
+                                    }
+                                    setTimeout(function() { fillAndSend(attempt + 1); }, 500);
+                                    return;
+                                }
+
+                                AndroidCommentBridge.onCommentLog('FORM_FOUND');
+
+                                try {
+                                    textarea.focus();
+                                    var setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+                                    if (setter && setter.set) setter.set.call(textarea, commentText);
+                                    else textarea.value = commentText;
+
+                                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                                    AndroidCommentBridge.onCommentLog('TEXT_ENTERED');
+                                } catch (e) {
+                                    AndroidCommentBridge.onCommentLog('INPUT_ERROR=' + (e.message || e));
+                                    closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
+                                    return;
+                                }
+
+                                setTimeout(function() {
+                                    var currentForm = document.querySelector('.comments__send-form');
+                                    var button = currentForm ? currentForm.querySelector('.comments__send-btn') : null;
+
+                                    if (!button || !visible(button) || button.disabled) {
+                                        AndroidCommentBridge.onCommentLog('SEND_NOT_READY');
+                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
+                                        return;
+                                    }
+
+                                    var bc = center(button);
+                                    AndroidCommentBridge.onCommentLog('SEND_REQUEST');
+                                    AndroidCommentBridge.onTapRequested(bc.x, bc.y, 'send');
+
+                                    setTimeout(function() {
+                                        var f = document.querySelector('.comments__send-form');
+                                        var t = f ? f.querySelector('textarea') : null;
+                                        var sent = !f || !visible(f) || (t && String(t.value || '').trim() === '');
+
+                                        AndroidCommentBridge.onCommentLog(sent ? 'SEND_CONFIRMED' : 'SEND_NOT_CONFIRMED');
+                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(!!sent); });
+                                    }, 1800);
+                                }, 350);
                             }
 
-                            var pagePath = window.location.pathname || '';
-                            if (!(new RegExp("^/manga/[^/]+/[0-9]+/[0-9]+$")).test(pagePath)) {
-                                AndroidCommentBridge.onCommentLog('COMMENT_SKIP_NON_CHAPTER_URL path=' + pagePath);
+                            var path = window.location.pathname || '';
+                            if (!/^\/manga\/[^/]+\/[0-9]+\/[0-9]+$/.test(path)) {
+                                AndroidCommentBridge.onCommentLog('NON_CHAPTER_URL');
                                 AndroidCommentBridge.onCommentResult(false);
                                 return;
                             }
 
-                            function waitForEditor(done) {
-                                var started = Date.now();
-                                var maxWait = 15000;
-
-                                function poll() {
-                                    var found = findEditor();
-                                    if (found) {
-                                        done(found);
-                                        return;
-                                    }
-
-                                    var elapsed = Date.now() - started;
-                                    if (elapsed >= maxWait) {
-                                        AndroidCommentBridge.onCommentLog('EDITOR_NOT_FOUND_TIMEOUT after=' + elapsed + 'ms');
-                                        AndroidCommentBridge.onCommentResult(false);
-                                        return;
-                                    }
-
-                                    AndroidCommentBridge.onCommentLog('EDITOR_WAIT elapsed=' + elapsed + 'ms');
-                                    setTimeout(poll, 500);
-                                }
-
-                                poll();
-                            }
-
-                            waitForEditor(function(editor) {
-                            var value = ${com.google.gson.Gson().toJson(text)};
-                            editor.focus();
-
-                            if (editor.isContentEditable) {
-                                editor.textContent = value;
-                            } else {
-                                var descriptor = Object.getOwnPropertyDescriptor(
-                                    Object.getPrototypeOf(editor),
-                                    'value'
-                                );
-                                if (descriptor && descriptor.set) {
-                                    descriptor.set.call(editor, value);
-                                } else {
-                                    editor.value = value;
-                                }
-                            }
-
-                            editor.dispatchEvent(new Event('input', { bubbles: true }));
-                            editor.dispatchEvent(new Event('change', { bubbles: true }));
-
-                            AndroidCommentBridge.onCommentLog('COMMENT_TEXT_FILLED');
-
-                            var btn = sendButton();
-                            if (!btn) {
-                                AndroidCommentBridge.onCommentLog('COMMENT_SEND_BUTTON_NOT_FOUND');
+                            var open = openButton();
+                            if (!open || !visible(open)) {
+                                AndroidCommentBridge.onCommentLog('BUTTON_NOT_FOUND');
                                 AndroidCommentBridge.onCommentResult(false);
                                 return;
                             }
 
-                            AndroidCommentBridge.onCommentLog('COMMENT_SEND_BUTTON_FOUND');
-                            btn.click();
-                            AndroidCommentBridge.onCommentLog('COMMENT_SEND_CLICK');
-
-                            var elapsed = 0;
-                            var timer = setInterval(function() {
-                                elapsed += 500;
-                                var current = findEditor();
-                                var empty = current
-                                    ? (current.isContentEditable
-                                        ? ((current.innerText || '').trim() === '')
-                                        : ((current.value || '').trim() === ''))
-                                    : false;
-
-                                if (empty) {
-                                    clearInterval(timer);
-                                    AndroidCommentBridge.onCommentLog('COMMENT_DOM_CONFIRMED');
-                                    AndroidCommentBridge.onCommentResult(true);
-                                } else if (elapsed >= 12000) {
-                                    clearInterval(timer);
-                                    AndroidCommentBridge.onCommentLog('COMMENT_VERIFY_TIMEOUT_AFTER_CLICK');
-                                    AndroidCommentBridge.onCommentResult(true);
-                                }
-                            }, 500);
-
-
-                            });                        } catch(e) {
-                            AndroidCommentBridge.onCommentLog('COMMENT_EXCEPTION ' + e.message);
+                            AndroidCommentBridge.onCommentLog('BUTTON_FOUND');
+                            var oc = center(open);
+                            AndroidCommentBridge.onTapRequested(oc.x, oc.y, 'open');
+                            setTimeout(function() { fillAndSend(1); }, 700);
+                        } catch (e) {
+                            AndroidCommentBridge.onCommentLog('EXCEPTION=' + (e.message || e));
                             AndroidCommentBridge.onCommentResult(false);
                         }
                     })();
@@ -6414,18 +6430,15 @@ class MangaBuffAutomation(
                 webView.evaluateJavascript(script, null)
             }
 
-            val currentUrl = webView.url ?: ""
+            val current = webView.url.orEmpty().substringBefore('?').substringBefore('#')
             val cleanTarget = targetUrl.substringBefore('?').substringBefore('#')
-            val cleanCurrent = currentUrl.substringBefore('?').substringBefore('#')
 
-            if (cleanCurrent.isNotBlank() && (cleanCurrent == cleanTarget || cleanCurrent.startsWith(cleanTarget))) {
+            if (current == cleanTarget || current.startsWith(cleanTarget)) {
                 injectScript()
             } else {
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        mainHandler.postDelayed({
-                            if (continuation.isActive) injectScript()
-                        }, 1200L)
+                        mainHandler.postDelayed({ if (continuation.isActive) injectScript() }, 900L)
                     }
                 }
                 webView.loadUrl(targetUrl)
