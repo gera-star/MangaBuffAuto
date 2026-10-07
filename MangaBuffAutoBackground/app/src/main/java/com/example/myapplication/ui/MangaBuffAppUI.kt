@@ -1064,35 +1064,19 @@ fun LogsTab(
     logs: List<LogEntry>,
     onClearLogs: () -> Unit
 ) {
-    val visibleLogs = remember(logs) {
+    var adsOnly by remember { mutableStateOf(true) }
+
+    val visibleLogs = remember(logs, adsOnly) {
         logs.filter { entry ->
-            val m = entry.message.removePrefix("BG:").trim()
-            m.startsWith("SERVICE_") ||
-                m.startsWith("WAKELOCK_") ||
-                m.startsWith("SCREEN_") ||
-                m.startsWith("HEARTBEAT") ||
-                m.startsWith("NATIVE_HEARTBEAT") ||
-                m.startsWith("BACKGROUND_") ||
-                m.startsWith("AUTOMATION_") ||
-                m.startsWith("NO_UI_ATTACHMENT") ||
-                m.startsWith("RENDERER_") ||
-                m.startsWith("START_REQUEST") ||
-                m.startsWith("START_ALL_REQUEST") ||
-                m.startsWith("SERVICE_START") ||
-                m.startsWith("SERVICE_START_ALL") ||
-                m.startsWith("SERVICE_DESTROYED") ||
-                m.startsWith("ACCOUNT_START") ||
-                m.startsWith("ACCOUNT_FINISHED") ||
-                m.startsWith("ACCOUNT_ABORTED") ||
-                m.startsWith("ACCOUNT_CANCELLED") ||
-                m.startsWith("SERVICE_CANCELLED") ||
-                m.startsWith("SERVICE_FAILED") ||
-                m.startsWith("STOP_ALL") ||
-                m.startsWith("STOP_ACCOUNT") ||
-                m.startsWith("RESTORE_PERSISTED_RUNS") ||
-                m.startsWith("ALL_TASKS_STOPPED_BY_USER")
+            val message = entry.message.removePrefix("BG:").trim()
+            val isAdLog =
+                message.startsWith("TASK: ADS") ||
+                    message.startsWith("ADS:")
+
+            if (adsOnly) isAdLog else !isAdLog
         }
     }
+
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -1109,7 +1093,7 @@ fun LogsTab(
         }
     }
 
-    LaunchedEffect(visibleLogs.size) {
+    LaunchedEffect(visibleLogs.size, adsOnly) {
         if (isAtBottom.value && visibleLogs.isNotEmpty()) {
             listState.animateScrollToItem(visibleLogs.size - 1)
         }
@@ -1118,10 +1102,22 @@ fun LogsTab(
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
             Text(
-                "Тест фонового режима (${visibleLogs.size})",
+                if (adsOnly) "Реклама (" + visibleLogs.size + ")" else "Всё остальное (" + visibleLogs.size + ")",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(onClick = { adsOnly = true }) {
+                    Text("Реклама")
+                }
+                OutlinedButton(onClick = { adsOnly = false }) {
+                    Text("Всё остальное")
+                }
+            }
             Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1142,10 +1138,13 @@ fun LogsTab(
                             val levelStr = if (log.isError) "ERROR" else "INFO"
                             val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
                             val componentStr = if (log.component.isNotBlank()) log.component else "APP"
-                            "[$timeStr] [$levelStr] [$accountStr] [$componentStr] ${log.message}"
+                            "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "] " + log.message
                         }
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                        val clip = android.content.ClipData.newPlainText("MangaBuff Logs", fullText)
+                        val clip = android.content.ClipData.newPlainText(
+                            if (adsOnly) "MangaBuff Ads Logs" else "MangaBuff Other Logs",
+                            fullText
+                        )
                         clipboard.setPrimaryClip(clip)
                         Toast.makeText(context, "Лог скопирован", Toast.LENGTH_SHORT).show()
                     },
@@ -1160,7 +1159,11 @@ fun LogsTab(
 
         if (visibleLogs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Логи пока пусты", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                Text(
+                    if (adsOnly) "Рекламных логов пока нет" else "Остальных логов пока нет",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.outline
+                )
             }
         } else {
             LazyColumn(
@@ -1174,7 +1177,7 @@ fun LogsTab(
                     val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
                     val componentStr = if (log.component.isNotBlank()) log.component else "APP"
                     Text(
-                        text = "[$timeStr] [$levelStr] [$accountStr] [$componentStr] ${log.message}",
+                        text = "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "] " + log.message,
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = if (log.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                     )
