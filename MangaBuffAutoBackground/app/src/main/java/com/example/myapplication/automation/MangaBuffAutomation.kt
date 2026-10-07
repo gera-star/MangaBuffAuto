@@ -2982,15 +2982,15 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * The native "Вернуться в UI" button is drawn over the WebView at:
-                                 *   top = 64dp, end = 12dp.
+                                 * Screenshot-verified position of the Yandex fullscreen close
+                                 * cross on the actual 384x850 CSS viewport:
                                  *
-                                 * The real Yandex fullscreen close cross observed in this layout is
-                                 * immediately above the final "U" of that button. The 40x40 CSS px
-                                 * close control is therefore centered about 20px above the button's
-                                 * top edge and 20px left of the button's right edge:
-                                 *   X = viewportWidth - (12 + 20)
-                                 *   Y = 64 - 20
+                                 *   cross center ~= (354, 64) CSS px
+                                 *
+                                 * It is immediately above the "U" in our overlaid
+                                 * "Вернуться в UI" button. The previous (364,20) point was
+                                 * demonstrably wrong: it landed in the status-bar area and did
+                                 * not close the ad.
                                  *
                                  * Do not use getBoundingClientRect() from the injected page here:
                                  * that rect may belong to a nested/cross-origin Yandex frame and is
@@ -3001,8 +3001,8 @@ class MangaBuffAutomation(
                                         ? window.visualViewport.width
                                         : (window.innerWidth || 384);
                                 var VERIFIED_CLOSE_FALLBACK_X =
-                                    Math.max(20.0, verifiedViewportWidth - 32.0);
-                                var VERIFIED_CLOSE_FALLBACK_Y = 44.0;
+                                    Math.max(20.0, verifiedViewportWidth - 30.0);
+                                var VERIFIED_CLOSE_FALLBACK_Y = 64.0;
                                 var verifiedFallbackRequested = false;
 
                                 function verifyAfterNativeClose() {
