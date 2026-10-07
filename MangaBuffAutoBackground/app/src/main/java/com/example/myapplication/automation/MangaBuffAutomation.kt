@@ -1341,7 +1341,7 @@ class MangaBuffAutomation(
         )
         updateStatus(
             account,
-            "⚔️ $" + battleTarget + "(боев)/" + winCount + " победы",
+            "⚔️ " + battleTarget + "(боев)/" + winCount + " победы",
             true,
             "Бои",
             0f
@@ -1358,7 +1358,7 @@ class MangaBuffAutomation(
 
             updateStatus(
                 account,
-                "⚔️ $" + battleTarget + "(боев)/" + winCount + " победы",
+                "⚔️ " + battleTarget + "(боев)/" + winCount + " победы",
                 true,
                 "Бои",
                 progress
@@ -1405,7 +1405,7 @@ class MangaBuffAutomation(
 
             updateStatus(
                 account,
-                "⚔️ $" + battleTarget + "(боев)/" + winCount + " победы",
+                "⚔️ " + battleTarget + "(боев)/" + winCount + " победы",
                 true,
                 "Бои",
                 if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f
