@@ -3844,7 +3844,6 @@ class MangaBuffAutomation(
         webView: WebView
     ) {
         log(account.username, "READER: OPEN")
-        log(account.username, "READER: START targetChapters=${settings.readerChapters}")
 
         currentMangaUrl = ensureCanonicalMangaUrl(account.getSafeActiveMangaUrl())
 
@@ -3880,6 +3879,7 @@ class MangaBuffAutomation(
         val target = if (READER_TEST_MODE) READER_TEST_CHAPTERS else configuredTarget
         currentSessionTarget = target
         currentSessionChaptersRead = 0
+        log(account.username, "READER: START targetChapters=$target")
 
         while (chaptersReadCount < target) {
             coroutineContext.ensureActive()
