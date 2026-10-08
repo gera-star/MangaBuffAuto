@@ -141,6 +141,9 @@ class MangaBuffAutomation(
 
         private const val COMMENT_DELAY_MS = 4000L
         private const val COMMENT_DAILY_LIMIT = 13
+        // TEMP TEST: send exactly one reader comment to chapter 2.
+        private const val COMMENT_TEST_CHAPTER = "2"
+        private const val COMMENT_TEST_COUNT = 1
         private const val DECK_PAGE_SETTLE_MS = 2000L
 
         private const val BATTLE_COOLDOWN_MS = 2000L
@@ -6776,14 +6779,14 @@ class MangaBuffAutomation(
             return false
         }
 
-        val chapterId = activeChapterContext
-            ?.takeIf { it.accountId == account.id }
-            ?.chapterId
-            ?.takeIf { it.isNotBlank() }
-            ?: Regex("/manga/[^/]+/[^/]+/(\\d+)$")
-                .find(cleanTarget)
-                ?.groupValues
-                ?.getOrNull(1)
+        val chapterId = Regex("/manga/[^/]+/[^/]+/(\\d+)$")
+            .find(cleanTarget)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: activeChapterContext
+                ?.takeIf { it.accountId == account.id }
+                ?.chapterId
+                ?.takeIf { it.isNotBlank() }
             ?: cleanTarget.substringAfterLast('/')
                 .takeIf { it.isNotBlank() && it.all(Char::isDigit) }
 
@@ -7083,7 +7086,8 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ) {
-        val requested = settings.commentCount.coerceAtLeast(0)
+        // TEMP TEST: exactly one comment, regardless of the configured commentCount.
+        val requested = COMMENT_TEST_COUNT
         val remainingDaily = (COMMENT_DAILY_LIMIT - dailyStats.comments).coerceAtLeast(0)
         val target = requested.coerceAtMost(remainingDaily)
 
@@ -7106,7 +7110,18 @@ class MangaBuffAutomation(
         val targetUrl = activeChapterContext?.actualChapterUrl?.ifBlank { null }
             ?: lastFinishedChapterUrl.ifBlank { null }
 
-        val targetClean = targetUrl?.substringBefore('?')?.substringBefore('#').orEmpty()
+        val sourceClean = targetUrl?.substringBefore('?')?.substringBefore('#').orEmpty()
+        val chapterPrefix = Regex("^(https://mangabuff\\.ru/manga/[^/]+/\\d+)/\\d+$")
+            .matchEntire(sourceClean)
+            ?.groupValues
+            ?.getOrNull(1)
+
+        val targetClean = if (chapterPrefix != null) {
+            "$chapterPrefix/$COMMENT_TEST_CHAPTER"
+        } else {
+            sourceClean
+        }
+
         val targetIsChapter = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+$").matches(targetClean)
 
         if (!targetIsChapter) {
@@ -7115,7 +7130,16 @@ class MangaBuffAutomation(
             return
         }
 
-        log(account.username, "COMMENT_TARGET_FOUND url=$targetClean")
+        log(
+            account.username,
+            "COMMENT: TEST_TARGET chapter=$COMMENT_TEST_CHAPTER source='$sourceClean' target='$targetClean' count=$target"
+        )
+
+        withContext(Dispatchers.Main.immediate) {
+            if (webView.isAttachedToWindow) {
+                webView.loadUrl(targetClean)
+            }
+        }
 
         var successCount = 0
         var failedCount = 0
