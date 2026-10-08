@@ -26,8 +26,8 @@ class AutomationRuntime(
     private val onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
-    private val onWebViewAssigned: (WebView) -> Unit = {},
-    private val onWebViewCleared: (WebView) -> Unit = {}
+    private val onWebViewAssigned: (accountId: String, WebView) -> Unit = { _, _ -> },
+    private val onWebViewCleared: (accountId: String, WebView) -> Unit = { _, _ -> }
 ) {
     private val webViewStore = ProfileWebViewStore(context, onLog)
     private val runtimes = mutableMapOf<String, AccountRuntime>()
@@ -49,7 +49,7 @@ class AutomationRuntime(
     fun prepareAccount(account: MangaBuffAccount): AccountRuntime {
         onLog(LogEntry(username = account.username, component = "ACCOUNT", message = "START requested"))
         val (profileName, webView) = webViewStore.getOrCreateWebView(account.id, account.getSafeCookiesJson())
-        onWebViewAssigned(webView)
+        onWebViewAssigned(account.id, webView)
         val runtime = AccountRuntime(
             accountId = account.id,
             profileName = profileName,
@@ -88,7 +88,7 @@ class AutomationRuntime(
         val runtime = runtimes.remove(accountId)
         if (runtime != null) {
             runtime.state = AccountState.STOPPED
-            onWebViewCleared(runtime.webView)
+            onWebViewCleared(accountId, runtime.webView)
             webViewStore.releaseWebView(accountId)
         }
         val engine = automationEngines.remove(accountId)
@@ -128,12 +128,23 @@ class AutomationRuntime(
         val profileMatch = (runtime.profileName == expectedProfileName)
         
         val isMultiProfileSupported = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
-        val webViewProfileMatch = if (isMultiProfileSupported) {
-            val actualProfile = WebViewCompat.getProfile(runtime.webView)
-            actualProfile != null
+        val actualProfileName = if (isMultiProfileSupported) {
+            runCatching { WebViewCompat.getProfile(runtime.webView).name }.getOrNull()
         } else {
-            true
+            null
         }
+        val webViewProfileMatch = !isMultiProfileSupported || actualProfileName == expectedProfileName
+
+        onLog(
+            LogEntry(
+                username = account.username,
+                component = "SECURITY",
+                message = "ACCOUNT_BIND_CHECK accountId=" + account.id +
+                    " expectedProfile=" + expectedProfileName +
+                    " actualProfile=" + (actualProfileName ?: "UNAVAILABLE") +
+                    " webView=" + runtime.webView.hashCode()
+            )
+        )
 
         if (!accountIdMatch || !profileMatch || !webViewProfileMatch) {
             onLog(LogEntry(username = account.username, component = "SECURITY", message = "ATTACH_FOREIGN_WEBVIEW failed", isError = true))
