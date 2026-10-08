@@ -3979,9 +3979,23 @@ class MangaBuffAutomation(
                     if (itemCount > 0) {
                         if (totalMangaChapters <= 0 || itemCount > totalMangaChapters) {
                             totalMangaChapters = itemCount
-                            log(account.username, "READER: TOTAL_CHAPTERS_FOUND total=$itemCount")
+                            log(account.username, "READER: TOTAL_CHAPTERS_FOUND_CATALOG total=$itemCount attempt=$attempt")
                             updateReaderStatus(account)
                         }
+                    }
+                }
+
+                @JavascriptInterface
+                fun onReaderChapterListCount(itemCount: Int) {
+                    if (itemCount > 0) {
+                        // The reader's chapter selector is the authoritative source:
+                        // it contains the actual chapters available for this manga,
+                        // including the exact links the reader can navigate to.
+                        totalMangaChapters = itemCount
+                        log(account.username, "READER: TOTAL_CHAPTERS_FOUND_READER_LIST total=$itemCount")
+                        updateReaderStatus(account)
+                    } else {
+                        log(account.username, "READER: READER_CHAPTER_LIST_EMPTY")
                     }
                 }
 
@@ -4698,6 +4712,10 @@ class MangaBuffAutomation(
                                     } catch(e) {}
                                     AndroidReaderBridge.onLogStep('READER: SCROLL_MODE=MANGABUFF_NATIVE_AUTOSCROLL');
 
+                                    // Use the reader's own chapter selector as the authoritative
+                                    // chapter count for this manga.
+                                    setTimeout(scanReaderChapterList, 100);
+
                                     if (window.current_chapter) {
                                         var c = window.current_chapter;
                                         var resolvedChapterId = resolveCurrentChapterId();
@@ -4764,6 +4782,114 @@ class MangaBuffAutomation(
                                             return true;
                                         } catch(e) {
                                             return false;
+                                        }
+                                    }
+
+                                    function scanReaderChapterList() {
+                                        try {
+                                            function countItems() {
+                                                var items = Array.from(
+                                                    document.querySelectorAll(
+                                                        '.reader-chapters .reader-chapters__item'
+                                                    )
+                                                );
+
+                                                var seen = {};
+                                                var valid = 0;
+
+                                                items.forEach(function(item) {
+                                                    var href = '';
+                                                    try {
+                                                        href = new URL(
+                                                            item.getAttribute('href') || item.href || '',
+                                                            window.location.href
+                                                        ).href;
+                                                    } catch(e) {}
+
+                                                    if (!href || !seen[href]) {
+                                                        if (href) {
+                                                            seen[href] = true;
+                                                            valid++;
+                                                        } else if (!item.getAttribute('href') && !item.href) {
+                                                            // Keep a text-only item only when MangaBuff's
+                                                            // reader list rendered it without a link.
+                                                            valid++;
+                                                        }
+                                                    }
+                                                });
+
+                                                return valid;
+                                            }
+
+                                            var chaptersButton = document.querySelector(
+                                                'button.reader-menu__item.reader-menu__item--chapters[data-popup="popup--chapters-select"]'
+                                            ) || document.querySelector(
+                                                'button.reader-menu__item.reader-menu__item--chapters'
+                                            );
+
+                                            var immediateCount = countItems();
+                                            if (immediateCount > 0) {
+                                                AndroidReaderBridge.onReaderChapterListCount(immediateCount);
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_LIST_FOUND immediate count=' + immediateCount
+                                                );
+                                                return;
+                                            }
+
+                                            if (!chaptersButton) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_LIST_BUTTON_NOT_FOUND'
+                                                );
+                                                return;
+                                            }
+
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: CHAPTER_LIST_BUTTON_CLICK'
+                                            );
+
+                                            try { chaptersButton.click(); } catch(e) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_LIST_BUTTON_CLICK_ERROR error=' + String(e)
+                                                );
+                                                return;
+                                            }
+
+                                            var attempts = 0;
+                                            var maxAttempts = 12;
+
+                                            function poll() {
+                                                attempts++;
+                                                var count = countItems();
+
+                                                if (count > 0) {
+                                                    AndroidReaderBridge.onReaderChapterListCount(count);
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: CHAPTER_LIST_FOUND count=' + count +
+                                                        ' attempts=' + attempts
+                                                    );
+
+                                                    // Toggle the popup closed again so it does not
+                                                    // interfere with the background reader gesture.
+                                                    try { chaptersButton.click(); } catch(e) {}
+
+                                                    return;
+                                                }
+
+                                                if (attempts < maxAttempts) {
+                                                    setTimeout(poll, 250);
+                                                } else {
+                                                    AndroidReaderBridge.onChapterListEmpty();
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: CHAPTER_LIST_TIMEOUT attempts=' + attempts
+                                                    );
+                                                }
+                                            }
+
+                                            setTimeout(poll, 100);
+                                        } catch(e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: CHAPTER_LIST_SCAN_ERROR error=' + String(e)
+                                            );
                                         }
                                     }
 
