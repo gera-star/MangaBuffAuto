@@ -41,19 +41,18 @@ class AutomationRuntime(
         context = context,
         onLog = onLog,
         onRendererGone = { accountId, webView ->
-            onLog(
-                LogEntry(
-                    username = accountId,
-                    component = "SECURITY",
-                    message = "RENDERER_GONE_CANCEL_ACCOUNT accountId=$accountId",
-                    isError = true
-                )
-            )
-            onAccountRecoveryNeeded(accountId)
             val current = runtimes[accountId]
             if (current?.webView === webView) {
-                stopAccount(accountId)
-            } else {
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "SECURITY",
+                        message = "RENDERER_GONE_CANCEL_ACCOUNT accountId=$accountId",
+                        isError = true
+                    )
+                )
+                onAccountRecoveryNeeded(accountId)
+                stopAccount(accountId) else {
                 onLog(
                     LogEntry(
                         username = accountId,
@@ -239,24 +238,23 @@ class AutomationRuntime(
         val engine = getOrCreateEngine(account.id)
         onLog(LogEntry(username = account.username, component = "ENGINE", message = "USE engineId=${engine.hashCode()}"))
 
-        val engineHeartbeatJob = CoroutineScope(Dispatchers.IO).launch {
+        val engineHeartbeatJob = CoroutineScope(coroutineContext + Dispatchers.IO).launch {
             while (isActive) {
-                delay(5000L)
+                delay(15_000L)
                 val (url, isAttached) = withContext(Dispatchers.Main.immediate) {
                     val currentUrl = runtime.webView.url ?: "UNKNOWN"
                     val attached = runtime.webView.isAttachedToWindow
                     Pair(currentUrl, attached)
                 }
-                onLog(LogEntry(
-                    username = account.username,
-                    component = "ENGINE",
-                    message = "HEARTBEAT engineId=${engine.hashCode()} accountId=${account.id} currentMangaUrl=${engine.getCurrentMangaUrl()} currentChapterId=${engine.getLastFinishedChapterId()} currentChapterNumber=${engine.getLastFinishedChapterNumber()}"
-                ))
-                onLog(LogEntry(
-                    username = account.username,
-                    component = "WEBVIEW",
-                    message = "HEARTBEAT profile=${runtime.profileName} url=$url isAttached=$isAttached isDestroyed=false"
-                ))
+                onLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "ENGINE",
+                        message = "HEARTBEAT accountId=${account.id} engineId=${engine.hashCode()} " +
+                            "url=$url attached=$isAttached manga=${engine.getCurrentMangaUrl()} " +
+                            "chapterId=${engine.getLastFinishedChapterId()} chapter=${engine.getLastFinishedChapterNumber()}"
+                    )
+                )
             }
         }
 
