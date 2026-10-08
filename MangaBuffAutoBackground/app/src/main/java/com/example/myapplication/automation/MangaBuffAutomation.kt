@@ -1565,8 +1565,27 @@ class MangaBuffAutomation(
                 log(account.username, "TASK: COMMENT_START")
                 val start = SystemClock.elapsedRealtime()
                 runCommentTask(account, settings, webView)
-                log(account.username, "TASK: COMMENT_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
+                log(
+                    account.username,
+                    "TASK: COMMENT_END elapsed=" +
+                        (SystemClock.elapsedRealtime() - start) + "ms"
+                )
                 fetchAndLogBalanceInfo(account, webView)
+            }
+
+            if (account.deckCommentEnabled) {
+                coroutineContext.ensureActive()
+                log(account.username, "TASK: DECK_COMMENT_ENABLED")
+                val start = SystemClock.elapsedRealtime()
+                runDeckCommentTask(account, webView)
+                log(
+                    account.username,
+                    "TASK: DECK_COMMENT_END elapsed=" +
+                        (SystemClock.elapsedRealtime() - start) + "ms"
+                )
+                fetchAndLogBalanceInfo(account, webView)
+            } else {
+                log(account.username, "COMMENT: DECK_DISABLED")
             }
         }
 
