@@ -8,6 +8,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import com.example.myapplication.data.GlobalSettings
+import com.example.myapplication.data.NetworkResetMode
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -98,7 +100,11 @@ private fun hasNotifications(context: Context): Boolean =
         ) == PackageManager.PERMISSION_GRANTED
 
 @Composable
-fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
+fun BackgroundSettingsDialog(
+    settings: GlobalSettings,
+    onSaveSettings: (GlobalSettings) -> Unit,
+    onDismiss: () -> Unit
+) {
     val context = LocalContext.current
     var refreshKey by remember { mutableStateOf(0) }
 
@@ -114,6 +120,50 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
                     "Для надежной работы MangaBuff при свернутом приложении на Redmi/HyperOS нужны системные настройки. Приложение не может включить их без вашего подтверждения."
                 )
                 HorizontalDivider()
+
+                Text(
+                    "Аккаунты: ПО ОЧЕРЕДИ",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    "Следующий аккаунт запускается только после полного cleanup предыдущего.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                SettingSwitchRow(
+                    title = "Не выключать экран во время автоматизации",
+                    description = "Экран остаётся включённым на протяжении всей последовательной сессии.",
+                    checked = settings.keepScreenOn,
+                    onCheckedChange = {
+                        onSaveSettings(settings.copy(keepScreenOn = it))
+                    }
+                )
+
+                SettingSwitchRow(
+                    title = "Сетевой reset между аккаунтами",
+                    description = "Перед следующим аккаунтом можно выполнить привилегированный Airplane Mode reset и дождаться валидной сети.",
+                    checked = settings.networkResetEnabled,
+                    onCheckedChange = {
+                        onSaveSettings(
+                            settings.copy(
+                                networkResetEnabled = it,
+                                networkResetMode = if (it) {
+                                    NetworkResetMode.AIRPLANE_MODE
+                                } else {
+                                    NetworkResetMode.NONE
+                                }
+                            )
+                        )
+                    }
+                )
+
+                if (settings.networkResetEnabled) {
+                    Text(
+                        "Airplane Mode: доступен только если устройство разрешает привилегированный shell (например, root). Обычный APK не может включать этот режим напрямую.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
 
                 BackgroundStatusRow(
                     BackgroundCheck(
@@ -176,6 +226,28 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
             }
         }
     )
+}
+
+@Composable
+private fun SettingSwitchRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(description, style = MaterialTheme.typography.bodySmall)
+        }
+        androidx.compose.material3.Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
+    }
 }
 
 @Composable
