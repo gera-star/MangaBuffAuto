@@ -48,12 +48,12 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
-@SuppressLint("RestrictedApi")
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 private const val SUPPORT_PAYMENT_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019df8ad-96b5-7cd8-82aa-e64b36e96b93"
 private const val SUPPORT_RECIPIENT = "Алексей Г."
 
+@SuppressLint("RestrictedApi")
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun MangaBuffAppUI(
     viewModel: MainViewModel,
     webViewContainer: WebView? = null,
