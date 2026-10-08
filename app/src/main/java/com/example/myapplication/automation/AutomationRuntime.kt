@@ -163,7 +163,11 @@ class AutomationRuntime(
         // Wait for WebView to be attached to UI window
         webViewStore.awaitAttached(account.id, runtime.webView)
 
+        val webViewUserAgent = withContext(Dispatchers.Main.immediate) {
+            runtime.webView.settings.userAgentString.orEmpty()
+        }
         val engine = getOrCreateEngine(account.id)
+        engine.bindWebViewUserAgent(webViewUserAgent)
         onLog(LogEntry(username = account.username, component = "ENGINE", message = "USE engineId=${engine.hashCode()}"))
 
         val engineHeartbeatJob = CoroutineScope(Dispatchers.IO).launch {
