@@ -548,11 +548,10 @@ class MangaBuffAutomation(
             "Чтение",
             if (currentSessionTarget > 0) (currentSessionChaptersRead.toFloat() / currentSessionTarget).coerceAtMost(1f) else 1f
         )
-        if (totalMangaChapters > 0) {
-            log(account.username, "READER: PROGRESS count=$currentSessionChaptersRead total=$totalMangaChapters")
-        } else {
-            log(account.username, "READER: TOTAL_CHAPTERS_UNKNOWN")
-        }
+        // The manga catalogue size (for example 100) is not the automation target.
+        // Keep the diagnostic denominator identical to the configured task target.
+        val targetText = if (currentSessionTarget > 0) currentSessionTarget.toString() else "?"
+        log(account.username, "READER: PROGRESS count=$currentSessionChaptersRead total=$targetText mangaTotal=$totalMangaChapters")
     }
 
     private fun log(
