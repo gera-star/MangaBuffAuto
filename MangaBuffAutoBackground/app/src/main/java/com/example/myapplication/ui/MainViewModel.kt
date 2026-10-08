@@ -259,6 +259,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         adv: Boolean,
         mine: Boolean,
         comment: Boolean,
+        deckComment: Boolean,
         battle: Boolean
     ) {
         val updatedList = _accounts.value.map { acc ->
@@ -269,6 +270,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     advEnabled = adv,
                     mineEnabled = mine,
                     commentEnabled = comment,
+                    deckCommentEnabled = deckComment,
                     battleEnabled = battle
                 )
             } else acc
