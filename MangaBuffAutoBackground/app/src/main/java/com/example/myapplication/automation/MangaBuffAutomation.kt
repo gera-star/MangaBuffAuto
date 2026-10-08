@@ -125,8 +125,29 @@ class MangaBuffAutomation(
         chapters: String,
         comments: String
     ) -> Unit = { _, _, _, _, _ -> },
-    private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> }
+    private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
+    private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
+
+    private inner class AutomationWebViewClient(
+        private val accountUsername: String,
+        private val clientWebView: WebView
+    ) : WebViewClient() {
+
+        override fun onRenderProcessGone(
+            view: WebView?,
+            detail: android.webkit.RenderProcessGoneDetail?
+        ): Boolean {
+            val target = view ?: clientWebView
+            log(
+                accountUsername,
+                "WEBVIEW: TASK_CLIENT_RENDERER_GONE didCrash=${detail?.didCrash()} instance=${target.hashCode()}",
+                true
+            )
+            onRendererGone(accountUsername, target)
+            return true
+        }
+    }
 
     companion object {
         private const val READER_END_STABLE_MS = 3_000L
@@ -1165,7 +1186,7 @@ class MangaBuffAutomation(
 
             webView.addJavascriptInterface(BalanceBridge(), "AndroidBalanceBridge")
 
-            webView.webViewClient = object : WebViewClient() {
+            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
@@ -1803,7 +1824,7 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidBattleBridge") } catch (_: Exception) {}
             webView.addJavascriptInterface(BattleBridge(), "AndroidBattleBridge")
 
-            webView.webViewClient = object : WebViewClient() {
+            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/battle") != true) return
 
@@ -1977,7 +1998,7 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidQuiz") } catch (_: Exception) {}
             webView.addJavascriptInterface(QuizBridge(), "AndroidQuiz")
 
-            webView.webViewClient = object : WebViewClient() {
+            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     val script = """
                         (function() {
@@ -3356,7 +3377,7 @@ class MangaBuffAutomation(
             var pageFinishedSeen = false
             var recoveryReloadUsed = false
 
-            webView.webViewClient = object : WebViewClient() {
+            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
 
                 override fun shouldOverrideUrlLoading(
                     view: WebView?,
@@ -3522,7 +3543,7 @@ class MangaBuffAutomation(
             // Keep AndroidMine registered across the /mine navigation.
             webView.addJavascriptInterface(MineBridge(), "AndroidMine")
 
-            webView.webViewClient = object : WebViewClient() {
+            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/mine") != true) return
                     if (view == null) { safeResume(false); return }
@@ -4744,7 +4765,7 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidReaderBridge") } catch (_: Exception) {}
             webView.addJavascriptInterface(ReaderBridge(), "AndroidReaderBridge")
 
-            webView.webViewClient = object : WebViewClient() {
+            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
 
                 override fun shouldInterceptRequest(
                     view: WebView?,
@@ -7618,7 +7639,7 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidBattleRewardsBridge") } catch (_: Exception) {}
             webView.addJavascriptInterface(RewardsBridge(), "AndroidBattleRewardsBridge")
 
-            webView.webViewClient = object : WebViewClient() {
+            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/battle") != true) return
