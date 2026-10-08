@@ -161,6 +161,8 @@ fun MangaBuffAppUI(
 
     if (showBackgroundSettings) {
         BackgroundSettingsDialog(
+            settings = settings,
+            onSaveSettings = { viewModel.saveSettings(it) },
             onDismiss = { showBackgroundSettings = false }
         )
     }
