@@ -6824,8 +6824,10 @@ class MangaBuffAutomation(
                 }
             }
 
-        suspend fun waitForControls(timeoutMs: Long): Boolean =
-            withTimeoutOrNull(timeoutMs) {
+        suspend fun waitForControls(timeoutMs: Long): Boolean {
+            var menuClicked = false
+
+            return withTimeoutOrNull(timeoutMs) {
                 while (true) {
                     coroutineContext.ensureActive()
 
@@ -6843,17 +6845,20 @@ class MangaBuffAutomation(
                                     'button.comments__send-btn'
                                 );
 
-                                if (!menuButton && !textarea && !sendButton) {
+                                if (!textarea && !menuClicked) {
+                                    if (menuButton) {
+                                        menuButton.click();
+                                        return "COMMENT_MENU_CLICKED";
+                                    }
                                     return "WAIT_READER_COMMENT_UI";
-                                }
-
-                                if (menuButton && !textarea) {
-                                    menuButton.click();
-                                    return "COMMENT_MENU_CLICKED";
                                 }
 
                                 if (!textarea || !sendButton) {
                                     return "WAIT_COMMENT_CONTROLS";
+                                }
+
+                                if (sendButton.disabled) {
+                                    return "WAIT_SEND_BUTTON";
                                 }
 
                                 return "COMMENT_CONTROLS_READY";
@@ -6862,7 +6867,8 @@ class MangaBuffAutomation(
                                     (e && e.message ? e.message : String(e));
                             }
                         })();
-                        """.trimIndent()
+                        """.replace("!menuClicked", (!menuClicked).toString())
+                            .trimIndent()
                     )
 
                     val state = try {
@@ -6877,13 +6883,17 @@ class MangaBuffAutomation(
                     when (state) {
                         "COMMENT_CONTROLS_READY" -> return@withTimeoutOrNull true
                         "COMMENT_MENU_CLICKED" -> {
-                            log(
-                                account.username,
-                                "COMMENT: READER_MENU_CLICKED chapterId=$chapterId"
-                            )
+                            if (!menuClicked) {
+                                menuClicked = true
+                                log(
+                                    account.username,
+                                    "COMMENT: READER_MENU_CLICKED chapterId=$chapterId"
+                                )
+                            }
                         }
                         "WAIT_READER_COMMENT_UI",
-                        "WAIT_COMMENT_CONTROLS" -> Unit
+                        "WAIT_COMMENT_CONTROLS",
+                        "WAIT_SEND_BUTTON" -> Unit
                         else -> {
                             if (state.startsWith("ERROR:")) {
                                 log(
@@ -6898,6 +6908,7 @@ class MangaBuffAutomation(
                     delay(300L)
                 }
             } ?: false
+        }
 
         if (!waitForControls(15_000L)) {
             log(
