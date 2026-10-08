@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+private const val MAX_LOG_ENTRIES = 2000
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = AccountRepository(application)
     /*
@@ -323,8 +325,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.saveAccounts(updatedList)
             updatedList
         }
-        addLog(LogEntry(message = "STAT: STATE_UPDATED"))
-        addLog(LogEntry(message = "STAT: UI_STATE_PUBLISHED"))
     }
 
     private fun updateDailyStats(accountId: String, stats: DailyStats) {
@@ -426,6 +426,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun addLog(entry: LogEntry) {
-        _logs.update { (listOf(entry) + it).take(5000) }
+        _logs.update {
+            val next = ArrayList<LogEntry>(minOf(it.size + 1, MAX_LOG_ENTRIES))
+            next += entry
+            next += it
+            if (next.size > MAX_LOG_ENTRIES) {
+                next.subList(MAX_LOG_ENTRIES, next.size).clear()
+            }
+            next
+        }
     }
 }
