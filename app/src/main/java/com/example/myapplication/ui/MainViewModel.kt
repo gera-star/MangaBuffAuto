@@ -25,6 +25,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = AccountRepository(application)
     private val _activeWebView = MutableStateFlow<android.webkit.WebView?>(null)
     val activeWebView: StateFlow<android.webkit.WebView?> = _activeWebView.asStateFlow()
+    private var activeWebViewAccountId: String? = null
 
     // TEMP DEBUG: show the real automation WebView so the rewarded ad can be
     // inspected and its close button can be pressed manually.
@@ -50,11 +51,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onDailyStatsUpdate = { accountId, stats ->
             updateDailyStats(accountId, stats)
         },
-        onWebViewAssigned = { webView ->
-            _activeWebView.value = webView
+        onWebViewAssigned = { accountId, webView ->
+            if (_activeWebView.value == null || activeWebViewAccountId == accountId) {
+                activeWebViewAccountId = accountId
+                _activeWebView.value = webView
+            }
         },
-        onWebViewCleared = { webView ->
-            if (_activeWebView.value == webView) {
+        onWebViewCleared = { accountId, webView ->
+            if (activeWebViewAccountId == accountId && _activeWebView.value === webView) {
+                activeWebViewAccountId = null
                 _activeWebView.value = null
             }
         }
@@ -225,20 +230,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         comment: Boolean,
         battle: Boolean
     ) {
-        val updatedList = _accounts.value.map { acc ->
-            if (acc.id == account.id) {
-                acc.copy(
-                    readerEnabled = reader,
-                    quizEnabled = quiz,
-                    advEnabled = adv,
-                    mineEnabled = mine,
-                    commentEnabled = comment,
-                    battleEnabled = battle
-                )
-            } else acc
-        }
-        _accounts.value = updatedList
-        repository.saveAccounts(updatedList)
+        val updated = repository.updateAccount(account.id) { acc ->
+            acc.copy(
+                readerEnabled = reader,
+                quizEnabled = quiz,
+                advEnabled = adv,
+                mineEnabled = mine,
+                commentEnabled = comment,
+                battleEnabled = battle
+            )
+        } ?: return
+        _accounts.update { list -> list.map { acc -> if (acc.id == updated.id) updated else acc } }
     }
 
     private fun updateAccountStatus(
@@ -271,58 +273,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         chapters: String,
         comments: String
     ) {
-        _accounts.update { list ->
-            val updatedList = list.map { acc ->
-                if (acc.id == accountId) {
-                    acc.copy(
-                        diamonds = diamonds,
-                        cardDrop = cardDrop,
-                        chapterProgress = chapters,
-                        commentProgress = comments
-                    )
-                } else acc
-            }
-            repository.saveAccounts(updatedList)
-            updatedList
+        val updated = repository.updateAccount(accountId) { acc ->
+            acc.copy(
+                diamonds = diamonds,
+                cardDrop = cardDrop,
+                chapterProgress = chapters,
+                commentProgress = comments
+            )
+        }
+        if (updated != null) {
+            _accounts.update { list -> list.map { acc -> if (acc.id == accountId) updated else acc } }
         }
         addLog(LogEntry(message = "STAT: STATE_UPDATED"))
         addLog(LogEntry(message = "STAT: UI_STATE_PUBLISHED"))
     }
 
     private fun updateDailyStats(accountId: String, stats: DailyStats) {
-        _accounts.update { list ->
-            val updated = list.map { acc ->
-                if (acc.id == accountId) {
-                    acc.copy(
-                        dailyStatsDay = stats.day,
-                        dailyBattles = stats.battles,
-                        dailyBattleAttempts = stats.battleAttempts,
-                        dailyQuiz = stats.quiz,
-                        dailyAds = stats.ads,
-                        dailyMineOre = stats.mineOre,
-                        dailyMineExchangeOre = stats.mineExchangeOre,
-                        dailyMineDiamonds = stats.mineDiamonds,
-                        dailyReaderChapters = stats.readerChapters,
-                        dailyComments = stats.comments
-                    )
-                } else acc
-            }
-            repository.saveAccounts(updated)
-            updated
+        val updated = repository.updateAccount(accountId) { acc ->
+            acc.copy(
+                dailyStatsDay = stats.day,
+                dailyBattles = stats.battles,
+                dailyBattleAttempts = stats.battleAttempts,
+                dailyQuiz = stats.quiz,
+                dailyAds = stats.ads,
+                dailyMineOre = stats.mineOre,
+                dailyMineExchangeOre = stats.mineExchangeOre,
+                dailyMineDiamonds = stats.mineDiamonds,
+                dailyReaderChapters = stats.readerChapters,
+                dailyComments = stats.comments
+            )
+        }
+        if (updated != null) {
+            _accounts.update { list -> list.map { acc -> if (acc.id == accountId) updated else acc } }
         }
     }
 
     private fun updateActiveMangaUrl(accountId: String, url: String, title: String) {
-        _accounts.update { list ->
-            list.map { acc ->
-                if (acc.id == accountId) {
-                    val updated = acc.copy(
-                        activeMangaUrl = url,
-                        activeMangaTitle = title
-                    )
-                    updated
-                } else acc
-            }
+        val updated = repository.updateAccount(accountId) { acc ->
+            acc.copy(activeMangaUrl = url, activeMangaTitle = title)
+        }
+        if (updated != null) {
+            _accounts.update { list -> list.map { acc -> if (acc.id == accountId) updated else acc } }
         }
     }
 
@@ -361,18 +352,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     releaseWakeLock()
                     MangaBuffForegroundService.stopService(getApplication())
                 }
-                _accounts.update { list ->
-                    list.map { acc ->
-                        if (acc.id == account.id) {
-                            acc.copy(
-                                isRunning = false,
-                                taskProgress = 0f,
-                                statusMessage = if (acc.statusMessage?.contains("Завершено") == true) acc.statusMessage else "Остановлено пользователем"
-                            )
-                        } else acc
-                    }
+                repository.updateAccount(account.id) { acc ->
+                    acc.copy(
+                        isRunning = false,
+                        taskProgress = 0f,
+                        statusMessage = if (acc.statusMessage?.contains("Завершено") == true) acc.statusMessage else "Остановлено пользователем"
+                    )
+                }?.let { updated ->
+                    _accounts.update { list -> list.map { acc -> if (acc.id == account.id) updated else acc } }
                 }
-                repository.saveAccounts(_accounts.value)
             }
         }
     }
@@ -429,18 +417,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         accountJobs.remove(accountId)
         automationRunner.stopAccount(accountId)
 
-        _accounts.update { list ->
-            list.map { acc ->
-                if (acc.id == accountId) {
-                    acc.copy(
-                        isRunning = false,
-                        taskProgress = 0f,
-                        statusMessage = "Остановлено пользователем"
-                    )
-                } else acc
-            }
+        repository.updateAccount(accountId) { acc ->
+            acc.copy(
+                isRunning = false,
+                taskProgress = 0f,
+                statusMessage = "Остановлено пользователем"
+            )
+        }?.let { updated ->
+            _accounts.update { list -> list.map { acc -> if (acc.id == accountId) updated else acc } }
         }
-        repository.saveAccounts(_accounts.value)
 
         if (accountJobs.isEmpty()) {
             _isRunning.value = false
