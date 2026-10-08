@@ -146,7 +146,7 @@ class NetworkResetManager(
             if (rootShellAvailable()) {
                 onLog(
                     "AIRPLANE_MODE_SHIZUKU_COMMAND_FAILED_FALLBACK_ROOT " +
-                        "command=$$command reason=$${sanitize(shizukuResult.output)}"
+                        "command=${command} reason=${sanitize(shizukuResult.output)}"
                 )
                 return runRootCommand(command)
             }
@@ -224,6 +224,7 @@ class NetworkResetManager(
                                 )
                             )
                         }
+                        cleanup()
                     }
                 }
 
