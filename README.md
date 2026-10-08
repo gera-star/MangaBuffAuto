@@ -29,9 +29,9 @@
 
 ### Текущая сборка background
 
-**MangaBuff Auto 1.0-background**
+**MangaBuff Auto 1.0-background — текущая основная версия**
 
-[⬇️ Скачать APK](https://raw.githubusercontent.com/gera-star/MangaBuffAuto/background-rebuild/releases/MangaBuffAuto-1.0-background.apk)
+[⬇️ Скачать APK](https://raw.githubusercontent.com/gera-star/MangaBuffAuto/main/releases/MangaBuffAuto-1.0-background.apk)
 
 > APK размещён в ветке `background-rebuild`. Перед установкой рекомендуется удалить предыдущую версию приложения, если Android сообщает о несовместимой подписи.
 
@@ -52,9 +52,9 @@
 
 ## 🛠️ Для разработчиков
 
-Основная рабочая ветка текущей фоновой версии:
+Основная рабочая ветка текущей версии:
 
-`background-rebuild`
+`main`
 
 Стек: Kotlin, Jetpack Compose, Android WebView, Foreground Service.
 
