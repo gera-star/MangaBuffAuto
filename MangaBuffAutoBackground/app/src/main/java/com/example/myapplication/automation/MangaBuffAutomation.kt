@@ -141,14 +141,6 @@ class MangaBuffAutomation(
 
         private const val COMMENT_DELAY_MS = 4000L
         private const val COMMENT_DAILY_LIMIT = 13
-        // TEMP TEST: send exactly one reader comment to chapter 2.
-        private const val COMMENT_TEST_CHAPTER = "2"
-        private const val COMMENT_TEST_COUNT = 1
-
-        // TEMP TEST: reader runs exactly one chapter for the current test.
-        // Set READER_TEST_MODE = false after verification; normal runs are capped at 10 chapters.
-        private const val READER_TEST_MODE = true
-        private const val READER_TEST_CHAPTERS = 1
         private const val READER_MAX_CHAPTERS = 10
 
         private const val DECK_PAGE_SETTLE_MS = 2000L
@@ -3875,8 +3867,7 @@ class MangaBuffAutomation(
         var dailyCommentCount = 0
         var nextChapterUrlToOpen = ""
 
-        val configuredTarget = settings.readerChapters.coerceIn(1, READER_MAX_CHAPTERS)
-        val target = if (READER_TEST_MODE) READER_TEST_CHAPTERS else configuredTarget
+        val target = settings.readerChapters.coerceIn(1, READER_MAX_CHAPTERS)
         currentSessionTarget = target
         currentSessionChaptersRead = 0
         log(account.username, "READER: START targetChapters=$target")
@@ -7094,8 +7085,7 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ) {
-        // TEMP TEST: exactly one comment, regardless of the configured commentCount.
-        val requested = COMMENT_TEST_COUNT
+        val requested = settings.commentCount.coerceAtLeast(0)
         val remainingDaily = (COMMENT_DAILY_LIMIT - dailyStats.comments).coerceAtLeast(0)
         val target = requested.coerceAtMost(remainingDaily)
 
@@ -7115,30 +7105,10 @@ class MangaBuffAutomation(
             return
         }
 
-        /*
-         * TEMP TEST: COMMENT task can be launched directly, before the reader has
-         * created activeChapterContext/lastFinishedChapterUrl. In that case use
-         * the saved manga URL and explicitly target volume 1 / chapter 2.
-         */
         val targetUrl = activeChapterContext?.actualChapterUrl?.ifBlank { null }
             ?: lastFinishedChapterUrl.ifBlank { null }
-            ?: account.getSafeActiveMangaUrl()
-                .let { ensureCanonicalMangaUrl(it) }
-                .takeIf { it.startsWith("https://mangabuff.ru/manga/") }
-                ?.let { "$it/1/$COMMENT_TEST_CHAPTER" }
 
-        val sourceClean = targetUrl?.substringBefore('?')?.substringBefore('#').orEmpty()
-        val chapterPrefix = Regex("^(https://mangabuff\\.ru/manga/[^/]+/\\d+)/\\d+$")
-            .matchEntire(sourceClean)
-            ?.groupValues
-            ?.getOrNull(1)
-
-        val targetClean = if (chapterPrefix != null) {
-            "$chapterPrefix/$COMMENT_TEST_CHAPTER"
-        } else {
-            sourceClean
-        }
-
+        val targetClean = targetUrl?.substringBefore('?')?.substringBefore('#').orEmpty()
         val targetIsChapter = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+$").matches(targetClean)
 
         if (!targetIsChapter) {
@@ -7147,52 +7117,7 @@ class MangaBuffAutomation(
             return
         }
 
-        log(
-            account.username,
-            "COMMENT: TEST_TARGET chapter=$COMMENT_TEST_CHAPTER source='$sourceClean' target='$targetClean' count=$target"
-        )
-
-        withContext(Dispatchers.Main.immediate) {
-            if (webView.isAttachedToWindow) {
-                webView.loadUrl(targetClean)
-            }
-        }
-
-        var pageReady = false
-        withTimeoutOrNull(20_000L) {
-            while (!pageReady) {
-                coroutineContext.ensureActive()
-
-                val currentUrl = withContext(Dispatchers.Main.immediate) {
-                    webView.url.orEmpty()
-                        .substringBefore('?')
-                        .substringBefore('#')
-                }
-
-                if (currentUrl == targetClean) {
-                    pageReady = true
-                } else {
-                    delay(250L)
-                }
-            }
-        }
-
-        if (!pageReady) {
-            val currentUrl = withContext(Dispatchers.Main.immediate) {
-                webView.url.orEmpty()
-            }
-            log(
-                account.username,
-                "COMMENT: TEST_TARGET_TIMEOUT target='$targetClean' current='$currentUrl'",
-                true
-            )
-            return
-        }
-
-        log(
-            account.username,
-            "COMMENT: TEST_TARGET_READY chapter=$COMMENT_TEST_CHAPTER url='$targetClean'"
-        )
+        log(account.username, "COMMENT_TARGET_FOUND url=$targetClean")
 
         var successCount = 0
         var failedCount = 0
