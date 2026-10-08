@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -99,6 +100,21 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val activeWebView by viewModel.activeWebView.collectAsState()
                     val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
+                    val keepScreenOn by viewModel.keepScreenOn.collectAsState()
+
+                    DisposableEffect(keepScreenOn) {
+                        if (keepScreenOn) {
+                            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+
+                        onDispose {
+                            if (!keepScreenOn) {
+                                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            }
+                        }
+                    }
 
                     Box(modifier = Modifier.fillMaxSize()) {
                         MangaBuffAppUI(
@@ -182,4 +198,9 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    override fun onDestroy() {
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        super.onDestroy()
+    }
+
 }
