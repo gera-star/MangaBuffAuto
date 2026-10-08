@@ -2,6 +2,8 @@ package com.example.myapplication.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
@@ -49,6 +51,9 @@ import java.util.UUID
 @SuppressLint("RestrictedApi")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private const val SUPPORT_PAYMENT_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019df8ad-96b5-7cd8-82aa-e64b36e96b93"
+private const val SUPPORT_RECIPIENT = "Алексей Г."
+
 fun MangaBuffAppUI(
     viewModel: MainViewModel,
     webViewContainer: WebView? = null,
@@ -66,6 +71,7 @@ fun MangaBuffAppUI(
     var selectedBalanceAccount by remember { mutableStateOf<MangaBuffAccount?>(null) }
     var promoCodeText by remember { mutableStateOf("") }
     var showBackgroundSettings by remember { mutableStateOf(false) }
+    var showSupportDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
@@ -74,6 +80,12 @@ fun MangaBuffAppUI(
             TopAppBar(
                 title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
                 actions = {
+                    IconButton(onClick = { showSupportDialog = true }) {
+                        Icon(
+                            Icons.Default.Favorite,
+                            contentDescription = "Поддержать проект"
+                        )
+                    }
                     IconButton(onClick = { showBackgroundSettings = true }) {
                         Icon(
                             Icons.Default.Settings,
@@ -162,6 +174,62 @@ fun MangaBuffAppUI(
     if (showBackgroundSettings) {
         BackgroundSettingsDialog(
             onDismiss = { showBackgroundSettings = false }
+        )
+    }
+
+    if (showSupportDialog) {
+        AlertDialog(
+            onDismissRequest = { showSupportDialog = false },
+            icon = {
+                Icon(
+                    Icons.Default.Favorite,
+                    contentDescription = null
+                )
+            },
+            title = { Text("Спасибо разработчику ❤️") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Если MangaBuff Auto оказался полезен, проект можно добровольно поддержать."
+                    )
+                    Text("Получатель: $SUPPORT_RECIPIENT")
+                    Text(
+                        "Оплата открывается через СБП. Сумму вы выбираете самостоятельно в приложении своего банка.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        try {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(SUPPORT_PAYMENT_URL)
+                                )
+                            )
+                            showSupportDialog = false
+                        } catch (_: Exception) {
+                            Toast.makeText(
+                                context,
+                                "Не удалось открыть страницу СБП",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Открыть СБП")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSupportDialog = false }) {
+                    Text("Закрыть")
+                }
+            }
         )
     }
 
