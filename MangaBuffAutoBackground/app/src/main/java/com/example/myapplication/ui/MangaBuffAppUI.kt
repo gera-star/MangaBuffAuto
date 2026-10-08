@@ -186,15 +186,18 @@ fun MangaBuffAppUI(
                     contentDescription = null
                 )
             },
-            title = { Text("Спасибо разработчику ❤️") },
+            title = { Text("❤️ Поддержать проект") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Если MangaBuff Auto оказался полезен, проект можно добровольно поддержать."
+                        "Добровольное пожертвование на поддержку и развитие проекта MangaBuff Auto."
                     )
                     Text("Получатель: $SUPPORT_RECIPIENT")
                     Text(
-                        "Оплата открывается через СБП. Сумму вы выбираете самостоятельно в приложении своего банка.",
+                        "Пожертвование не является оплатой приложения, лицензии, доступа к функциям или услугам и не является обязательным."
+                    )
+                    Text(
+                        "Перевод выполняется через СБП. Сумму вы выбираете самостоятельно в приложении своего банка.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline
                     )
@@ -222,7 +225,7 @@ fun MangaBuffAppUI(
                 ) {
                     Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Открыть СБП")
+                    Text("Открыть страницу СБП")
                 }
             },
             dismissButton = {
