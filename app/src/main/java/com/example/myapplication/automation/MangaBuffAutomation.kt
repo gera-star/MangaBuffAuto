@@ -505,16 +505,6 @@ class MangaBuffAutomation(
     private val historyServerAcceptedChapterIds = mutableSetOf<String>()
     private val currentHistoryPostChapterIds = mutableSetOf<String>()
 
-    /** Runtime state for the currently observed /addHistory request. */
-    @Volatile
-    private var historyPostActive = false
-    @Volatile
-    private var lastHistoryPostStatus: Int? = null
-    @Volatile
-    private var lastHistoryObservedCcl = 0
-    @Volatile
-    private var lastHistoryObservedPoolSize = 0
-
     fun getCurrentMangaUrl(): String = currentMangaUrl
     fun getLastFinishedChapterId(): String = lastFinishedChapterId
     fun getLastFinishedChapterNumber(): String = lastFinishedChapterNumber
@@ -4068,8 +4058,6 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun onHistoryPostStarted(url: String, currentChapterId: String) {
                     currentHistoryPostChapterIds.clear()
-                    historyPostActive = true
-                    lastHistoryPostStatus = 0
                     log(account.username, "READER: MB_HISTORY_POST_STARTED")
                     log(account.username, "url=$url method=POST currentChapterId=$currentChapterId")
                     log(account.username, "[READQUEST_DIAG] POST_PREPARE quest=$lastKnownReadQuest poolSize=$lastPoolSize")
@@ -4103,8 +4091,6 @@ class MangaBuffAutomation(
                 fun onHistoryPostFinished(status: Int, url: String) {
                     val ok = status in 200..299
                     val batchIds = currentHistoryPostChapterIds.toList()
-                    historyPostActive = false
-                    lastHistoryPostStatus = status
                     log(account.username, "READER: MB_HISTORY_POST_FINISHED status=$status url=$url")
                     log(account.username, "[READQUEST_DIAG] POST_RESULT status=$status")
                     if (ok) {
@@ -4128,8 +4114,6 @@ class MangaBuffAutomation(
                     log(account.username, "READER: MB_PRE_NEXT_CHAPTER_STATE")
                     log(account.username, "is_read=$isRead")
                     log(account.username, "read_status_send=$readStatusSend")
-                    lastHistoryObservedCcl = ccl
-                    lastHistoryObservedPoolSize = historyPoolSize
                     log(account.username, "ccl=$ccl")
                     log(account.username, "history_pool_size=$historyPoolSize")
                     log(account.username, "current_chapter_id=$currentChapterId")
