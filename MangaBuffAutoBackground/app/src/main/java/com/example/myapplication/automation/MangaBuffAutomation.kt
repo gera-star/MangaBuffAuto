@@ -6956,6 +6956,503 @@ class MangaBuffAutomation(
     }
 
     // =========================================================
+    // DECK COMMENTS
+    // =========================================================
+
+    private suspend fun runDeckCommentTask(
+        account: MangaBuffAccount,
+        webView: WebView
+    ): Int {
+        val remainingDaily = (COMMENT_DAILY_LIMIT - dailyStats.comments).coerceAtLeast(0)
+        if (remainingDaily <= 0) {
+            log(
+                account.username,
+                "COMMENT: DECK_DAILY_LIMIT_REACHED used=" +
+                    dailyStats.comments + "/" + COMMENT_DAILY_LIMIT
+            )
+            return 0
+        }
+
+        val targets = mutableListOf<Pair<String, String>>()
+
+        val listLoaded = withTimeoutOrNull(20_000L) {
+            suspendCancellableCoroutine<Boolean> { continuation ->
+                var resumed = false
+
+                fun safeResume(value: Boolean) {
+                    if (!resumed && continuation.isActive) {
+                        resumed = true
+                        continuation.resume(value)
+                    }
+                }
+
+                mainHandler.post {
+                    class DeckListBridge {
+                        @JavascriptInterface
+                        fun onDeckFound(url: String, name: String) {
+                            val cleanUrl = url.trim()
+                            val cleanName = name.trim()
+                            if (
+                                cleanUrl.startsWith("https://mangabuff.ru/decks/") &&
+                                targets.none { it.first == cleanUrl }
+                            ) {
+                                targets += cleanUrl to cleanName
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_FOUND index=" + targets.size +
+                                        " name='" + cleanName + "' url=" + cleanUrl
+                                )
+                            }
+                        }
+
+                        @JavascriptInterface
+                        fun onDeckListReady(count: Int) {
+                            log(
+                                account.username,
+                                "COMMENT: DECK_LIST_READY pageCount=" + count +
+                                    " usable=" + targets.size
+                            )
+                            safeResume(true)
+                        }
+
+                        @JavascriptInterface
+                        fun onDeckListError(message: String) {
+                            log(
+                                account.username,
+                                "COMMENT: DECK_LIST_ERROR error=" + message,
+                                true
+                            )
+                            safeResume(false)
+                        }
+                    }
+
+                    try {
+                        webView.removeJavascriptInterface("AndroidDeckListBridge")
+                    } catch (_: Exception) {
+                    }
+
+                    webView.addJavascriptInterface(
+                        DeckListBridge(),
+                        "AndroidDeckListBridge"
+                    )
+
+                    webView.webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            if (view == null) return
+
+                            val normalized = (url ?: "")
+                                .substringBefore('?')
+                                .substringBefore('#')
+                                .trimEnd('/')
+
+                            if (normalized != "https://mangabuff.ru/decks") return
+
+                            log(
+                                account.username,
+                                "COMMENT: DECK_LIST_PAGE_READY url=" + url
+                            )
+
+                            view.evaluateJavascript(
+                                """
+                                (function() {
+                                    try {
+                                        var nodes = Array.from(
+                                            document.querySelectorAll(
+                                                'a.manga-cards__collection-name[href^="/decks/"]'
+                                            )
+                                        );
+
+                                        var seen = {};
+                                        var unique = nodes.filter(function(node) {
+                                            var href = node.getAttribute('href') || '';
+                                            var absolute = new URL(href, location.href).href
+                                                .split('#')[0]
+                                                .split('?')[0];
+
+                                            if (!absolute.startsWith('https://mangabuff.ru/decks/')) {
+                                                return false;
+                                            }
+
+                                            if (seen[absolute]) return false;
+                                            seen[absolute] = true;
+                                            return true;
+                                        });
+
+                                        unique.slice(0, 9).forEach(function(node) {
+                                            var href = node.getAttribute('href') || '';
+                                            var absolute = new URL(href, location.href).href
+                                                .split('#')[0]
+                                                .split('?')[0];
+                                            var name = (node.textContent || '')
+                                                .replace(/\s+/g, ' ')
+                                                .trim();
+
+                                            AndroidDeckListBridge.onDeckFound(
+                                                absolute,
+                                                name
+                                            );
+                                        });
+
+                                        AndroidDeckListBridge.onDeckListReady(
+                                            Math.min(unique.length, 9)
+                                        );
+                                    } catch (e) {
+                                        AndroidDeckListBridge.onDeckListError(
+                                            e && e.message ? e.message : String(e)
+                                        );
+                                    }
+                                })();
+                                """.trimIndent(),
+                                null
+                            )
+                        }
+                    }
+
+                    log(
+                        account.username,
+                        "COMMENT: DECK_LIST_NAVIGATE url=https://mangabuff.ru/decks"
+                    )
+                    webView.loadUrl("https://mangabuff.ru/decks")
+                }
+            }
+        } ?: false
+
+        mainHandler.post {
+            try {
+                webView.removeJavascriptInterface("AndroidDeckListBridge")
+            } catch (_: Exception) {
+            }
+        }
+
+        if (!listLoaded || targets.isEmpty()) {
+            log(
+                account.username,
+                "COMMENT: DECK_LIST_FAILED loaded=" + listLoaded +
+                    " usable=" + targets.size,
+                true
+            )
+            return 0
+        }
+
+        val quotaTargets = targets.take(remainingDaily)
+        log(
+            account.username,
+            "TASK: DECK_COMMENT_START found=" + targets.size +
+                " target=" + quotaTargets.size +
+                " dailyUsed=" + dailyStats.comments + "/" + COMMENT_DAILY_LIMIT
+        )
+
+        var sentCount = 0
+
+        suspend fun sendToDeck(
+            target: Pair<String, String>,
+            commentText: String
+        ): Boolean {
+            val targetUrl = target.first
+            val targetName = target.second
+            val commentJs = com.google.gson.Gson().toJson(commentText)
+
+            return withTimeoutOrNull(30_000L) {
+                suspendCancellableCoroutine<Boolean> { continuation ->
+                    var resumed = false
+
+                    fun safeResume(value: Boolean) {
+                        if (!resumed && continuation.isActive) {
+                            resumed = true
+                            continuation.resume(value)
+                        }
+                    }
+
+                    mainHandler.post {
+                        class DeckCommentBridge {
+                            @JavascriptInterface
+                            fun onCommentLog(message: String) {
+                                log(account.username, "COMMENT: " + message)
+                            }
+
+                            @JavascriptInterface
+                            fun onCommentFinished(
+                                success: Boolean,
+                                reason: String
+                            ) {
+                                log(
+                                    account.username,
+                                    if (success) {
+                                        "COMMENT: DECK_SUBMIT_CONFIRMED name='" +
+                                            targetName + "' url=" + targetUrl
+                                    } else {
+                                        "COMMENT: DECK_SUBMIT_FAILED name='" +
+                                            targetName + "' url=" + targetUrl +
+                                            " reason=" + reason
+                                    },
+                                    !success
+                                )
+                                safeResume(success)
+                            }
+                        }
+
+                        try {
+                            webView.removeJavascriptInterface("AndroidDeckCommentBridge")
+                        } catch (_: Exception) {
+                        }
+
+                        webView.addJavascriptInterface(
+                            DeckCommentBridge(),
+                            "AndroidDeckCommentBridge"
+                        )
+
+                        webView.webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(
+                                view: WebView?,
+                                url: String?
+                            ) {
+                                super.onPageFinished(view, url)
+                                if (view == null) return
+
+                                val normalized = (url ?: "")
+                                    .substringBefore('?')
+                                    .substringBefore('#')
+                                    .trimEnd('/')
+
+                                if (normalized != targetUrl.trimEnd('/')) return
+
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_PAGE_READY name='" +
+                                        targetName + "' url=" + url
+                                )
+
+                                view.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        try {
+                                            var commentText = $commentJs;
+
+                                            function send(attempt) {
+                                                var textarea = document.querySelector(
+                                                    'textarea[placeholder="Напишите что нибудь..."]'
+                                                );
+                                                var button = document.querySelector(
+                                                    'button.comments__send-btn'
+                                                );
+
+                                                if (!textarea || !button) {
+                                                    if (attempt >= 50) {
+                                                        AndroidDeckCommentBridge.onCommentFinished(
+                                                            false,
+                                                            "CONTROLS_NOT_FOUND"
+                                                        );
+                                                        return;
+                                                    }
+
+                                                    setTimeout(function() {
+                                                        send(attempt + 1);
+                                                    }, 300);
+                                                    return;
+                                                }
+
+                                                if (button.disabled) {
+                                                    if (attempt >= 50) {
+                                                        AndroidDeckCommentBridge.onCommentFinished(
+                                                            false,
+                                                            "SEND_BUTTON_DISABLED"
+                                                        );
+                                                        return;
+                                                    }
+
+                                                    setTimeout(function() {
+                                                        send(attempt + 1);
+                                                    }, 300);
+                                                    return;
+                                                }
+
+                                                AndroidDeckCommentBridge.onCommentLog(
+                                                    "DECK_CONTROLS_FOUND attempt=" + attempt
+                                                );
+
+                                                textarea.click();
+                                                textarea.click();
+                                                AndroidDeckCommentBridge.onCommentLog(
+                                                    "DECK_TEXTAREA_DOUBLE_CLICKED"
+                                                );
+
+                                                textarea.focus();
+
+                                                var valueSetter =
+                                                    Object.getOwnPropertyDescriptor(
+                                                        HTMLTextAreaElement.prototype,
+                                                        "value"
+                                                    );
+
+                                                if (valueSetter && valueSetter.set) {
+                                                    valueSetter.set.call(
+                                                        textarea,
+                                                        commentText
+                                                    );
+                                                } else {
+                                                    textarea.value = commentText;
+                                                }
+
+                                                textarea.dispatchEvent(
+                                                    new Event("input", { bubbles: true })
+                                                );
+                                                textarea.dispatchEvent(
+                                                    new Event("change", { bubbles: true })
+                                                );
+
+                                                AndroidDeckCommentBridge.onCommentLog(
+                                                    "DECK_TEXT_SET length=" +
+                                                        commentText.length
+                                                );
+
+                                                setTimeout(function() {
+                                                    button.click();
+
+                                                    AndroidDeckCommentBridge.onCommentLog(
+                                                        "DECK_SEND_CLICKED"
+                                                    );
+
+                                                    var startedAt = Date.now();
+
+                                                    function verifySubmit() {
+                                                        var current =
+                                                            document.querySelector(
+                                                                'textarea[placeholder="Напишите что нибудь..."]'
+                                                            );
+
+                                                        if (
+                                                            !current ||
+                                                            current.value.trim() === "" ||
+                                                            button.disabled
+                                                        ) {
+                                                            AndroidDeckCommentBridge.onCommentFinished(
+                                                                true,
+                                                                "SUBMIT_STATE_CHANGED"
+                                                            );
+                                                            return;
+                                                        }
+
+                                                        if (
+                                                            Date.now() - startedAt >= 6000
+                                                        ) {
+                                                            AndroidDeckCommentBridge.onCommentFinished(
+                                                                false,
+                                                                "SUBMIT_NOT_CONFIRMED"
+                                                            );
+                                                            return;
+                                                        }
+
+                                                        setTimeout(
+                                                            verifySubmit,
+                                                            300
+                                                        );
+                                                    }
+
+                                                    verifySubmit();
+                                                }, 150);
+                                            }
+
+                                            send(0);
+                                        } catch (e) {
+                                            AndroidDeckCommentBridge.onCommentFinished(
+                                                false,
+                                                e && e.message
+                                                    ? e.message
+                                                    : String(e)
+                                            );
+                                        }
+                                    })();
+                                    """.trimIndent(),
+                                    null
+                                )
+                            }
+                        }
+
+                        log(
+                            account.username,
+                            "COMMENT: DECK_NAVIGATE name='" +
+                                targetName + "' url=" + targetUrl
+                        )
+                        webView.loadUrl(targetUrl)
+                    }
+                }
+            } ?: false
+        }
+
+        for ((index, target) in quotaTargets.withIndex()) {
+            coroutineContext.ensureActive()
+
+            if (dailyStats.comments >= COMMENT_DAILY_LIMIT) {
+                log(
+                    account.username,
+                    "COMMENT: DECK_DAILY_LIMIT_STOP used=" +
+                        dailyStats.comments + "/" + COMMENT_DAILY_LIMIT
+                )
+                break
+            }
+
+            val commentText = deckCommentPhrases.random()
+            log(
+                account.username,
+                "COMMENT: DECK_COMMENT_ATTEMPT index=" +
+                    (index + 1) + "/" + quotaTargets.size +
+                    " name='" + target.second + "' text='" + commentText + "'"
+            )
+
+            if (sendToDeck(target, commentText)) {
+                sentCount++
+                addDaily(account) { stats ->
+                    stats.copy(
+                        comments = (stats.comments + 1)
+                            .coerceAtMost(COMMENT_DAILY_LIMIT)
+                    )
+                }
+
+                log(
+                    account.username,
+                    "COMMENT: DECK_COMMENT_SUCCESS index=" +
+                        (index + 1) + "/" + quotaTargets.size +
+                        " name='" + target.second + "'" +
+                        " daily=" + dailyStats.comments +
+                        "/" + COMMENT_DAILY_LIMIT
+                )
+            } else {
+                log(
+                    account.username,
+                    "COMMENT: DECK_COMMENT_FAILED index=" +
+                        (index + 1) + "/" + quotaTargets.size +
+                        " name='" + target.second + "'",
+                    true
+                )
+            }
+
+            if (
+                index + 1 < quotaTargets.size &&
+                dailyStats.comments < COMMENT_DAILY_LIMIT
+            ) {
+                delay(COMMENT_DELAY_MS)
+            }
+        }
+
+        mainHandler.post {
+            try {
+                webView.removeJavascriptInterface("AndroidDeckCommentBridge")
+            } catch (_: Exception) {
+            }
+        }
+
+        log(
+            account.username,
+            "TASK: DECK_COMMENT_END sent=" + sentCount +
+                " daily=" + dailyStats.comments +
+                "/" + COMMENT_DAILY_LIMIT
+        )
+
+        return sentCount
+    }
+
+    // =========================================================
     // BATTLE REWARDS
     // =========================================================
 
