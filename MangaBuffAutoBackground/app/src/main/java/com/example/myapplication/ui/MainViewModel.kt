@@ -264,21 +264,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         deckComment: Boolean,
         battle: Boolean
     ) {
-        val updatedList = _accounts.value.map { acc ->
-            if (acc.id == account.id) {
-                acc.copy(
-                    readerEnabled = reader,
-                    quizEnabled = quiz,
-                    advEnabled = adv,
-                    mineEnabled = mine,
-                    commentEnabled = comment,
-                    deckCommentEnabled = deckComment,
-                    battleEnabled = battle
-                )
-            } else acc
+        val updated = repository.updateAccount(account.id) {
+            it.copy(
+                readerEnabled = reader,
+                quizEnabled = quiz,
+                advEnabled = adv,
+                mineEnabled = mine,
+                commentEnabled = comment,
+                deckCommentEnabled = deckComment,
+                battleEnabled = battle
+            )
+        } ?: return
+
+        _accounts.update { list ->
+            list.map { acc -> if (acc.id == updated.id) updated else acc }
         }
-        _accounts.value = updatedList
-        repository.saveAccounts(updatedList)
     }
 
     private fun updateAccountStatus(
@@ -311,42 +311,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         chapters: String,
         comments: String
     ) {
+        val updated = repository.updateAccount(accountId) {
+            it.copy(
+                diamonds = diamonds,
+                cardDrop = cardDrop,
+                chapterProgress = chapters,
+                commentProgress = comments
+            )
+        } ?: return
+
         _accounts.update { list ->
-            val updatedList = list.map { acc ->
-                if (acc.id == accountId) {
-                    acc.copy(
-                        diamonds = diamonds,
-                        cardDrop = cardDrop,
-                        chapterProgress = chapters,
-                        commentProgress = comments
-                    )
-                } else acc
-            }
-            repository.saveAccounts(updatedList)
-            updatedList
+            list.map { acc -> if (acc.id == updated.id) updated else acc }
         }
     }
 
     private fun updateDailyStats(accountId: String, stats: DailyStats) {
+        val updated = repository.updateAccount(accountId) {
+            it.copy(
+                dailyStatsDay = stats.day,
+                dailyBattles = stats.battles,
+                dailyBattleAttempts = stats.battleAttempts,
+                dailyQuiz = stats.quiz,
+                dailyAds = stats.ads,
+                dailyMineOre = stats.mineOre,
+                dailyMineExchangeOre = stats.mineExchangeOre,
+                dailyMineDiamonds = stats.mineDiamonds,
+                dailyReaderChapters = stats.readerChapters,
+                dailyComments = stats.comments
+            )
+        } ?: return
+
         _accounts.update { list ->
-            val updated = list.map { acc ->
-                if (acc.id == accountId) {
-                    acc.copy(
-                        dailyStatsDay = stats.day,
-                        dailyBattles = stats.battles,
-                        dailyBattleAttempts = stats.battleAttempts,
-                        dailyQuiz = stats.quiz,
-                        dailyAds = stats.ads,
-                        dailyMineOre = stats.mineOre,
-                        dailyMineExchangeOre = stats.mineExchangeOre,
-                        dailyMineDiamonds = stats.mineDiamonds,
-                        dailyReaderChapters = stats.readerChapters,
-                        dailyComments = stats.comments
-                    )
-                } else acc
-            }
-            repository.saveAccounts(updated)
-            updated
+            list.map { acc -> if (acc.id == updated.id) updated else acc }
         }
     }
 

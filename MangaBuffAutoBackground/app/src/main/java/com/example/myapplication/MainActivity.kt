@@ -69,12 +69,17 @@ class MainActivity : ComponentActivity() {
                     val shortGesture = duration <= 700L
 
                     if (towardCenter && mostlyHorizontal && shortGesture) {
-                        val webView = AutomationWebViewRegistry.webViewsByAccount.value.values
-                            .firstOrNull()
-
-                        if (webView != null && webView.canGoBack()) {
-                            webView.goBack()
+                        val webViews = AutomationWebViewRegistry.webViewsByAccount.value.values
+                        if (webViews.size == 1) {
+                            val webView = webViews.first()
+                            if (webView.canGoBack()) {
+                                webView.goBack()
+                            } else {
+                                onBackPressedDispatcher.onBackPressed()
+                            }
                         } else {
+                            // Never guess which account owns the gesture when several
+                            // WebViews are active. Fall back to Activity navigation.
                             onBackPressedDispatcher.onBackPressed()
                         }
 
@@ -115,7 +120,11 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val webViewsByAccount by AutomationWebViewRegistry.webViewsByAccount.collectAsState()
                     val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
-                    val debugWebView = webViewsByAccount.values.firstOrNull()
+                    val debugWebView = if (webViewsByAccount.size == 1) {
+                        webViewsByAccount.values.first()
+                    } else {
+                        null
+                    }
 
                     Box(modifier = Modifier.fillMaxSize()) {
                         MangaBuffAppUI(

@@ -10,12 +10,17 @@ class AccountRepository(context: Context) {
     private val gson = Gson()
 
     companion object {
+        private val ACCOUNTS_LOCK = Any()
         private const val KEY_ACCOUNTS = "key_accounts"
         private const val KEY_SETTINGS = "key_settings"
         private const val KEY_MINE_AUTO_EXCHANGE_MIGRATED = "key_mine_auto_exchange_manual_migrated"
     }
 
-    fun getAccounts(): List<MangaBuffAccount> {
+    fun getAccounts(): List<MangaBuffAccount> = synchronized(ACCOUNTS_LOCK) {
+        readAccountsUnsafe()
+    }
+
+    private fun readAccountsUnsafe(): List<MangaBuffAccount> {
         val json = prefs.getString(KEY_ACCOUNTS, null) ?: return emptyList()
         val type = object : TypeToken<List<MangaBuffAccount>>() {}.type
         return try {
@@ -55,29 +60,47 @@ class AccountRepository(context: Context) {
         }
     }
 
-    fun saveAccounts(accounts: List<MangaBuffAccount>) {
-        // При сохранении в SharedPreferences флаги выполнения всегда сохраняем как false
-        val sanitized = accounts.map { acc ->
-            acc.copy(isRunning = false, taskProgress = 0f)
-        }
-        val json = gson.toJson(sanitized)
-        prefs.edit().putString(KEY_ACCOUNTS, json).apply()
+    fun saveAccounts(accounts: List<MangaBuffAccount>) = synchronized(ACCOUNTS_LOCK) {
+        writeAccountsUnsafe(accounts)
     }
 
-    fun saveAccount(account: MangaBuffAccount) {
-        val list = getAccounts().toMutableList()
+    fun saveAccount(account: MangaBuffAccount) = synchronized(ACCOUNTS_LOCK) {
+        val list = readAccountsUnsafe().toMutableList()
         val index = list.indexOfFirst { it.id == account.id }
         if (index >= 0) {
             list[index] = account
         } else {
             list.add(account)
         }
-        saveAccounts(list)
+        writeAccountsUnsafe(list)
     }
 
-    fun deleteAccount(accountId: String) {
-        val list = getAccounts().filterNot { it.id == accountId }
-        saveAccounts(list)
+    fun updateAccount(
+        accountId: String,
+        transform: (MangaBuffAccount) -> MangaBuffAccount
+    ): MangaBuffAccount? = synchronized(ACCOUNTS_LOCK) {
+        val list = readAccountsUnsafe().toMutableList()
+        val index = list.indexOfFirst { it.id == accountId }
+        if (index < 0) return@synchronized null
+
+        val updated = transform(list[index])
+        list[index] = updated
+        writeAccountsUnsafe(list)
+        updated
+    }
+
+    fun deleteAccount(accountId: String) = synchronized(ACCOUNTS_LOCK) {
+        val list = readAccountsUnsafe().filterNot { it.id == accountId }
+        writeAccountsUnsafe(list)
+    }
+
+    private fun writeAccountsUnsafe(accounts: List<MangaBuffAccount>) {
+        // При сохранении в SharedPreferences флаги выполнения всегда сохраняем как false
+        val sanitized = accounts.map { acc ->
+            acc.copy(isRunning = false, taskProgress = 0f)
+        }
+        val json = gson.toJson(sanitized)
+        prefs.edit().putString(KEY_ACCOUNTS, json).apply()
     }
 
     fun getSettings(): GlobalSettings {

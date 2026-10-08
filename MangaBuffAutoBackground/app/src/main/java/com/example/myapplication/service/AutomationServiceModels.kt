@@ -1,12 +1,10 @@
 package com.example.myapplication.service
 
-import android.webkit.WebView
 import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
 data class AutomationServiceState(
     val isRunning: Boolean = false,
@@ -54,6 +52,4 @@ class AutomationServiceEventBus {
     )
 
     val state = MutableStateFlow(AutomationServiceState())
-
-    val activeWebView = MutableStateFlow<WebView?>(null)
 }
