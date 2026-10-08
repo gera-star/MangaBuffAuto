@@ -144,6 +144,13 @@ class MangaBuffAutomation(
         // TEMP TEST: send exactly one reader comment to chapter 2.
         private const val COMMENT_TEST_CHAPTER = "2"
         private const val COMMENT_TEST_COUNT = 1
+
+        // TEMP TEST: reader runs exactly one chapter for the current test.
+        // Set READER_TEST_MODE = false after verification; normal runs are capped at 10 chapters.
+        private const val READER_TEST_MODE = true
+        private const val READER_TEST_CHAPTERS = 1
+        private const val READER_MAX_CHAPTERS = 10
+
         private const val DECK_PAGE_SETTLE_MS = 2000L
 
         private const val BATTLE_COOLDOWN_MS = 2000L
@@ -3869,7 +3876,8 @@ class MangaBuffAutomation(
         var dailyCommentCount = 0
         var nextChapterUrlToOpen = ""
 
-        val target = settings.readerChapters
+        val configuredTarget = settings.readerChapters.coerceIn(1, READER_MAX_CHAPTERS)
+        val target = if (READER_TEST_MODE) READER_TEST_CHAPTERS else configuredTarget
         currentSessionTarget = target
         currentSessionChaptersRead = 0
 
