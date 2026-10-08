@@ -196,40 +196,59 @@ fun MangaBuffAppUI(
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                    AndroidView(
-                        factory = { ctx ->
-                            val profileName = "mb_${acc.id}"
-                            println("PROFILE: BALANCE accountId=${acc.id} profile=$profileName")
-                            val wv = WebView(ctx)
-                            wv.settings.javaScriptEnabled = true
-                            wv.settings.domStorageEnabled = true
-                            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
-                                try {
-                                    WebViewCompat.setProfile(wv, profileName)
-                                    val profileStore = ProfileStore.getInstance()
-                                    val profile = profileStore.getProfile(profileName)
-                                    val cm = profile?.cookieManager
-                                    if (cm != null) {
-                                        cm.setAcceptCookie(true)
-                                        val cookies = acc.getSafeCookiesJson()
-                                        if (cookies.isNotEmpty()) {
-                                            for (item in cookies.split(";", ",")) {
-                                                if (item.contains("=")) {
-                                                    cm.setCookie("https://mangabuff.ru", item.trim())
+                    if (acc.isRunning) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                "Аккаунт выполняет задачу в фоне.",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Чтобы не создавать второй WebView того же профиля и не вмешиваться в текущую автоматизацию, просмотр /balance доступен после остановки задачи.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    } else {
+                        AndroidView(
+                            factory = { ctx ->
+                                val profileName = "mb_${acc.id}"
+                                println("PROFILE: BALANCE accountId=${acc.id} profile=$profileName")
+                                val wv = WebView(ctx)
+                                wv.settings.javaScriptEnabled = true
+                                wv.settings.domStorageEnabled = true
+                                if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                                    try {
+                                        WebViewCompat.setProfile(wv, profileName)
+                                        val profileStore = ProfileStore.getInstance()
+                                        val profile = profileStore.getProfile(profileName)
+                                        val cm = profile?.cookieManager
+                                        if (cm != null) {
+                                            cm.setAcceptCookie(true)
+                                            val cookies = acc.getSafeCookiesJson()
+                                            if (cookies.isNotEmpty()) {
+                                                for (item in cookies.split(";", ",")) {
+                                                    if (item.contains("=")) {
+                                                        cm.setCookie("https://mangabuff.ru", item.trim())
+                                                    }
                                                 }
+                                                cm.flush()
                                             }
-                                            cm.flush()
                                         }
+                                    } catch (e: Exception) {
+                                        println("PROFILE: COOKIE_PROFILE_FAIL accountId=${acc.id} error=${e.message}")
                                     }
-                                } catch (e: Exception) {
-                                    println("PROFILE: COOKIE_PROFILE_FAIL accountId=${acc.id} error=${e.message}")
                                 }
-                            }
-                            wv.loadUrl("https://mangabuff.ru/balance")
-                            wv
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                                wv.loadUrl("https://mangabuff.ru/balance")
+                                wv
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
         }
