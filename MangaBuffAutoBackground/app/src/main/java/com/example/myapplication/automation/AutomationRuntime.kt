@@ -52,7 +52,8 @@ class AutomationRuntime(
                     )
                 )
                 onAccountRecoveryNeeded(accountId)
-                stopAccount(accountId) else {
+                stopAccount(accountId)
+            } else {
                 onLog(
                     LogEntry(
                         username = accountId,
