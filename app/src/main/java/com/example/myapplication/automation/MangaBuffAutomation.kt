@@ -505,6 +505,16 @@ class MangaBuffAutomation(
     private val historyServerAcceptedChapterIds = mutableSetOf<String>()
     private val currentHistoryPostChapterIds = mutableSetOf<String>()
 
+    /** Runtime state for the currently observed /addHistory request. */
+    @Volatile
+    private var historyPostActive = false
+    @Volatile
+    private var lastHistoryPostStatus: Int? = null
+    @Volatile
+    private var lastHistoryObservedCcl = 0
+    @Volatile
+    private var lastHistoryObservedPoolSize = 0
+
     fun getCurrentMangaUrl(): String = currentMangaUrl
     fun getLastFinishedChapterId(): String = lastFinishedChapterId
     fun getLastFinishedChapterNumber(): String = lastFinishedChapterNumber
@@ -4058,6 +4068,8 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun onHistoryPostStarted(url: String, currentChapterId: String) {
                     currentHistoryPostChapterIds.clear()
+                    historyPostActive = true
+                    lastHistoryPostStatus = 0
                     log(account.username, "READER: MB_HISTORY_POST_STARTED")
                     log(account.username, "url=$url method=POST currentChapterId=$currentChapterId")
                     log(account.username, "[READQUEST_DIAG] POST_PREPARE quest=$lastKnownReadQuest poolSize=$lastPoolSize")
@@ -4091,6 +4103,8 @@ class MangaBuffAutomation(
                 fun onHistoryPostFinished(status: Int, url: String) {
                     val ok = status in 200..299
                     val batchIds = currentHistoryPostChapterIds.toList()
+                    historyPostActive = false
+                    lastHistoryPostStatus = status
                     log(account.username, "READER: MB_HISTORY_POST_FINISHED status=$status url=$url")
                     log(account.username, "[READQUEST_DIAG] POST_RESULT status=$status")
                     if (ok) {
@@ -4114,6 +4128,8 @@ class MangaBuffAutomation(
                     log(account.username, "READER: MB_PRE_NEXT_CHAPTER_STATE")
                     log(account.username, "is_read=$isRead")
                     log(account.username, "read_status_send=$readStatusSend")
+                    lastHistoryObservedCcl = ccl
+                    lastHistoryObservedPoolSize = historyPoolSize
                     log(account.username, "ccl=$ccl")
                     log(account.username, "history_pool_size=$historyPoolSize")
                     log(account.username, "current_chapter_id=$currentChapterId")
@@ -5516,26 +5532,36 @@ class MangaBuffAutomation(
                                         var waitReason = '';
                                         var postOk = postStatus !== null && postStatus >= 200 && postStatus < 300;
 
-                                        // Leave the reader once MangaBuff itself reports the current chapter
-                                        // as read and places it in history. The authoritative reward check
-                                        // is the forced /balance refresh on the native side.
+                                        // Local history_pool is only enough while MangaBuff's CCL batch
+                                        // is still incomplete. Once the batch reaches CCL, the current
+                                        // chapter must wait for the real /addHistory HTTP success instead
+                                        // of being accepted merely because read_status_send=true.
+                                        //
+                                        // This is the critical distinction for CCL=2:
+                                        //   chapter 1 -> pool=1 -> local/deferred is valid
+                                        //   chapter 2 -> pool reaches 2 -> wait for /addHistory 2xx
+                                        //
+                                        // Without this gate the reader could report READ_CONFIRMED,
+                                        // stop on the target chapter, and leave the last batch unaccepted.
                                         if (!isRead) {
                                             waitReason = 'PAGE_NOT_READ';
-                                        } else if (readSend && containsCurrent) {
+                                        } else if (postOk) {
                                             confirmed = true;
-                                            confirmSource = postOk
-                                                ? 'ADD_HISTORY_2XX'
-                                                : (postStarted ? 'LOCAL_HISTORY_AFTER_POST' : 'LOCAL_HISTORY_STATE');
-                                            if (!postStarted) {
-                                                waitReason = 'ADDHISTORY_NOT_INTERCEPTED_BALANCE_WILL_VERIFY';
-                                            }
+                                            confirmSource = 'ADD_HISTORY_2XX';
+                                        } else if (postStarted) {
+                                            waitReason = 'WAITING_FOR_ADD_HISTORY_2XX';
+                                        } else if (readSend && containsCurrent && cclVal > 1 && pool.length < cclVal) {
+                                            confirmed = true;
+                                            confirmSource = 'LOCAL_HISTORY_CCL_PENDING';
+                                            waitReason = 'CCL_BATCH_PENDING_SERVER_ACCEPTANCE';
+                                        } else if (readSend && containsCurrent && cclVal > 1 && pool.length >= cclVal) {
+                                            waitReason = 'CCL_BATCH_READY_WAITING_FOR_POST';
+                                        } else if (readSend && containsCurrent && cclVal <= 1) {
+                                            waitReason = 'READ_HISTORY_POST_REQUIRED';
                                         } else if (!postStarted) {
                                             waitReason = readSend
                                                 ? 'WAITING_FOR_HISTORY_POOL_CURRENT'
                                                 : 'READ_STATUS_NOT_READY';
-                                        } else if (postOk) {
-                                            confirmed = true;
-                                            confirmSource = 'ADD_HISTORY_2XX';
                                         } else if (postStatus !== null && postStatus !== 0) {
                                             waitReason = 'POST_STATUS_' + postStatus;
                                         } else {
