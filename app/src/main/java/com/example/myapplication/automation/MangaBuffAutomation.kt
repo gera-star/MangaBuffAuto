@@ -3678,10 +3678,98 @@ class MangaBuffAutomation(
             }
         }
 
+        if (chaptersReadCount >= target && lastFinishedChapterId.isNotBlank()) {
+            bestEffortFlushReaderHistory(
+                account = account,
+                webView = webView,
+                chapterId = lastFinishedChapterId
+            )
+        }
+
         activeChapterContext = null
         activeReaderSkip = null
+        activeReaderMarkRead = null
         log(account.username, "READER: STOP_CLEANUP_COMPLETE")
         log(account.username, "READER: FINISHED totalRead=$chaptersReadCount/$target")
+    }
+
+    private suspend fun bestEffortFlushReaderHistory(
+        account: MangaBuffAccount,
+        webView: WebView,
+        chapterId: String
+    ) {
+        if (chapterId.isBlank()) return
+
+        log(
+            account.username,
+            "READER: FINAL_HISTORY_FLUSH_START chapterId=${chapterId}"
+        )
+
+        mainHandler.post {
+            try {
+                webView.evaluateJavascript(
+                    """
+                    (function() {
+                        try {
+                            var isRead = window.is_read === true;
+                            var readSend = window.read_status_send === true;
+
+                            AndroidReaderBridge.onLogStep(
+                                'READER: FINAL_HISTORY_STATE isRead=' + isRead +
+                                ' readStatusSend=' + readSend +
+                                ' ccl=' + Number(window.ccl || 0)
+                            );
+
+                            if (isRead && !readSend && typeof window.addHistory === 'function') {
+                                window.addHistory();
+                                AndroidReaderBridge.onLogStep(
+                                    'READER: FINAL_HISTORY_NATIVE_ADDHISTORY_TRIGGERED'
+                                );
+                            }
+                        } catch(e) {
+                            AndroidReaderBridge.onLogStep(
+                                'READER: FINAL_HISTORY_FLUSH_ERROR error=' + String(e)
+                            );
+                        }
+                    })();
+                    """.trimIndent(),
+                    null
+                )
+            } catch (e: Exception) {
+                log(
+                    account.username,
+                    "READER: FINAL_HISTORY_FLUSH_DISPATCH_ERROR error=${e.message}",
+                    true
+                )
+            }
+        }
+
+        repeat(8) {
+            coroutineContext.ensureActive()
+
+            if (historyServerAcceptedChapterIds.contains(chapterId)) {
+                log(
+                    account.username,
+                    "READER: FINAL_HISTORY_SERVER_ACCEPTED chapterId=${chapterId}"
+                )
+                return
+            }
+
+            delay(500L)
+        }
+
+        if (historyServerAcceptedChapterIds.contains(chapterId)) {
+            log(
+                account.username,
+                "READER: FINAL_HISTORY_SERVER_ACCEPTED chapterId=${chapterId}"
+            )
+        } else {
+            log(
+                account.username,
+                "READER: FINAL_HISTORY_CCL_PENDING chapterId=${chapterId} " +
+                    "serverAcceptanceDeferred=true"
+            )
+        }
     }
 
     // =========================================================
