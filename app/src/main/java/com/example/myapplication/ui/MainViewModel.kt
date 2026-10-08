@@ -509,7 +509,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopAccountTask(accountId: String) {
-        println("JOB: STOP_ACCOUNT accountId=$accountId")
+        println("JOB: STOP_ACCOUNT accountId=${accountId}")
+        if (sequentialCurrentAccountId == accountId && sequentialJob != null) {
+            sequentialJob?.cancel()
+            return
+        }
+
         accountJobs[accountId]?.cancel()
         accountJobs.remove(accountId)
         automationRunner.stopAccount(accountId)
@@ -526,6 +531,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (accountJobs.isEmpty()) {
             _isRunning.value = false
+            syncKeepScreenOnState()
             releaseWakeLock()
             MangaBuffForegroundService.stopService(getApplication())
         }
@@ -533,19 +539,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopAllTasks() {
         println("JOB: STOP_ALL")
+        sequentialJob?.cancel()
+        sequentialJob = null
+        sequentialCurrentAccountId = null
+
         for ((accountId, job) in accountJobs) {
-            println("JOB: CANCEL accountId=$accountId")
+            println("JOB: CANCEL accountId=${accountId}")
             job.cancel()
         }
         accountJobs.clear()
         automationRunner.stopAll()
         _isRunning.value = false
+        syncKeepScreenOnState()
         releaseWakeLock()
         stopAllTasksState()
         MangaBuffForegroundService.stopService(getApplication())
         addLog(LogEntry(message = "Все задачи остановлены"))
     }
-
     fun clearLogs() {
         _logs.value = emptyList()
     }
