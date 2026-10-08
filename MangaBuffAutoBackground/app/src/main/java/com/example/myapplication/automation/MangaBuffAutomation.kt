@@ -7107,8 +7107,17 @@ class MangaBuffAutomation(
             return
         }
 
+        /*
+         * TEMP TEST: COMMENT task can be launched directly, before the reader has
+         * created activeChapterContext/lastFinishedChapterUrl. In that case use
+         * the saved manga URL and explicitly target volume 1 / chapter 2.
+         */
         val targetUrl = activeChapterContext?.actualChapterUrl?.ifBlank { null }
             ?: lastFinishedChapterUrl.ifBlank { null }
+            ?: account.getSafeActiveMangaUrl()
+                .let { ensureCanonicalMangaUrl(it) }
+                .takeIf { it.startsWith("https://mangabuff.ru/manga/") }
+                ?.let { "$it/1/$COMMENT_TEST_CHAPTER" }
 
         val sourceClean = targetUrl?.substringBefore('?')?.substringBefore('#').orEmpty()
         val chapterPrefix = Regex("^(https://mangabuff\\.ru/manga/[^/]+/\\d+)/\\d+$")
