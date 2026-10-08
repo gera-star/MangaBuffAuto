@@ -369,6 +369,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_isRunning.value) {
             stopAllTasks()
         }
+
         val enabledAccounts = _accounts.value
         if (enabledAccounts.isEmpty()) return
 
@@ -376,24 +377,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         acquireWakeLock()
         MangaBuffForegroundService.startService(getApplication(), "Выполнение задач на всех аккаунтах...")
 
-        accountJobs["batch_all"] = viewModelScope.launch {
-            try {
-                for (account in enabledAccounts) {
-                    ensureActive()
+        // Each account gets its own Job. A/B must be able to run, stop, fail,
+        // reload and recover independently.
+        for (account in enabledAccounts) {
+            accountJobs[account.id] = viewModelScope.launch {
+                try {
                     automationRunner.runForAccount(account, _settings.value, taskType)
+                } catch (e: CancellationException) {
+                    addLog(LogEntry(username = account.username, message = "Выполнение остановлено пользователем"))
+                } catch (e: Exception) {
+                    addLog(LogEntry(username = account.username, message = "Ошибка выполнения: ${e.message}", isError = true))
+                } finally {
+                    val currentJob = coroutineContext[Job]
+                    if (accountJobs[account.id] == currentJob) {
+                        accountJobs.remove(account.id)
+                    }
+
+                    repository.updateAccount(account.id) { acc ->
+                        acc.copy(
+                            isRunning = false,
+                            taskProgress = 0f,
+                            statusMessage = if (acc.statusMessage?.contains("Завершено") == true) acc.statusMessage else "Остановлено пользователем"
+                        )
+                    }?.let { updated ->
+                        _accounts.update { list -> list.map { acc -> if (acc.id == account.id) updated else acc } }
+                    }
+
+                    if (accountJobs.isEmpty()) {
+                        _isRunning.value = false
+                        releaseWakeLock()
+                        MangaBuffForegroundService.stopService(getApplication())
+                    }
                 }
-            } catch (e: CancellationException) {
-                addLog(LogEntry(message = "Пакетное выполнение остановлено пользователем"))
-            } catch (e: Exception) {
-                addLog(LogEntry(message = "Ошибка пакетного выполнения: ${e.message}", isError = true))
-            } finally {
-                accountJobs.remove("batch_all")
-                if (accountJobs.isEmpty()) {
-                    _isRunning.value = false
-                    releaseWakeLock()
-                    MangaBuffForegroundService.stopService(getApplication())
-                }
-                stopAllTasksState()
             }
         }
     }
