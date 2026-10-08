@@ -152,6 +152,17 @@ class MangaBuffAutomation(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
+     * Releases all account-local native HTTP resources.
+     *
+     * This engine owns its OkHttpClient, so stopping this account must not leave
+     * queued calls or pooled sockets alive while another account continues.
+     */
+    fun closeNetworkResources() {
+        httpClient.dispatcher.cancelAll()
+        httpClient.connectionPool.evictAll()
+    }
+
+    /**
      * Performs a short synthetic finger gesture and then uses WebView's native
      * fling path. This follows Android's touch/velocity model instead of
      * scheduling a long series of delayed MotionEvents.
