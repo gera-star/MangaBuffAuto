@@ -8,7 +8,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import android.content.pm.PackageManager
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.NetworkResetMode
 import rikka.shizuku.Shizuku
