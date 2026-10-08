@@ -536,7 +536,10 @@ class MangaBuffAutomation(
     }
 
     private fun updateReaderStatus(account: MangaBuffAccount) {
-        val totalStr = if (totalMangaChapters > 0) totalMangaChapters.toString() else "?"
+        // UI progress is the configured automation target, not the total number of
+        // chapters in the manga. The latter can be 100+ and must not be shown
+        // as the task target when the task is configured for 10 chapters.
+        val totalStr = if (currentSessionTarget > 0) currentSessionTarget.toString() else "?"
         val countStr = currentSessionChaptersRead.toString()
         updateStatus(
             account,
