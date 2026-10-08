@@ -8,7 +8,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.content.pm.PackageManager
 import com.example.myapplication.data.GlobalSettings
+import rikka.shizuku.Shizuku
 import com.example.myapplication.data.NetworkResetMode
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -92,6 +94,29 @@ private fun openAutostartSettings(context: Context) {
     openAppInfo(context)
 }
 
+private const val SHIZUKU_REQUEST_CODE = 4107
+
+private fun isShizukuReady(): Boolean =
+    try {
+        Shizuku.pingBinder() &&
+            !Shizuku.isPreV11() &&
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+    } catch (_: Throwable) {
+        false
+    }
+
+private fun requestShizukuPermission() {
+    try {
+        if (Shizuku.pingBinder() &&
+            !Shizuku.isPreV11() &&
+            Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED
+        ) {
+            Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+        }
+    } catch (_: Throwable) {
+    }
+}
+
 private fun hasNotifications(context: Context): Boolean =
     Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
         ContextCompat.checkSelfPermission(
@@ -158,8 +183,36 @@ fun BackgroundSettingsDialog(
                 )
 
                 if (settings.networkResetEnabled) {
+                    val shizukuReady = remember(refreshKey) { isShizukuReady() }
+
+                    BackgroundStatusRow(
+                        BackgroundCheck(
+                            "Shizuku",
+                            "Нужен для автоматического Airplane Mode без root: Shizuku через Wireless Debugging даёт UserService shell-уровень.",
+                            shizukuReady
+                        )
+                    )
+
+                    if (!shizukuReady) {
+                        OutlinedButton(
+                            onClick = {
+                                requestShizukuPermission()
+                                refreshKey++
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Разрешить Shizuku")
+                        }
+                    } else {
+                        Text(
+                            "Shizuku готов. Перед следующим аккаунтом приложение сможет выполнить network reset через privileged UserService.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+
                     Text(
-                        "Airplane Mode: доступен только если устройство разрешает привилегированный shell (например, root). Обычный APK не может включать этот режим напрямую.",
+                        "Если Shizuku не запущен/не разрешён, reset не должен запускать следующий аккаунт — приложение остановит последовательную сессию безопасно.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline
                     )
