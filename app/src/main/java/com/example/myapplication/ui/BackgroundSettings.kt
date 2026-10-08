@@ -10,8 +10,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.content.pm.PackageManager
 import com.example.myapplication.data.GlobalSettings
-import rikka.shizuku.Shizuku
 import com.example.myapplication.data.NetworkResetMode
+import rikka.shizuku.Shizuku
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -135,6 +135,7 @@ fun BackgroundSettingsDialog(
 
     val batteryOk = remember(refreshKey) { isIgnoringBatteryOptimizations(context) }
     val notificationsOk = remember(refreshKey) { hasNotifications(context) }
+    val shizukuReady = remember(refreshKey) { isShizukuReady() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -183,8 +184,6 @@ fun BackgroundSettingsDialog(
                 )
 
                 if (settings.networkResetEnabled) {
-                    val shizukuReady = remember(refreshKey) { isShizukuReady() }
-
                     BackgroundStatusRow(
                         BackgroundCheck(
                             "Shizuku",
