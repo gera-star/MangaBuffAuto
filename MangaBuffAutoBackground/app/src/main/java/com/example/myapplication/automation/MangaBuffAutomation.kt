@@ -139,6 +139,7 @@ class MangaBuffAutomation(
         private const val MINE_COMPLETION_DELAY_MS = 2000L
 
         private const val COMMENT_DELAY_MS = 4000L
+        private const val COMMENT_DAILY_LIMIT = 13
 
         private const val BATTLE_COOLDOWN_MS = 2000L
         private const val BATTLE_WIN_TARGET = 2
@@ -777,6 +778,19 @@ class MangaBuffAutomation(
         "Интересная глава, буду ждать продолжения.",
         "Спасибо за релиз и качественный перевод!",
         "Как всегда интересно. Спасибо за новую главу!"
+    )
+
+    private val deckCommentPhrases = listOf(
+        "Какая классная колода! Просто мечта! 😍",
+        "Вау, вот это колода! Очень круто собрано! 🔥",
+        "Шикарная колода, глаз не оторвать! ✨",
+        "Вот это подборка! Я бы такую колоду тоже хотел! ❤️",
+        "Очень крутая колода, настоящая мечта коллекционера! 😍",
+        "Какая красота! Отличная колода! 💜",
+        "Сильная и очень стильная колода! 🔥",
+        "Просто восторг! Очень понравилась эта колода! 😍",
+        "Вот это состав! Выглядит невероятно круто! ✨",
+        "Мечта, а не колода! Очень классная работа! ❤️"
     )
 
     private val recentCommentIndexes = mutableListOf<Int>()
@@ -3909,7 +3923,8 @@ class MangaBuffAutomation(
 
                     if (account.commentEnabled &&
                         chaptersSinceComment >= nextCommentAfter &&
-                        dailyCommentCount < settings.commentCount
+                        dailyCommentCount < settings.commentCount &&
+                        dailyStats.comments < COMMENT_DAILY_LIMIT
                     ) {
                         val targetCommentUrl = chUrl.ifBlank {
                             activeChapterContext?.actualChapterUrl?.ifBlank { null }
@@ -6883,8 +6898,25 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ) {
-        val target = settings.commentCount
-        log(account.username, "TASK: COMMENT_START count=$target")
+        val requested = settings.commentCount.coerceAtLeast(0)
+        val remainingDaily = (COMMENT_DAILY_LIMIT - dailyStats.comments).coerceAtLeast(0)
+        val target = requested.coerceAtMost(remainingDaily)
+
+        log(
+            account.username,
+            "TASK: COMMENT_START requested=" + requested +
+                " dailyUsed=" + dailyStats.comments + "/" + COMMENT_DAILY_LIMIT +
+                " target=" + target
+        )
+
+        if (target <= 0) {
+            log(
+                account.username,
+                "COMMENT: DAILY_LIMIT_REACHED used=" + dailyStats.comments +
+                    "/" + COMMENT_DAILY_LIMIT
+            )
+            return
+        }
 
         val targetUrl = activeChapterContext?.actualChapterUrl?.ifBlank { null }
             ?: lastFinishedChapterUrl.ifBlank { null }
