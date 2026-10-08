@@ -151,6 +151,18 @@ class MangaBuffAutomation(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    @Volatile
+    private var activeWebViewUserAgent: String = ""
+
+    fun bindWebViewUserAgent(userAgent: String) {
+        activeWebViewUserAgent = userAgent.trim()
+        log(
+            "SYSTEM",
+            "HTTP: WEBVIEW_UA_BOUND length=${activeWebViewUserAgent.length}"
+        )
+    }
+
+
     /**
      * Releases all account-local runtime resources.
      *
@@ -159,6 +171,7 @@ class MangaBuffAutomation(
      * alive while another account is being prepared.
      */
     fun shutdown() {
+        activeWebViewUserAgent = ""
         activeReaderSkip = null
         activeReaderMarkRead = null
         adSessionActive = false
@@ -640,8 +653,11 @@ class MangaBuffAutomation(
     }
 
     private fun getBaseHeaders(account: MangaBuffAccount): Headers {
+        val effectiveUserAgent =
+            activeWebViewUserAgent.ifBlank { account.getSafeUserAgent() }
+
         val builder = Headers.Builder()
-            .add("User-Agent", account.getSafeUserAgent())
+            .add("User-Agent", effectiveUserAgent)
             .add("Accept", "*/*")
             .add("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
             .add("Origin", "https://mangabuff.ru")
