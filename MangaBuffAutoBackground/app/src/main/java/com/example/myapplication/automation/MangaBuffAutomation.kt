@@ -39,6 +39,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
+import kotlin.random.Random
 
 enum class ReaderScrollMode {
     NATIVE_MANGABUFF,
@@ -140,6 +141,7 @@ class MangaBuffAutomation(
 
         private const val COMMENT_DELAY_MS = 4000L
         private const val COMMENT_DAILY_LIMIT = 13
+        private const val DECK_PAGE_SETTLE_MS = 2000L
 
         private const val BATTLE_COOLDOWN_MS = 2000L
         private const val BATTLE_WIN_TARGET = 2
@@ -7067,6 +7069,13 @@ class MangaBuffAutomation(
             return 0
         }
 
+        delay(DECK_PAGE_SETTLE_MS)
+        log(
+            account.username,
+            "COMMENT: DECK_PAGE_SETTLE delayMs=" + DECK_PAGE_SETTLE_MS +
+                " stage=LIST"
+        )
+
         val rawDeckJson = evalJs(
             """
             (function() {
@@ -7195,6 +7204,13 @@ class MangaBuffAutomation(
                 )
                 continue
             }
+
+            delay(DECK_PAGE_SETTLE_MS)
+            log(
+                account.username,
+                "COMMENT: DECK_PAGE_SETTLE delayMs=" + DECK_PAGE_SETTLE_MS +
+                    " stage=DECK name='" + deckName + "'"
+            )
 
             var actionClicked = false
 
@@ -7382,7 +7398,15 @@ class MangaBuffAutomation(
                 index + 1 < targetDecks.size &&
                 dailyStats.comments < COMMENT_DAILY_LIMIT
             ) {
-                delay(COMMENT_DELAY_MS)
+                val nextCommentDelayMs = Random.nextLong(10_000L, 40_001L)
+
+                log(
+                    account.username,
+                    "COMMENT: DECK_NEXT_DELAY delayMs=" + nextCommentDelayMs +
+                        " delaySec=" + (nextCommentDelayMs / 1000)
+                )
+
+                delay(nextCommentDelayMs)
             }
         }
 
