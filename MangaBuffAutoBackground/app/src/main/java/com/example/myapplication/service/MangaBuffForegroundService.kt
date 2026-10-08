@@ -358,6 +358,9 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun startAccountInternal(accountId: String, taskType: TaskType) {
+        // A new user/background start opens a fresh recovery window.
+        // A previous explicit "Stop all" must not permanently disable renderer recovery.
+        stoppingExplicitly = false
         recoveryRequests.remove(accountId)
         missingWebViewSince.remove(accountId)
         val account = repository.getAccounts().firstOrNull { it.id == accountId }

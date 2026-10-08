@@ -135,6 +135,31 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall
                 )
 
+                HorizontalDivider()
+
+                Text(
+                    "Что уже встроено в MangaBuff Auto",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+
+                BackgroundFeatureRow(
+                    "Foreground Service",
+                    "Основная фоновая работа выполняется через постоянный сервис Android."
+                )
+                BackgroundFeatureRow(
+                    "PARTIAL_WAKE_LOCK",
+                    "CPU не отпускается в сон, пока есть активные задачи аккаунтов."
+                )
+                BackgroundFeatureRow(
+                    "WebView Watchdog",
+                    "Сервис контролирует потерю WebView и тайм-аут восстановления."
+                )
+                BackgroundFeatureRow(
+                    "Автовосстановление",
+                    "После потери renderer аккаунт может быть запущен заново без запуска всех аккаунтов."
+                )
+
                 Spacer(Modifier.height(2.dp))
 
                 OutlinedButton(
@@ -176,6 +201,36 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
             }
         }
     )
+}
+
+@Composable
+private fun BackgroundFeatureRow(
+    title: String,
+    description: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 10.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(description, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            "ВСТРОЕНО",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
 }
 
 @Composable
