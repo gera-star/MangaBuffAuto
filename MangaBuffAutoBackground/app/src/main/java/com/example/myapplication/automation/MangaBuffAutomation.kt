@@ -129,7 +129,7 @@ class MangaBuffAutomation(
     private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
 
-    private inner class AutomationWebViewClient(
+    private open inner class AutomationWebViewClient(
         private val accountUsername: String,
         private val clientWebView: WebView
     ) : WebViewClient() {
