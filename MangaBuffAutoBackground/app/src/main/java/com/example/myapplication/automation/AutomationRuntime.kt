@@ -67,7 +67,18 @@ class AutomationRuntime(
     @Synchronized
     private fun getOrCreateEngine(accountId: String): MangaBuffAutomation {
         return automationEngines.getOrPut(accountId) {
-            val engine = MangaBuffAutomation(context, onLog, onAccountStatusUpdate, onMangaActiveUrlUpdate, onAccountStatsUpdate, onDailyStatsUpdate)
+            val engine = MangaBuffAutomation(
+                context = context,
+                onLog = onLog,
+                onAccountStatusUpdate = onAccountStatusUpdate,
+                onMangaActiveUrlUpdate = onMangaActiveUrlUpdate,
+                onAccountStatsUpdate = onAccountStatsUpdate,
+                onDailyStatsUpdate = onDailyStatsUpdate,
+                onRendererGone = { failedAccountId, _ ->
+                    onAccountRecoveryNeeded(failedAccountId)
+                    stopAccount(failedAccountId)
+                }
+            )
             onLog(LogEntry(username = accountId, component = "ENGINE", message = "CREATE engineId=${engine.hashCode()}"))
             engine
         }.also {
