@@ -1120,7 +1120,7 @@ fun LogsTab(
         }
     }
 
-    LaunchedEffect(visibleLogs.size, logFilter) {
+    LaunchedEffect(visibleLogs.size) {
         if (isAtBottom.value && visibleLogs.isNotEmpty()) {
             listState.animateScrollToItem(visibleLogs.size - 1)
         }
