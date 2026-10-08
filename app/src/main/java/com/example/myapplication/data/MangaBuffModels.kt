@@ -106,6 +106,11 @@ data class LogEntry(
     val isError: Boolean = false
 )
 
+enum class NetworkResetMode {
+    NONE,
+    AIRPLANE_MODE
+}
+
 data class GlobalSettings(
     val quizMaxClicks: Int = 15,
     val adsCount: Int = 5,
@@ -114,5 +119,12 @@ data class GlobalSettings(
     val mineAutoExchange: Boolean = false,
     val readerChapters: Int = 10,
     val commentCount: Int = 3,
-    val battleTargetCount: Int = 20
+    val battleTargetCount: Int = 20,
+    /** All-account runs are intentionally serialized to avoid concurrent account lifecycles. */
+    val sequentialAccounts: Boolean = true,
+    /** Keep the visible Activity window awake for the whole automation session. */
+    val keepScreenOn: Boolean = true,
+    /** Optional network reset between sequential accounts. */
+    val networkResetEnabled: Boolean = false,
+    val networkResetMode: NetworkResetMode = NetworkResetMode.NONE
 )
