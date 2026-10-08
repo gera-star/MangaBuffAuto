@@ -127,21 +127,33 @@ class NetworkResetManager(
             false
         }
 
-    private fun rootShellAvailable(): Boolean =
-        runCatching {
-            val result = runRootCommandBlocking("id")
-            result.success && result.output.contains("uid=0")
-        }.getOrDefault(false)
+    private suspend fun rootShellAvailable(): Boolean =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val result = runRootCommandBlocking("id")
+                result.success && result.output.contains("uid=0")
+            }.getOrDefault(false)
+        }
 
     private suspend fun runPrivilegedCommand(
         provider: String,
         command: String
     ): RootCommandResult {
-        return if (provider == "SHIZUKU") {
-            runShizukuCommand(command)
-        } else {
-            runRootCommand(command)
+        if (provider == "SHIZUKU") {
+            val shizukuResult = runShizukuCommand(command)
+            if (shizukuResult.success) return shizukuResult
+
+            if (rootShellAvailable()) {
+                onLog(
+                    "AIRPLANE_MODE_SHIZUKU_COMMAND_FAILED_FALLBACK_ROOT " +
+                        "command=$$command reason=$${sanitize(shizukuResult.output)}"
+                )
+                return runRootCommand(command)
+            }
+            return shizukuResult
         }
+
+        return runRootCommand(command)
     }
 
     private suspend fun runShizukuCommand(command: String): RootCommandResult =
@@ -173,30 +185,35 @@ class NetworkResetManager(
                             return
                         }
 
-                        try {
-                            val remote =
-                                INetworkResetUserService.Stub.asInterface(service)
-                            val raw = remote.execute(command)
-                            val parsed = parseUserServiceResult(raw)
-
-                            if (continuation.isActive) {
-                                continuation.resume(parsed)
-                            }
+                        val remote = try {
+                            INetworkResetUserService.Stub.asInterface(service)
                         } catch (e: Throwable) {
                             if (continuation.isActive) {
                                 continuation.resume(
-                                    RootCommandResult(
-                                        success = false,
-                                        exitCode = -1,
-                                        output = e.message.orEmpty()
-                                    )
+                                    RootCommandResult(false, -1, e.message.orEmpty())
                                 )
                             }
-                        } finally {
+                            cleanup()
+                            return
+                        }
+
+                        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                            val result = try {
+                                parseUserServiceResult(remote.execute(command))
+                            } catch (e: Throwable) {
+                                RootCommandResult(
+                                    success = false,
+                                    exitCode = -1,
+                                    output = e.message.orEmpty()
+                                )
+                            }
+
+                            if (continuation.isActive) {
+                                continuation.resume(result)
+                            }
                             cleanup()
                         }
                     }
-
                     override fun onServiceDisconnected(name: ComponentName?) {
                         if (continuation.isActive) {
                             continuation.resume(
