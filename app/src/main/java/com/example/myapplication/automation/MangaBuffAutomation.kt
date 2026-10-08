@@ -4279,7 +4279,11 @@ class MangaBuffAutomation(
                     if (historyAccepted) {
                         log(account.username, "READER: CHAPTER_HISTORY_SERVER_ACCEPTED chapterId=$chapterId source=ADD_HISTORY_2XX")
                     } else {
-                        log(account.username, "READER: CHAPTER_HISTORY_CONFIRMED_LOCAL chapterId=$chapterId source=$confirmation questBefore=$questBefore")
+                        log(
+                            account.username,
+                            "READER: CHAPTER_HISTORY_PENDING_SERVER_ACCEPTANCE chapterId=$chapterId " +
+                                "source=$confirmation questBefore=$questBefore"
+                        )
                     }
 
                     if (isRealLastChapter) {
@@ -5642,7 +5646,19 @@ class MangaBuffAutomation(
                                         AndroidReaderBridge.onLogStep('READER: MB_SCROLL=' + Math.floor(state.scrollTop) + ' threshold=' + Math.floor(state.threshold));
 
                                         if (state.confirmed) {
-                                            AndroidReaderBridge.onLogStep('READER: MB_HISTORY_CONFIRMATION_SUCCESS chapterId=' + state.chapterId + ' source=' + state.confirmSource);
+                                            if (state.confirmSource === 'LOCAL_HISTORY_CCL_PENDING') {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: MB_HISTORY_CONFIRMATION_LOCAL_PENDING chapterId=' +
+                                                    state.chapterId +
+                                                    ' source=' + state.confirmSource
+                                                );
+                                            } else {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: MB_HISTORY_CONFIRMATION_SUCCESS chapterId=' +
+                                                    state.chapterId +
+                                                    ' source=' + state.confirmSource
+                                                );
+                                            }
                                         } else {
                                             if (state.postStatus && state.postStatus !== 200) {
                                                 AndroidReaderBridge.onLogStep('READER: MB_HISTORY_CONFIRMATION_FAILED chapterId=' + state.chapterId + ' reason=' + state.waitReason);
