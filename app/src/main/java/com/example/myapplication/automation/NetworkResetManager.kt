@@ -18,6 +18,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 /**
@@ -357,11 +358,21 @@ class NetworkResetManager(
                 .redirectErrorStream(true)
                 .start()
 
+            val finished = process.waitFor(5, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                return RootCommandResult(
+                    success = false,
+                    exitCode = -1,
+                    output = "root shell command timeout"
+                )
+            }
+
             val output = BufferedReader(
                 InputStreamReader(process.inputStream)
             ).use { it.readText() }
 
-            val exitCode = process.waitFor()
+            val exitCode = process.exitValue()
 
             RootCommandResult(
                 success = exitCode == 0,
