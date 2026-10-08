@@ -6,6 +6,12 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![Android](https://img.shields.io/badge/Android-16-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 
+## 📦 APK
+
+**MangaBuff Auto 1.0-background**
+
+[⬇️ Скачать APK](https://raw.githubusercontent.com/gera-star/MangaBuffAuto/background-rebuild/releases/MangaBuffAuto-1.0-background.apk)
+
 ## ⚙️ Возможности
 
 - 📖 **Чтение глав** — последовательное чтение, проверка конца главы и подтверждение через MangaBuff history.
