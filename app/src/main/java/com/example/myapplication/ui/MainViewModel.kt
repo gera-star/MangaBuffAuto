@@ -343,7 +343,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         accountJobs.remove(account.id)
         automationRunner.stopAccount(account.id)
 
+        sequentialJob?.cancel()
+        sequentialJob = null
+
         _isRunning.value = true
+        syncKeepScreenOnState()
         acquireWakeLock()
         MangaBuffForegroundService.startService(getApplication(), "Выполнение задач (${account.username})...")
 
@@ -374,6 +378,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (accountJobs.isEmpty()) {
                     _isRunning.value = false
+                    syncKeepScreenOnState()
                     releaseWakeLock()
                     MangaBuffForegroundService.stopService(getApplication())
                 }
@@ -386,50 +391,110 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             stopAllTasks()
         }
 
-        val enabledAccounts = _accounts.value
-        if (enabledAccounts.isEmpty()) return
+        val enabledAccounts = _accounts.value.toList()
+        if (enabledAccounts.isEmpty()) {
+            addLog(LogEntry(message = "SEQUENTIAL: NO_ACCOUNTS", isError = true))
+            return
+        }
 
+        val settingsSnapshot = _settings.value
         _isRunning.value = true
+        syncKeepScreenOnState()
         acquireWakeLock()
-        MangaBuffForegroundService.startService(getApplication(), "Выполнение задач на всех аккаунтах...")
+        MangaBuffForegroundService.startService(
+            getApplication(),
+            "Последовательный запуск: ${enabledAccounts.size} аккаунтов..."
+        )
 
-        // Each account gets its own Job. A/B must be able to run, stop, fail,
-        // reload and recover independently.
-        for (account in enabledAccounts) {
-            accountJobs[account.id] = viewModelScope.launch {
-                try {
-                    automationRunner.runForAccount(account, _settings.value, taskType)
-                } catch (e: CancellationException) {
-                    addLog(LogEntry(username = account.username, message = "Выполнение остановлено пользователем"))
-                } catch (e: Exception) {
-                    addLog(LogEntry(username = account.username, message = "Ошибка выполнения: ${e.message}", isError = true))
-                } finally {
-                    val currentJob = coroutineContext[Job]
-                    val ownsCurrentSlot = accountJobs[account.id] == currentJob
-                    if (ownsCurrentSlot) {
+        sequentialJob = viewModelScope.launch {
+            addLog(
+                LogEntry(
+                    message = "SEQUENTIAL: START accounts=${enabledAccounts.size} networkReset=${settingsSnapshot.networkResetEnabled}/${settingsSnapshot.networkResetMode}"
+                )
+            )
+
+            try {
+                for ((index, account) in enabledAccounts.withIndex()) {
+                    coroutineContext.ensureActive()
+                    sequentialCurrentAccountId = account.id
+                    accountJobs[account.id] = coroutineContext[Job]!!
+
+                    addLog(
+                        LogEntry(
+                            username = account.username,
+                            message = "SEQUENTIAL: ACCOUNT_START ${index + 1}/${enabledAccounts.size} accountId=${account.id}"
+                        )
+                    )
+
+                    try {
+                        automationRunner.runForAccount(
+                            account,
+                            settingsSnapshot.copy(sequentialAccounts = true),
+                            taskType
+                        )
+                    } catch (e: CancellationException) {
+                        addLog(LogEntry(username = account.username, message = "SEQUENTIAL: ACCOUNT_CANCELLED"))
+                        throw e
+                    } catch (e: Exception) {
+                        addLog(
+                            LogEntry(
+                                username = account.username,
+                                message = "SEQUENTIAL: ACCOUNT_FAILED reason=${e.message}",
+                                isError = true
+                            )
+                        )
+                    } finally {
+                        automationRunner.stopAccount(account.id)
                         accountJobs.remove(account.id)
-
                         repository.updateAccount(account.id) { acc ->
                             acc.copy(
                                 isRunning = false,
                                 taskProgress = 0f,
-                                statusMessage = if (acc.statusMessage?.contains("Завершено") == true) acc.statusMessage else "Остановлено пользователем"
+                                statusMessage = if (acc.statusMessage?.contains("Завершено") == true) acc.statusMessage else "Остановлено"
                             )
                         }?.let { updated ->
                             _accounts.update { list -> list.map { acc -> if (acc.id == account.id) updated else acc } }
                         }
+                        addLog(
+                            LogEntry(
+                                username = account.username,
+                                message = "SEQUENTIAL: ACCOUNT_CLEANUP_DONE ${index + 1}/${enabledAccounts.size}"
+                            )
+                        )
                     }
 
-                    if (accountJobs.isEmpty()) {
-                        _isRunning.value = false
-                        releaseWakeLock()
-                        MangaBuffForegroundService.stopService(getApplication())
+                    sequentialCurrentAccountId = null
+                    coroutineContext.ensureActive()
+
+                    if (settingsSnapshot.networkResetEnabled &&
+                        settingsSnapshot.networkResetMode != com.example.myapplication.data.NetworkResetMode.NONE &&
+                        index + 1 < enabledAccounts.size
+                    ) {
+                        addLog(LogEntry(username = account.username, message = "SEQUENTIAL: NETWORK_RESET_START beforeNext=${index + 2}/${enabledAccounts.size}"))
+                        val networkReady = networkResetManager.reset(settingsSnapshot.networkResetMode)
+                        if (!networkReady) {
+                            addLog(LogEntry(username = account.username, message = "SEQUENTIAL: NETWORK_RESET_FAILED -> STOP", isError = true))
+                            break
+                        }
+                        addLog(LogEntry(username = account.username, message = "SEQUENTIAL: NETWORK_READY beforeNext=${index + 2}/${enabledAccounts.size}"))
+                    }
+
+                    if (index + 1 < enabledAccounts.size) {
+                        addLog(LogEntry(username = enabledAccounts[index + 1].username, message = "SEQUENTIAL: NEXT_ACCOUNT_READY ${index + 2}/${enabledAccounts.size}"))
                     }
                 }
+            } finally {
+                sequentialCurrentAccountId = null
+                sequentialJob = null
+                accountJobs.clear()
+                _isRunning.value = false
+                syncKeepScreenOnState()
+                releaseWakeLock()
+                MangaBuffForegroundService.stopService(getApplication())
+                addLog(LogEntry(message = "SEQUENTIAL: FINISHED"))
             }
         }
     }
-
     private fun stopAllTasksState() {
         _accounts.update { list ->
             list.map { acc ->
