@@ -70,17 +70,19 @@ class AutomationRuntime(
     }
 
     fun skipCurrentManga(accountId: String? = null): Boolean {
-        if (accountId != null) {
-            return automationEngines[accountId]?.skipCurrentManga() == true
+        if (accountId.isNullOrBlank()) {
+            onLog(LogEntry(component = "SECURITY", message = "READER: SKIP_REJECTED missing_accountId", isError = true))
+            return false
         }
-        return automationEngines.values.any { it.skipCurrentManga() }
+        return automationEngines[accountId]?.skipCurrentManga() == true
     }
 
     fun markCurrentMangaAsRead(accountId: String? = null): Boolean {
-        if (accountId != null) {
-            return automationEngines[accountId]?.markCurrentMangaAsRead() == true
+        if (accountId.isNullOrBlank()) {
+            onLog(LogEntry(component = "SECURITY", message = "READER: MARK_READ_REJECTED missing_accountId", isError = true))
+            return false
         }
-        return automationEngines.values.any { it.markCurrentMangaAsRead() }
+        return automationEngines[accountId]?.markCurrentMangaAsRead() == true
     }
 
     @Synchronized
