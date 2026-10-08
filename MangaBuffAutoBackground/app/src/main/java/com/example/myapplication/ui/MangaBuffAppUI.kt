@@ -140,7 +140,7 @@ fun MangaBuffAppUI(
                     onOpenBalance = { account -> selectedBalanceAccount = account },
                     onOpenAddAccount = { viewModel.setShowAddAccountDialog(true) },
                     onChangeManga = { account -> viewModel.changeCurrentManga(account.id) },
-                    onUpdateTasks = { account, r, q, a, m, c, b -> viewModel.updateAccountTasks(account, r, q, a, m, c, b) }
+                    onUpdateTasks = { account, r, q, a, m, c, d, b -> viewModel.updateAccountTasks(account, r, q, a, m, c, d, b) }
                 )
                 1 -> TasksTab(
                     accounts = accounts,
