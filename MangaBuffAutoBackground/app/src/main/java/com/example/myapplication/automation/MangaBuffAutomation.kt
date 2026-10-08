@@ -7031,7 +7031,7 @@ class MangaBuffAutomation(
                 .substringBefore('#')
                 .trimEnd('/')
 
-            withTimeoutOrNull(timeoutMs) {
+            return withTimeoutOrNull(timeoutMs) {
                 var matched = false
 
                 while (!matched) {
