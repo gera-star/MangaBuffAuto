@@ -6797,127 +6797,260 @@ class MangaBuffAutomation(
         }
 
         val commentText = commentPhrases.random()
-        var csrf = account.getSafeCsrfToken().trim()
+        val commentJs = com.google.gson.Gson().toJson(commentText)
 
-        suspend fun loadCsrfFromChapter(): String = withContext(Dispatchers.IO) {
-            try {
-                val headers = getBaseHeaders(account).newBuilder()
-                    .set("Referer", cleanTarget)
-                    .set("Accept", "text/html,application/xhtml+xml")
-                    .build()
+        suspend fun evalJs(script: String): String? =
+            suspendCancellableCoroutine { continuation ->
+                mainHandler.post {
+                    if (!webView.isAttachedToWindow) {
+                        if (continuation.isActive) continuation.resume(null)
+                        return@post
+                    }
 
-                val request = Request.Builder()
-                    .url(cleanTarget)
-                    .headers(headers)
-                    .get()
-                    .build()
-
-                httpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use ""
-                    val html = response.body?.string().orEmpty()
-                    Jsoup.parse(html)
-                        .selectFirst("meta[name=csrf-token]")
-                        ?.attr("content")
-                        .orEmpty()
-                        .trim()
+                    try {
+                        webView.evaluateJavascript(script) { result ->
+                            if (continuation.isActive) {
+                                continuation.resume(result)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        log(
+                            account.username,
+                            "COMMENT: JS_ERROR error=" + e.message,
+                            true
+                        )
+                        if (continuation.isActive) continuation.resume(null)
+                    }
                 }
-            } catch (e: Exception) {
-                log(
-                    account.username,
-                    "COMMENT: CSRF_FETCH_ERROR " + e.message,
-                    true
-                )
-                ""
             }
-        }
 
-        if (csrf.isBlank()) {
-            csrf = loadCsrfFromChapter()
-        }
+        suspend fun waitForControls(timeoutMs: Long): Boolean =
+            withTimeoutOrNull(timeoutMs) {
+                while (true) {
+                    coroutineContext.ensureActive()
 
-        if (csrf.isBlank()) {
-            log(account.username, "COMMENT: CSRF_TOKEN_NOT_FOUND", true)
+                    val rawState = evalJs(
+                        """
+                        (function() {
+                            try {
+                                var menuButton = document.querySelector(
+                                    '.reader-menu__item--comment'
+                                );
+                                var textarea = document.querySelector(
+                                    'textarea[placeholder="Напишите что нибудь..."]'
+                                );
+                                var sendButton = document.querySelector(
+                                    'button.comments__send-btn'
+                                );
+
+                                if (!menuButton && !textarea && !sendButton) {
+                                    return "WAIT_READER_COMMENT_UI";
+                                }
+
+                                if (menuButton && !textarea) {
+                                    menuButton.click();
+                                    return "COMMENT_MENU_CLICKED";
+                                }
+
+                                if (!textarea || !sendButton) {
+                                    return "WAIT_COMMENT_CONTROLS";
+                                }
+
+                                return "COMMENT_CONTROLS_READY";
+                            } catch (e) {
+                                return "ERROR:" +
+                                    (e && e.message ? e.message : String(e));
+                            }
+                        })();
+                        """.trimIndent()
+                    )
+
+                    val state = try {
+                        com.google.gson.Gson().fromJson(
+                            rawState,
+                            String::class.java
+                        ).orEmpty()
+                    } catch (_: Exception) {
+                        rawState.orEmpty()
+                    }
+
+                    when (state) {
+                        "COMMENT_CONTROLS_READY" -> return@withTimeoutOrNull true
+                        "COMMENT_MENU_CLICKED" -> {
+                            log(
+                                account.username,
+                                "COMMENT: READER_MENU_CLICKED chapterId=$chapterId"
+                            )
+                        }
+                        "WAIT_READER_COMMENT_UI",
+                        "WAIT_COMMENT_CONTROLS" -> Unit
+                        else -> {
+                            if (state.startsWith("ERROR:")) {
+                                log(
+                                    account.username,
+                                    "COMMENT: READER_UI_ERROR " + state,
+                                    true
+                                )
+                            }
+                        }
+                    }
+
+                    delay(300L)
+                }
+            } ?: false
+
+        if (!waitForControls(15_000L)) {
+            log(
+                account.username,
+                "COMMENT: READER_COMMENT_CONTROLS_TIMEOUT chapterId=$chapterId",
+                true
+            )
             return false
         }
 
-        suspend fun sendComment(token: String): Pair<Int, String> =
-            withContext(Dispatchers.IO) {
-                val form = FormBody.Builder()
-                    .add("content", commentText)
-                    .add("commentable_type", "mangaChapter")
-                    .add("commentable_id", chapterId)
-                    .add("_token", token)
-                    .build()
+        log(
+            account.username,
+            "COMMENT: READER_CONTROLS_READY chapterId=$chapterId text='$commentText'"
+        )
 
-                val headers = getBaseHeaders(account).newBuilder()
-                    .set("Referer", cleanTarget)
-                    .set("Accept", "application/json, text/plain, */*")
-                    .set("X-Requested-With", "XMLHttpRequest")
-                    .set("X-CSRF-TOKEN", token)
-                    .build()
+        val actionStateRaw = evalJs(
+            """
+            (function() {
+                try {
+                    var textarea = document.querySelector(
+                        'textarea[placeholder="Напишите что нибудь..."]'
+                    );
+                    var button = document.querySelector(
+                        'button.comments__send-btn'
+                    );
 
-                val request = Request.Builder()
-                    .url("https://mangabuff.ru/comments")
-                    .headers(headers)
-                    .post(form)
-                    .build()
+                    if (!textarea || !button) return "WAIT";
 
-                httpClient.newCall(request).execute().use { response ->
-                    Pair(
-                        response.code,
-                        response.body?.string().orEmpty().take(300)
-                    )
+                    textarea.click();
+                    textarea.click();
+                    textarea.focus();
+
+                    var setter = Object.getOwnPropertyDescriptor(
+                        HTMLTextAreaElement.prototype,
+                        "value"
+                    );
+
+                    if (setter && setter.set) {
+                        setter.set.call(textarea, $commentJs);
+                    } else {
+                        textarea.value = $commentJs;
+                    }
+
+                    textarea.dispatchEvent(
+                        new Event("input", { bubbles: true })
+                    );
+                    textarea.dispatchEvent(
+                        new Event("change", { bubbles: true })
+                    );
+
+                    if (button.disabled) return "BUTTON_DISABLED";
+
+                    button.click();
+                    return "SENT";
+                } catch (e) {
+                    return "ERROR:" +
+                        (e && e.message ? e.message : String(e));
                 }
-            }
+            })();
+            """.trimIndent()
+        )
 
-        return try {
-            log(account.username, "COMMENT: HTTP_POST_START chapterId=" + chapterId)
+        val actionState = try {
+            com.google.gson.Gson().fromJson(
+                actionStateRaw,
+                String::class.java
+            ).orEmpty()
+        } catch (_: Exception) {
+            actionStateRaw.orEmpty()
+        }
 
-            var result = sendComment(csrf)
-            var status = result.first
-            var bodySnippet = result.second
-
-            if (status == 419) {
-                log(account.username, "COMMENT: CSRF_EXPIRED retrying")
-                val refreshedCsrf = loadCsrfFromChapter()
-
-                if (refreshedCsrf.isNotBlank()) {
-                    csrf = refreshedCsrf
-                    result = sendComment(csrf)
-                    status = result.first
-                    bodySnippet = result.second
-                }
-            }
-
-            val success = status in 200..299
-            if (success) {
+        when (actionState) {
+            "SENT" -> {
                 log(
                     account.username,
-                    "COMMENT: HTTP_POST_SUCCESS chapterId=" + chapterId + " status=" + status
+                    "COMMENT: READER_TEXTAREA_DOUBLE_CLICKED chapterId=$chapterId"
                 )
-            } else {
-                val safeBody = bodySnippet
-                    .replace(Regex("\\s+"), " ")
-                    .take(180)
-
                 log(
                     account.username,
-                    "COMMENT: HTTP_POST_FAILED chapterId=" +
-                        chapterId + " status=" + status + " body=" + safeBody,
+                    "COMMENT: READER_TEXT_SET chapterId=$chapterId length=${commentText.length}"
+                )
+                log(
+                    account.username,
+                    "COMMENT: READER_SEND_CLICKED chapterId=$chapterId"
+                )
+            }
+            else -> {
+                log(
+                    account.username,
+                    "COMMENT: READER_SEND_FAILED chapterId=$chapterId state=$actionState",
                     true
                 )
+                return false
             }
+        }
 
-            success
-        } catch (e: Exception) {
+        val confirmed = withTimeoutOrNull(7_000L) {
+            while (true) {
+                coroutineContext.ensureActive()
+
+                val rawState = evalJs(
+                    """
+                    (function() {
+                        try {
+                            var textarea = document.querySelector(
+                                'textarea[placeholder="Напишите что нибудь..."]'
+                            );
+                            var button = document.querySelector(
+                                'button.comments__send-btn'
+                            );
+
+                            if (!textarea || !button) return "CONFIRMED";
+                            if (textarea.value.trim() === "" || button.disabled) {
+                                return "CONFIRMED";
+                            }
+
+                            return "WAIT";
+                        } catch (e) {
+                            return "WAIT";
+                        }
+                    })();
+                    """.trimIndent()
+                )
+
+                val state = try {
+                    com.google.gson.Gson().fromJson(
+                        rawState,
+                        String::class.java
+                    ).orEmpty()
+                } catch (_: Exception) {
+                    rawState.orEmpty()
+                }
+
+                if (state == "CONFIRMED") return@withTimeoutOrNull true
+
+                delay(300L)
+            }
+        } ?: false
+
+        if (confirmed) {
             log(
                 account.username,
-                "COMMENT: HTTP_POST_EXCEPTION chapterId=" +
-                    chapterId + " error=" + e.message,
+                "COMMENT: READER_SUBMIT_CONFIRMED chapterId=$chapterId"
+            )
+        } else {
+            log(
+                account.username,
+                "COMMENT: READER_SUBMIT_NOT_CONFIRMED chapterId=$chapterId",
                 true
             )
-            false
         }
+
+        return confirmed
     }
 
     // =========================================================
