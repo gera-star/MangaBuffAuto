@@ -384,7 +384,7 @@ fun AccountsTab(
     onOpenBalance: (MangaBuffAccount) -> Unit,
     onOpenAddAccount: () -> Unit,
     onChangeManga: (MangaBuffAccount) -> Unit,
-    onUpdateTasks: (MangaBuffAccount, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
+    onUpdateTasks: (MangaBuffAccount, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     if (accounts.isEmpty()) {
         Box(
@@ -426,7 +426,7 @@ fun AccountsTab(
                     onRefresh = { onRefresh(account) },
                     onOpenBalance = { onOpenBalance(account) },
                     onChangeManga = { onChangeManga(account) },
-                    onUpdateTasks = { r, q, a, m, c, b -> onUpdateTasks(account, r, q, a, m, c, b) }
+                    onUpdateTasks = { r, q, a, m, c, d, b -> onUpdateTasks(account, r, q, a, m, c, d, b) }
                 )
             }
         }
@@ -443,7 +443,7 @@ fun AccountCard(
     onRefresh: () -> Unit,
     onOpenBalance: () -> Unit,
     onChangeManga: () -> Unit,
-    onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
+    onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     val accountInitials = remember(account.username) {
@@ -670,22 +670,60 @@ fun AccountCard(
                     }
 
                     TaskSwitchRow("🃏 Бои", "${dailyBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
+                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, b)
                     }
                     TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
-                        onUpdateTasks(account.readerEnabled, q, account.advEnabled, account.mineEnabled, account.commentEnabled, account.battleEnabled)
+                        onUpdateTasks(account.readerEnabled, q, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("📺 Просмотр рекламы", "${dailyAds}/3", account.advEnabled) { a ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, a, account.mineEnabled, account.commentEnabled, account.battleEnabled)
+                        onUpdateTasks(account.readerEnabled, account.quizEnabled, a, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("⛏️ Шахта", "${dailyMineOre} 🪨 → 💎${dailyMineDiamonds}", account.mineEnabled) { m ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, m, account.commentEnabled, account.battleEnabled)
+                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, m, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("📖 Чтение", "${dailyReaderChapters} глав", account.readerEnabled) { r ->
-                        onUpdateTasks(r, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.battleEnabled)
+                        onUpdateTasks(r, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("💬 Комментарии", "${dailyComments}", account.commentEnabled) { c ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, c, account.battleEnabled)
+                    TaskSwitchRow("💬 Комментарии", "${dailyComments}/13", account.commentEnabled) { c ->
+                        onUpdateTasks(
+                            account.readerEnabled,
+                            account.quizEnabled,
+                            account.advEnabled,
+                            account.mineEnabled,
+                            c,
+                            account.deckCommentEnabled,
+                            account.battleEnabled
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 2.dp, top = 2.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = account.deckCommentEnabled,
+                            onClick = {
+                                onUpdateTasks(
+                                    account.readerEnabled,
+                                    account.quizEnabled,
+                                    account.advEnabled,
+                                    account.mineEnabled,
+                                    account.commentEnabled,
+                                    !account.deckCommentEnabled,
+                                    account.battleEnabled
+                                )
+                            },
+                            label = {
+                                Text(
+                                    if (account.deckCommentEnabled) "Колоды: ВКЛ" else "Колоды: ВЫКЛ",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            },
+                            modifier = Modifier.height(30.dp)
+                        )
                     }
                 }
             }
