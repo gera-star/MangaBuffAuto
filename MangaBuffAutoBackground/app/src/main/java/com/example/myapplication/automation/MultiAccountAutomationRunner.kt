@@ -16,7 +16,8 @@ class MultiAccountAutomationRunner(
     onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
     onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
-    onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
+    onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
+    onAccountRecoveryNeeded: (accountId: String) -> Unit = {}
 ) {
     private val runtime = AutomationRuntime(
         context,
@@ -26,7 +27,8 @@ class MultiAccountAutomationRunner(
         onAccountStatsUpdate,
         onDailyStatsUpdate,
         onWebViewAssigned,
-        onWebViewCleared
+        onWebViewCleared,
+        onAccountRecoveryNeeded
     )
     suspend fun runForAccount(
         account: MangaBuffAccount,
