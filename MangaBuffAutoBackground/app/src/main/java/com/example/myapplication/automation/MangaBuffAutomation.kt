@@ -5140,7 +5140,7 @@ class MangaBuffAutomation(
                                             ' scrollHeight=' + (diagScrollingElement ? (diagScrollingElement.scrollHeight || 0) : 0)
                                         );
                                     } catch(e) {}
-                                    AndroidReaderBridge.onLogStep('READER: SCROLL_MODE=MANGABUFF_NATIVE_AUTOSCROLL');
+                                    AndroidReaderBridge.onLogStep('READER: SCROLL_MODE=NATIVE_FINGER_SWIPE');
 
                                     if (window.current_chapter) {
                                         var c = window.current_chapter;
