@@ -1102,28 +1102,7 @@ fun LogsTab(
     logs: List<LogEntry>,
     onClearLogs: () -> Unit
 ) {
-    var logFilter by remember { mutableStateOf("comments") }
-
-    val visibleLogs = remember(logs, logFilter) {
-        logs.filter { entry ->
-            val message = entry.message.removePrefix("BG:").trim()
-
-            when (logFilter) {
-                "comments" ->
-                    message.startsWith("TASK: COMMENT") ||
-                        message.startsWith("COMMENT:")
-                "ads" ->
-                    message.startsWith("TASK: ADS") ||
-                        message.startsWith("ADS:")
-                else -> {
-                    !message.startsWith("TASK: COMMENT") &&
-                        !message.startsWith("COMMENT:") &&
-                        !message.startsWith("TASK: ADS") &&
-                        !message.startsWith("ADS:")
-                }
-            }
-        }
-    }
+    val visibleLogs = logs
 
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     val context = LocalContext.current
@@ -1150,29 +1129,10 @@ fun LogsTab(
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
             Text(
-                when (logFilter) {
-                    "comments" -> "Комментарии (" + visibleLogs.size + ")"
-                    "ads" -> "Реклама (" + visibleLogs.size + ")"
-                    else -> "Всё остальное (" + visibleLogs.size + ")"
-                },
+                "Логи (" + visibleLogs.size + ")",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(onClick = { logFilter = "comments" }) {
-                    Text("Комментарии")
-                }
-                OutlinedButton(onClick = { logFilter = "ads" }) {
-                    Text("Реклама")
-                }
-                OutlinedButton(onClick = { logFilter = "other" }) {
-                    Text("Всё остальное")
-                }
-            }
             Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1197,7 +1157,7 @@ fun LogsTab(
                         }
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         val clip = android.content.ClipData.newPlainText(
-                            when (logFilter) { "comments" -> "MangaBuff Comment Logs"; "ads" -> "MangaBuff Ads Logs"; else -> "MangaBuff Other Logs" },
+                            "MangaBuff Logs",
                             fullText
                         )
                         clipboard.setPrimaryClip(clip)
@@ -1215,7 +1175,7 @@ fun LogsTab(
         if (visibleLogs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    when (logFilter) { "comments" -> "Логов комментариев пока нет"; "ads" -> "Рекламных логов пока нет"; else -> "Остальных логов пока нет" },
+                    "Логов пока нет",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.outline
                 )
