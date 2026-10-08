@@ -6828,7 +6828,9 @@ class MangaBuffAutomation(
             var menuClicked = false
 
             return withTimeoutOrNull(timeoutMs) {
-                while (true) {
+                var controlsReady = false
+
+                while (!controlsReady) {
                     coroutineContext.ensureActive()
 
                     val rawState = evalJs(
@@ -6881,7 +6883,7 @@ class MangaBuffAutomation(
                     }
 
                     when (state) {
-                        "COMMENT_CONTROLS_READY" -> return@withTimeoutOrNull true
+                        "COMMENT_CONTROLS_READY" -> controlsReady = true
                         "COMMENT_MENU_CLICKED" -> {
                             if (!menuClicked) {
                                 menuClicked = true
@@ -6907,6 +6909,8 @@ class MangaBuffAutomation(
 
                     delay(300L)
                 }
+
+                controlsReady
             } ?: false
         }
 
@@ -7006,7 +7010,9 @@ class MangaBuffAutomation(
         }
 
         val confirmed = withTimeoutOrNull(7_000L) {
-            while (true) {
+            var submitted = false
+
+            while (!submitted) {
                 coroutineContext.ensureActive()
 
                 val rawState = evalJs(
@@ -7042,10 +7048,14 @@ class MangaBuffAutomation(
                     rawState.orEmpty()
                 }
 
-                if (state == "CONFIRMED") return@withTimeoutOrNull true
-
-                delay(300L)
+                if (state == "CONFIRMED") {
+                    submitted = true
+                } else {
+                    delay(300L)
+                }
             }
+
+            submitted
         } ?: false
 
         if (confirmed) {
