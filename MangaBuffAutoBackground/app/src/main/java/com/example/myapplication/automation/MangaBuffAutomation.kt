@@ -6287,123 +6287,235 @@ class MangaBuffAutomation(
                                     function humanScroll() {
                                         if (chapterDone) return;
 
-                                        // Keep the existing smooth visible-screen rAF path, but add a
-                                        // native Android tick path for screen-off periods. Chromium can
-                                        // throttle rAF heavily when the display is locked.
+                                        /*
+                                         * Real touch-like reader motion.
+                                         *
+                                         * A stalled native gesture is NEVER EOF. Every gesture is
+                                         * verified by reading scrollTop again after the native fling.
+                                         * Only verified movement advances the swipe scheduler.
+                                         */
                                         try { stopScroll(); } catch(e) {}
 
-                                        window.__mbBackgroundStep = function() {
-                                            try {
-                                                if (
-                                                    chapterDone ||
-                                                    !window.__mbFastScrollRunning
-                                                ) {
-                                                    return;
-                                                }
+                                        window.__mbNativeFingerRunning = true;
+                                        window.__mbNativeFingerTimer = null;
+                                        window.__mbNativeFingerBusy = false;
 
-                                                var scrollingElement =
-                                                    document.scrollingElement ||
-                                                    document.documentElement ||
-                                                    document.body;
-
-                                                var viewport = Math.max(
-                                                    window.innerHeight || 0,
-                                                    scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                                    1
-                                                );
-                                                var height = Math.max(
-                                                    scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
-                                                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
-                                                    document.body ? (document.body.scrollHeight || 0) : 0
-                                                );
-                                                var y = Math.max(
-                                                    window.scrollY || 0,
-                                                    scrollingElement ? (scrollingElement.scrollTop || 0) : 0
-                                                );
-                                                var remaining = Math.max(0, height - viewport - y);
-                                                if (remaining <= 2) return;
-
-                                                var step = Math.min(
-                                                    420,
-                                                    Math.max(140, Math.floor(viewport * 0.20))
-                                                );
-                                                step = Math.min(step, remaining);
-                                                window.scrollBy(0, step);
-                                            } catch(e) {
-                                                try {
-                                                    AndroidReaderBridge.onLogStep(
-                                                        'READER: BACKGROUND_SCROLL_STEP_ERROR ' +
-                                                        (e.message || String(e))
-                                                    );
-                                                } catch(ignore) {}
-                                            }
-                                        };
-
-                                        try {
-                                            AndroidReaderBridge.startBackgroundScroll();
-                                        } catch(e) {
-                                            AndroidReaderBridge.onLogStep(
-                                                'READER: BACKGROUND_SCROLL_BRIDGE_ERROR ' +
-                                                (e.message || String(e))
-                                            );
-                                        }
-
-                                        var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000 px/s
-                                        var lastFrame = performance.now();
-                                        window.__mbFastScrollRunning = true;
+                                        var swipeRecoveryAttempts = 0;
+                                        var swipeSequence = 0;
 
                                         AndroidReaderBridge.onLogStep(
-                                            'READER: FAST_SMOOTH_SCROLL_STARTED speed=' + speedPxPerSecond
+                                            'READER: NATIVE_FINGER_SCROLL_STARTED mode=TOUCH_SWIPE_VERIFIED'
                                         );
 
-                                        function tick(now) {
-                                            if (chapterDone || !window.__mbFastScrollRunning) {
-                                                return;
-                                            }
-
-                                            var dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
-                                            lastFrame = now;
-
-                                            var scrollingElement =
-                                                document.scrollingElement ||
-                                                document.documentElement ||
-                                                document.body;
-
-                                            var y = Math.max(
-                                                window.scrollY || 0,
-                                                scrollingElement ? (scrollingElement.scrollTop || 0) : 0
-                                            );
-
+                                        function metrics() {
+                                            /*
+                                             * IMPORTANT:
+                                             * Do not use scrollingElement.clientHeight as the viewport.
+                                             * MangaBuff's reader CSS can make the document/HTML clientHeight
+                                             * grow together with the lazy-loaded image stack. During chapter
+                                             * 67 it became 37,000+ px, which made:
+                                             *
+                                             *   height == viewport
+                                             *   remaining == 0
+                                             *
+                                             * even though the real WebView viewport was only ~850 px.
+                                             *
+                                             * window.innerHeight is the actual visible CSS viewport of the
+                                             * WebView. Keep document scrollHeight as the content height.
+                                             */
                                             var viewport = Math.max(
+                                                window.visualViewport && window.visualViewport.height
+                                                    ? window.visualViewport.height
+                                                    : 0,
                                                 window.innerHeight || 0,
-                                                scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
                                                 1
                                             );
 
+                                            var y = Math.max(
+                                                window.scrollY || 0,
+                                                window.pageYOffset || 0,
+                                                document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
+                                                document.body ? (document.body.scrollTop || 0) : 0
+                                            );
+
                                             var height = Math.max(
-                                                scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
                                                 document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
                                                 document.body ? (document.body.scrollHeight || 0) : 0
                                             );
 
-                                            var remaining = Math.max(0, height - viewport - y);
-
-                                            // Slow down only in the final viewport so the existing
-                                            // bottom-stabilization logic can reliably settle.
-                                            var currentSpeed = remaining < viewport * 1.5
-                                                ? Math.max(450, speedPxPerSecond * (remaining / (viewport * 1.5)))
-                                                : speedPxPerSecond;
-
-                                            if (remaining > 2) {
-                                                window.scrollBy(0, currentSpeed * dt);
-                                            }
-
-                                            window.__mbFastScrollFrame = requestAnimationFrame(tick);
+                                            return {
+                                                y: y,
+                                                viewport: viewport,
+                                                height: height,
+                                                remaining: Math.max(0, height - viewport - y)
+                                            };
                                         }
 
-                                        window.__mbFastScrollFrame = requestAnimationFrame(tick);
-                                    }
+                                        function scheduleNext(delayMs) {
+                                            if (chapterDone || !window.__mbNativeFingerRunning) return;
+                                            if (window.__mbNativeFingerTimer) clearTimeout(window.__mbNativeFingerTimer);
+                                            window.__mbNativeFingerTimer = setTimeout(nextSwipe, Math.max(40, delayMs));
+                                        }
 
+                                        function nextSwipe() {
+                                            if (chapterDone || !window.__mbNativeFingerRunning) return;
+                                            if (window.__mbNativeFingerBusy) return;
+
+                                            var m = metrics();
+
+                                            // onPageFinished/CHAPTER_PAGE_READY does not guarantee that
+                                            // the next rendered frame already contains the final DOM
+                                            // layout. WebView can briefly report a zero/viewport-only
+                                            // scroll range while the reader images are being laid out.
+                                            // Never interpret that transient state as EOF.
+                                            if (m.height <= m.viewport + 16) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NATIVE_FINGER_METRICS_NOT_READY height=' +
+                                                    Math.floor(m.height) +
+                                                    ' viewport=' + Math.floor(m.viewport) +
+                                                    ' y=' + Math.floor(m.y)
+                                                );
+                                                scheduleNext(250);
+                                                return;
+                                            }
+
+                                            if (m.remaining <= 8) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NATIVE_FINGER_TARGET_BOTTOM remaining=' +
+                                                    Math.floor(m.remaining)
+                                                );
+
+                                                /*
+                                                 * IMPORTANT:
+                                                 * The reader uses lazy-loaded images. Reaching the current
+                                                 * bottom is not necessarily the final document bottom:
+                                                 * after the last swipe, new images can increase scrollHeight.
+                                                 * Never leave the native swipe scheduler stopped here.
+                                                 * Re-measure after a short settle delay; if the document grew,
+                                                 * the next swipe will continue from the new bottom.
+                                                 */
+                                                scheduleNext(700);
+                                                return;
+                                            }
+
+                                            var startY = m.viewport * (0.76 + Math.random() * 0.06);
+                                            var endY = m.viewport * (0.22 + Math.random() * 0.08);
+                                            var distance = startY - endY;
+                                            var maxDistance = Math.max(220, m.remaining - 4);
+
+                                            if (distance > maxDistance) {
+                                                startY = Math.min(m.viewport * 0.84, endY + maxDistance);
+                                                distance = startY - endY;
+                                            }
+
+                                            var x = Math.max(
+                                                12,
+                                                Math.min(
+                                                    Math.max(12, (window.innerWidth || 384) - 12),
+                                                    (window.innerWidth || 384) * (0.46 + (Math.random() - 0.5) * 0.08)
+                                                )
+                                            );
+
+                                            var xJitter = (Math.random() - 0.5) * 18;
+                                            var x1 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x));
+                                            var x2 = Math.max(8, Math.min((window.innerWidth || 384) - 8, x + xJitter));
+
+                                            var duration = 320 + Math.floor(Math.random() * 220);
+                                            var pause = 80 + Math.floor(Math.random() * 120);
+                                            var beforeY = m.y;
+                                            var sequence = ++swipeSequence;
+
+                                            window.__mbNativeFingerBusy = true;
+
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: NATIVE_FINGER_SWIPE seq=' + sequence +
+                                                ' distance=' + Math.floor(distance) +
+                                                ' duration=' + duration +
+                                                ' pause=' + pause +
+                                                ' beforeY=' + Math.floor(beforeY) +
+                                                ' beforeRemaining=' + Math.floor(m.remaining)
+                                            );
+
+                                            try {
+                                                AndroidReaderBridge.nativeSwipe(x1, startY, x2, endY, duration);
+                                            } catch(e) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NATIVE_FINGER_SWIPE_ERROR seq=' + sequence +
+                                                    ' error=' + (e && e.message ? e.message : String(e))
+                                                );
+                                            }
+
+                                            window.__mbNativeFingerTimer = setTimeout(function() {
+                                                if (chapterDone || !window.__mbNativeFingerRunning) {
+                                                    window.__mbNativeFingerBusy = false;
+                                                    return;
+                                                }
+
+                                                var after = metrics();
+                                                var deltaY = Math.abs(after.y - beforeY);
+                                                var moved = deltaY >= 80;
+
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: NATIVE_FINGER_SWIPE_RESULT seq=' + sequence +
+                                                    ' moved=' + moved +
+                                                    ' beforeY=' + Math.floor(beforeY) +
+                                                    ' afterY=' + Math.floor(after.y) +
+                                                    ' deltaY=' + Math.floor(after.y - beforeY) +
+                                                    ' remaining=' + Math.floor(after.remaining)
+                                                );
+
+                                                if (after.remaining > 120 && deltaY < 80) {
+                                                    swipeRecoveryAttempts++;
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: NATIVE_FINGER_SWIPE_NO_PROGRESS seq=' + sequence +
+                                                        ' remaining=' + Math.floor(after.remaining) +
+                                                        ' attempt=' + swipeRecoveryAttempts
+                                                    );
+
+                                                    if (swipeRecoveryAttempts < 3) {
+                                                        window.__mbNativeFingerBusy = false;
+                                                        scheduleNext(120);
+                                                        return;
+                                                    }
+
+                                                    var recoveryDistance = Math.min(
+                                                        Math.max(360, Math.floor(after.viewport * 0.65)),
+                                                        Math.max(360, Math.floor(after.remaining - 8))
+                                                    );
+
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: NATIVE_FINGER_SWIPE_RECOVERY_SCROLLBY seq=' + sequence +
+                                                        ' delta=' + recoveryDistance +
+                                                        ' remaining=' + Math.floor(after.remaining)
+                                                    );
+
+                                                    try {
+                                                        AndroidReaderBridge.nativeRecoveryScroll(recoveryDistance);
+                                                    } catch(e) {
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'READER: NATIVE_RECOVERY_SCROLLBY_CALL_ERROR seq=' + sequence +
+                                                            ' error=' + (e && e.message ? e.message : String(e))
+                                                        );
+                                                    }
+
+                                                    swipeRecoveryAttempts = 0;
+                                                    window.__mbNativeFingerBusy = false;
+                                                    scheduleNext(300);
+                                                } else {
+                                                    swipeRecoveryAttempts = 0;
+                                                    window.__mbNativeFingerBusy = false;
+                                                    scheduleNext(pause);
+                                                }
+                                            }, duration + 450);
+                                        }
+
+                                        // Give WebView one rendered frame to settle the reader
+                                        // layout before the first synthetic finger gesture. Android
+                                        // explicitly notes that onPageFinished() does not guarantee that
+                                        // the next frame already reflects the final DOM state.
+                                        scheduleNext(250);
+                                    }
+                                    
                                     var interval = setInterval(function() {
                                         checkEnd();
 
