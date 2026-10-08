@@ -6804,11 +6804,6 @@ class MangaBuffAutomation(
         suspend fun evalJs(script: String): String? =
             suspendCancellableCoroutine { continuation ->
                 mainHandler.post {
-                    if (!webView.isAttachedToWindow) {
-                        if (continuation.isActive) continuation.resume(null)
-                        return@post
-                    }
-
                     try {
                         webView.evaluateJavascript(script) { result ->
                             if (continuation.isActive) {
@@ -7163,11 +7158,6 @@ class MangaBuffAutomation(
         suspend fun evalJs(script: String): String? =
             suspendCancellableCoroutine { continuation ->
                 mainHandler.post {
-                    if (!webView.isAttachedToWindow) {
-                        if (continuation.isActive) continuation.resume(null)
-                        return@post
-                    }
-
                     try {
                         webView.evaluateJavascript(script) { result ->
                             if (continuation.isActive) {
@@ -7187,8 +7177,14 @@ class MangaBuffAutomation(
 
         suspend fun loadUrl(url: String) {
             mainHandler.post {
-                if (webView.isAttachedToWindow) {
+                try {
                     webView.loadUrl(url)
+                } catch (e: Exception) {
+                    log(
+                        account.username,
+                        "COMMENT: DECK_LOAD_URL_ERROR url=$url error=" + e.message,
+                        true
+                    )
                 }
             }
         }
