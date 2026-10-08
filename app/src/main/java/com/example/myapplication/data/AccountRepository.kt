@@ -13,6 +13,7 @@ class AccountRepository(context: Context) {
         private const val KEY_ACCOUNTS = "key_accounts"
         private const val KEY_SETTINGS = "key_settings"
         private const val KEY_MINE_AUTO_EXCHANGE_MIGRATED = "key_mine_auto_exchange_manual_migrated"
+        private const val KEY_AUTOMATION_SESSION_SETTINGS_MIGRATED = "key_automation_session_settings_migrated"
     }
 
     private val accountsLock = Any()
@@ -100,15 +101,27 @@ class AccountRepository(context: Context) {
         val json = prefs.getString(KEY_SETTINGS, null) ?: return GlobalSettings()
         return try {
             val parsed = gson.fromJson(json, GlobalSettings::class.java) ?: GlobalSettings()
-            if (!prefs.getBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, false)) {
-                val migrated = parsed.copy(mineAutoExchange = false)
+
+            val needsAutomationMigration =
+                !prefs.getBoolean(KEY_AUTOMATION_SESSION_SETTINGS_MIGRATED, false)
+
+            if (needsAutomationMigration) {
+                val migrated = parsed.copy(
+                    // Sequential mode is now the supported all-account execution model.
+                    sequentialAccounts = true,
+                    // Preserve the new safe default for existing installations.
+                    keepScreenOn = true,
+                    // Never enable a network reset silently on an existing installation.
+                    networkResetEnabled = false,
+                    networkResetMode = NetworkResetMode.NONE
+                )
                 prefs.edit()
                     .putString(KEY_SETTINGS, gson.toJson(migrated))
-                    .putBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, true)
+                    .putBoolean(KEY_AUTOMATION_SESSION_SETTINGS_MIGRATED, true)
                     .apply()
                 migrated
             } else {
-                parsed
+                parsed.copy(sequentialAccounts = true)
             }
         } catch (e: Exception) {
             GlobalSettings()
