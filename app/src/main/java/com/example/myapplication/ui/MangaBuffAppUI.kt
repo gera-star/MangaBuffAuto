@@ -2,6 +2,8 @@ package com.example.myapplication.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
@@ -46,6 +48,9 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
+private const val SUPPORT_PAYMENT_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019df8ad-96b5-7cd8-82aa-e64b36e96b93"
+private const val SUPPORT_RECIPIENT = "Алексей Г."
+
 @SuppressLint("RestrictedApi")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +71,7 @@ fun MangaBuffAppUI(
     var selectedBalanceAccount by remember { mutableStateOf<MangaBuffAccount?>(null) }
     var promoCodeText by remember { mutableStateOf("") }
     var showBackgroundSettings by remember { mutableStateOf(false) }
+    var showSupportDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
@@ -74,6 +80,12 @@ fun MangaBuffAppUI(
             TopAppBar(
                 title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
                 actions = {
+                    IconButton(onClick = { showSupportDialog = true }) {
+                        Icon(
+                            Icons.Default.Favorite,
+                            contentDescription = "Поддержать проект"
+                        )
+                    }
                     IconButton(onClick = { showBackgroundSettings = true }) {
                         Icon(
                             Icons.Default.Settings,
@@ -140,7 +152,7 @@ fun MangaBuffAppUI(
                     onOpenBalance = { account -> selectedBalanceAccount = account },
                     onOpenAddAccount = { viewModel.setShowAddAccountDialog(true) },
                     onChangeManga = { account -> viewModel.changeCurrentManga(account.id) },
-                    onUpdateTasks = { account, r, q, a, m, c, b -> viewModel.updateAccountTasks(account, r, q, a, m, c, b) }
+                    onUpdateTasks = { account, r, q, a, m, c, d, b -> viewModel.updateAccountTasks(account, r, q, a, m, c, d, b) }
                 )
                 1 -> TasksTab(
                     accounts = accounts,
@@ -162,6 +174,79 @@ fun MangaBuffAppUI(
     if (showBackgroundSettings) {
         BackgroundSettingsDialog(
             onDismiss = { showBackgroundSettings = false }
+        )
+    }
+
+    if (showSupportDialog) {
+        AlertDialog(
+            onDismissRequest = { showSupportDialog = false },
+            icon = {
+                Icon(
+                    Icons.Default.Favorite,
+                    contentDescription = null
+                )
+            },
+            title = { Text("❤️ Поддержать проект") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Добровольное пожертвование на поддержку и развитие проекта MangaBuff Auto."
+                    )
+                    Text("Получатель: $SUPPORT_RECIPIENT")
+                    Text(
+                        "Пожертвование не является оплатой приложения, лицензии, доступа к функциям или услугам и не является обязательным."
+                    )
+                    Text(
+                        "Вы перейдете в свой браузер.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        "Перевод выполняется через СБП. Сумму вы выбираете самостоятельно в приложении своего банка.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+
+                    Text(
+                        "Мы Любим Мангу ❤️",
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        try {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(SUPPORT_PAYMENT_URL)
+                                )
+                            )
+                            showSupportDialog = false
+                        } catch (_: Exception) {
+                            Toast.makeText(
+                                context,
+                                "Не удалось открыть страницу СБП",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Открыть страницу СБП")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSupportDialog = false }) {
+                    Text("Закрыть")
+                }
+            }
         )
     }
 
@@ -203,6 +288,34 @@ fun MangaBuffAppUI(
                             val wv = WebView(ctx)
                             wv.settings.javaScriptEnabled = true
                             wv.settings.domStorageEnabled = true
+                            wv.webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: android.webkit.WebResourceRequest?
+                                ): Boolean {
+                                    val url = request?.url?.toString().orEmpty()
+                                    return if (url.startsWith("http://") || url.startsWith("https://")) {
+                                        view?.loadUrl(url)
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+
+                                @Suppress("DEPRECATION")
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    url: String?
+                                ): Boolean {
+                                    val target = url.orEmpty()
+                                    return if (target.startsWith("http://") || target.startsWith("https://")) {
+                                        view?.loadUrl(target)
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                            }
                             if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
                                 try {
                                     WebViewCompat.setProfile(wv, profileName)
@@ -356,7 +469,7 @@ fun AccountsTab(
     onOpenBalance: (MangaBuffAccount) -> Unit,
     onOpenAddAccount: () -> Unit,
     onChangeManga: (MangaBuffAccount) -> Unit,
-    onUpdateTasks: (MangaBuffAccount, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
+    onUpdateTasks: (MangaBuffAccount, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     if (accounts.isEmpty()) {
         Box(
@@ -391,13 +504,14 @@ fun AccountsTab(
             items(accounts, key = { it.id }) { account ->
                 AccountCard(
                     account = account,
+                    battleTarget = battleTarget,
                     onRunTask = { type -> onRunTask(account, type) },
                     onStopAccount = { onStopAccount(account) },
                     onDelete = { onDelete(account) },
                     onRefresh = { onRefresh(account) },
                     onOpenBalance = { onOpenBalance(account) },
                     onChangeManga = { onChangeManga(account) },
-                    onUpdateTasks = { r, q, a, m, c, b -> onUpdateTasks(account, r, q, a, m, c, b) }
+                    onUpdateTasks = { r, q, a, m, c, d, b -> onUpdateTasks(account, r, q, a, m, c, d, b) }
                 )
             }
         }
@@ -407,13 +521,14 @@ fun AccountsTab(
 @Composable
 fun AccountCard(
     account: MangaBuffAccount,
+    battleTarget: Int,
     onRunTask: (TaskType) -> Unit,
     onStopAccount: () -> Unit,
     onDelete: () -> Unit,
     onRefresh: () -> Unit,
     onOpenBalance: () -> Unit,
     onChangeManga: () -> Unit,
-    onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
+    onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     val accountInitials = remember(account.username) {
@@ -639,23 +754,61 @@ fun AccountCard(
                         }
                     }
 
-                    TaskSwitchRow("🃏 Бои", "$dailyBattleAttempts боев / $dailyBattles победы", account.battleEnabled) { b ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, b)
+                    TaskSwitchRow("🃏 Бои", "${dailyBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
+                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, b)
                     }
                     TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
-                        onUpdateTasks(account.readerEnabled, q, account.advEnabled, account.mineEnabled, account.commentEnabled, account.battleEnabled)
+                        onUpdateTasks(account.readerEnabled, q, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("📺 Просмотр рекламы", "${dailyAds}/3", account.advEnabled) { a ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, a, account.mineEnabled, account.commentEnabled, account.battleEnabled)
+                        onUpdateTasks(account.readerEnabled, account.quizEnabled, a, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("⛏️ Шахта", "${dailyMineOre} 🪨 → 💎${dailyMineDiamonds}", account.mineEnabled) { m ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, m, account.commentEnabled, account.battleEnabled)
+                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, m, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("📖 Чтение", "${dailyReaderChapters} глав", account.readerEnabled) { r ->
-                        onUpdateTasks(r, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.battleEnabled)
+                        onUpdateTasks(r, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("💬 Комментарии", "${dailyComments}", account.commentEnabled) { c ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, c, account.battleEnabled)
+                    TaskSwitchRow("💬 Комментарии", "${dailyComments}/13", account.commentEnabled) { c ->
+                        onUpdateTasks(
+                            account.readerEnabled,
+                            account.quizEnabled,
+                            account.advEnabled,
+                            account.mineEnabled,
+                            c,
+                            account.deckCommentEnabled,
+                            account.battleEnabled
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 2.dp, top = 2.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = account.deckCommentEnabled,
+                            onClick = {
+                                onUpdateTasks(
+                                    account.readerEnabled,
+                                    account.quizEnabled,
+                                    account.advEnabled,
+                                    account.mineEnabled,
+                                    account.commentEnabled,
+                                    !account.deckCommentEnabled,
+                                    account.battleEnabled
+                                )
+                            },
+                            label = {
+                                Text(
+                                    if (account.deckCommentEnabled) "Колоды: ВКЛ" else "Колоды: ВЫКЛ",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            },
+                            modifier = Modifier.height(30.dp)
+                        )
                     }
                 }
             }
@@ -1034,24 +1187,8 @@ fun LogsTab(
     logs: List<LogEntry>,
     onClearLogs: () -> Unit
 ) {
-    val visibleLogs = remember(logs) {
-        logs.filter { entry ->
-            val m = entry.message
-            entry.component == "BG" ||
-                m.startsWith("BG:") ||
-                m.contains("[BG]") ||
-                m.startsWith("HEARTBEAT") ||
-                m.startsWith("BACKGROUND_") ||
-                m.startsWith("SCROLL_PROGRESS") ||
-                m.startsWith("END_CANDIDATE") ||
-                m.startsWith("BOTTOM_STABILIZATION") ||
-                m.startsWith("SCREEN_OFF") ||
-                m.startsWith("SCREEN_ON") ||
-                m.startsWith("RENDERER_") ||
-                m.contains("WAKELOCK") ||
-                m.contains("SERVICE_")
-        }
-    }
+    val visibleLogs = logs
+
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -1075,13 +1212,17 @@ fun LogsTab(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Логи (${visibleLogs.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Text(
+                "Логи (" + visibleLogs.size + ")",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedButton(
                     onClick = onClearLogs,
                     enabled = visibleLogs.isNotEmpty()
@@ -1097,10 +1238,13 @@ fun LogsTab(
                             val levelStr = if (log.isError) "ERROR" else "INFO"
                             val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
                             val componentStr = if (log.component.isNotBlank()) log.component else "APP"
-                            "[$timeStr] [$levelStr] [$accountStr] [$componentStr] ${log.message}"
+                            "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "] " + log.message
                         }
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                        val clip = android.content.ClipData.newPlainText("MangaBuff Logs", fullText)
+                        val clip = android.content.ClipData.newPlainText(
+                            "MangaBuff Logs",
+                            fullText
+                        )
                         clipboard.setPrimaryClip(clip)
                         Toast.makeText(context, "Лог скопирован", Toast.LENGTH_SHORT).show()
                     },
@@ -1115,7 +1259,11 @@ fun LogsTab(
 
         if (visibleLogs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Логи пока пусты", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                Text(
+                    "Логов пока нет",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.outline
+                )
             }
         } else {
             LazyColumn(
@@ -1123,13 +1271,13 @@ fun LogsTab(
                 modifier = Modifier.fillMaxSize().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(visibleLogs, key = { it.timestamp.toString() + it.message.hashCode() }) { log ->
+                items(visibleLogs) { log ->
                     val timeStr = dateFormat.format(Date(log.timestamp))
                     val levelStr = if (log.isError) "ERROR" else "INFO"
                     val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
                     val componentStr = if (log.component.isNotBlank()) log.component else "APP"
                     Text(
-                        text = "[$timeStr] [$levelStr] [$accountStr] [$componentStr] ${log.message}",
+                        text = "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "] " + log.message,
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = if (log.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                     )

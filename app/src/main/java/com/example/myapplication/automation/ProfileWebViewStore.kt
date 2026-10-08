@@ -3,6 +3,7 @@ package com.example.myapplication.automation
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.graphics.Color
 import android.view.View
 import android.webkit.CookieManager
@@ -20,7 +21,8 @@ import java.util.UUID
 @SuppressLint("RestrictedApi")
 class ProfileWebViewStore(
     private val context: Context,
-    private val onLog: (LogEntry) -> Unit = {}
+    private val onLog: (LogEntry) -> Unit = {},
+    private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
     private val activeWebViews = mutableMapOf<String, WebView>()
     private val attachDeferreds = mutableMapOf<String, CompletableDeferred<Unit>>()
@@ -66,6 +68,13 @@ class ProfileWebViewStore(
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             setBackgroundColor(Color.TRANSPARENT)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                setRendererPriorityPolicy(
+                    WebView.RENDERER_PRIORITY_IMPORTANT,
+                    false
+                )
+            }
         }
 
         webView.webViewClient = object : WebViewClient() {
@@ -84,6 +93,45 @@ class ProfileWebViewStore(
                 if (request?.isForMainFrame == true) {
                     onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "LOAD_ERROR url=${request.url} error=${error?.description}", isError = true))
                 }
+            }
+
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: android.webkit.RenderProcessGoneDetail?
+            ): Boolean {
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "RENDERER_GONE didCrash=${detail?.didCrash()} priority=IMPORTANT",
+                        isError = true
+                    )
+                )
+
+                synchronized(this@ProfileWebViewStore) {
+                    if (view != null && activeWebViews[accountId] === view) {
+                        activeWebViews.remove(accountId)
+                        attachDeferreds.remove(accountId)
+                        webViewRunIds.remove(accountId)
+                    }
+                }
+
+                try {
+                    view?.destroy()
+                } catch (_: Exception) {
+                }
+
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "RENDERER_GONE_INVALIDATED create_new_instance_next_run=true",
+                        isError = true
+                    )
+                )
+                if (view != null) onRendererGone(accountId, view)
+
+                return true
             }
         }
 
@@ -125,16 +173,24 @@ class ProfileWebViewStore(
             onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIE_MANAGER profile=$profileName"))
 
             targetCookieManager.setAcceptCookie(true)
+            var syncedCookieCount = 0
             if (cookiesJson.isNotBlank()) {
                 val cookieItems = cookiesJson.split(";", ",")
                 for (item in cookieItems) {
                     if (item.contains("=")) {
                         targetCookieManager.setCookie("https://mangabuff.ru", item.trim())
+                        syncedCookieCount++
                     }
                 }
                 targetCookieManager.flush()
             }
-            onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIES_SYNC_SUCCESS profile=$profileName"))
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "PROFILE",
+                    message = "COOKIES_SYNC_SUCCESS profile=$profileName count=$syncedCookieCount"
+                )
+            )
         } catch (e: Exception) {
             onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIE_PROFILE_FAIL error=${e.message}", isError = true))
             throw e

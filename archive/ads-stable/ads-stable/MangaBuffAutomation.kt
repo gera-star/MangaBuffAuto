@@ -22,15 +22,12 @@ import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -39,7 +36,6 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
-import kotlin.random.Random
 
 enum class ReaderScrollMode {
     NATIVE_MANGABUFF,
@@ -50,6 +46,7 @@ sealed class TaskResult {
     data object Success : TaskResult()
     data object BattleWon : TaskResult()
     data object BattleLost : TaskResult()
+    data class BattleFinished(val battles: Int, val wins: Int) : TaskResult()
     data object Skipped : TaskResult()
     data object Cancelled : TaskResult()
     data class Failed(val reason: String) : TaskResult()
@@ -125,29 +122,8 @@ class MangaBuffAutomation(
         chapters: String,
         comments: String
     ) -> Unit = { _, _, _, _, _ -> },
-    private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
-    private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
+    private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> }
 ) {
-
-    private inner class AutomationWebViewClient(
-        private val accountUsername: String,
-        private val clientWebView: WebView
-    ) : WebViewClient() {
-
-        override fun onRenderProcessGone(
-            view: WebView?,
-            detail: android.webkit.RenderProcessGoneDetail?
-        ): Boolean {
-            val target = view ?: clientWebView
-            log(
-                accountUsername,
-                "WEBVIEW: TASK_CLIENT_RENDERER_GONE didCrash=${detail?.didCrash()} instance=${target.hashCode()}",
-                true
-            )
-            onRendererGone(accountUsername, target)
-            return true
-        }
-    }
 
     companion object {
         private const val READER_END_STABLE_MS = 3_000L
@@ -161,13 +137,8 @@ class MangaBuffAutomation(
         private const val MINE_COMPLETION_DELAY_MS = 2000L
 
         private const val COMMENT_DELAY_MS = 4000L
-        private const val COMMENT_DAILY_LIMIT = 13
-        private const val READER_MAX_CHAPTERS = 10
-
-        private const val DECK_PAGE_SETTLE_MS = 2000L
 
         private const val BATTLE_COOLDOWN_MS = 2000L
-        private const val BATTLE_WIN_TARGET = 2
 
         private const val BALANCE_WATCHDOG_MS = 15_000L
     }
@@ -179,79 +150,6 @@ class MangaBuffAutomation(
         .build()
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val accountIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    fun closeRuntime() {
-        accountIoScope.coroutineContext[Job]?.cancel()
-        stopBackgroundScroll()
-        activeReaderSkip = null
-        activeReaderMarkRead = null
-        mainHandler.removeCallbacksAndMessages(null)
-    }
-
-    /*
-     * Background reader state is local to THIS MangaBuffAutomation instance.
-     * AutomationRuntime creates one engine per accountId, so this state cannot
-     * be shared between accounts.
-     */
-    @Volatile
-    private var backgroundScrollActive = false
-    private var backgroundScrollRunnable: Runnable? = null
-    private var backgroundScrollWebView: WebView? = null
-    private var backgroundScreenWasOff = false
-
-    private fun startBackgroundScroll(accountUsername: String, webView: WebView) {
-        mainHandler.post {
-            if (backgroundScrollActive && backgroundScrollWebView === webView) return@post
-
-            stopBackgroundScroll()
-            backgroundScrollActive = true
-            backgroundScrollWebView = webView
-            backgroundScreenWasOff = false
-
-            val runnable = object : Runnable {
-                override fun run() {
-                    val target = backgroundScrollWebView
-                    if (!backgroundScrollActive || target == null) return
-
-                    val screenOff = BackgroundExecutionState.isScreenOff()
-                    if (screenOff != backgroundScreenWasOff) {
-                        backgroundScreenWasOff = screenOff
-                        log(accountUsername, "READER: BACKGROUND_SCROLL_STATE screenOff=$screenOff")
-                    }
-
-                    if (screenOff) {
-                        try {
-                            target.evaluateJavascript(
-                                "window.__mbBackgroundStep && window.__mbBackgroundStep();",
-                                null
-                            )
-                        } catch (e: Exception) {
-                            log(
-                                accountUsername,
-                                "READER: BACKGROUND_SCROLL_EVAL_ERROR error=${e.message}",
-                                true
-                            )
-                        }
-                    }
-
-                    if (backgroundScrollActive) mainHandler.postDelayed(this, 180L)
-                }
-            }
-
-            backgroundScrollRunnable = runnable
-            log(accountUsername, "READER: BACKGROUND_SCROLL_NATIVE_STARTED")
-            runnable.run()
-        }
-    }
-
-    private fun stopBackgroundScroll() {
-        backgroundScrollActive = false
-        backgroundScrollRunnable?.let(mainHandler::removeCallbacks)
-        backgroundScrollRunnable = null
-        backgroundScrollWebView = null
-        backgroundScreenWasOff = false
-    }
 
     /**
      * Performs a short synthetic finger gesture and then uses WebView's native
@@ -364,233 +262,6 @@ class MangaBuffAutomation(
                     (upTime - downTime) + "ms source=TOUCHSCREEN"
             )
         }, 120L)
-    }
-
-    /**
-     * Dispatches a real local WebView tap using physical pixels.
-     * AccessibilityNodeInfo bounds are screen coordinates in physical pixels,
-     * so this helper intentionally does NOT apply WebView density conversion.
-     */
-    private fun dispatchNativeLocalTap(
-        accountUsername: String,
-        webView: WebView,
-        localX: Float,
-        localY: Float
-    ) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post {
-                dispatchNativeLocalTap(accountUsername, webView, localX, localY)
-            }
-            return
-        }
-
-        if (!webView.isAttachedToWindow) {
-            log(accountUsername, "ADS: ACCESSIBILITY_TAP_SKIPPED webview_detached", true)
-            return
-        }
-
-        val px = localX.coerceIn(1f, (webView.width - 2).coerceAtLeast(1).toFloat())
-        val py = localY.coerceIn(1f, (webView.height - 2).coerceAtLeast(1).toFloat())
-        val downTime = SystemClock.uptimeMillis()
-
-        val downEvent = MotionEvent.obtain(
-            downTime, downTime, MotionEvent.ACTION_DOWN, px, py, 0
-        ).apply {
-            source = android.view.InputDevice.SOURCE_TOUCHSCREEN
-        }
-
-        val downConsumed = try {
-            webView.dispatchTouchEvent(downEvent)
-        } finally {
-            downEvent.recycle()
-        }
-
-        mainHandler.postDelayed({
-            if (!webView.isAttachedToWindow) {
-                log(accountUsername, "ADS: ACCESSIBILITY_TAP_UP_SKIPPED webview_detached", true)
-                return@postDelayed
-            }
-
-            val upTime = SystemClock.uptimeMillis()
-            val upEvent = MotionEvent.obtain(
-                downTime, upTime, MotionEvent.ACTION_UP, px, py, 0
-            ).apply {
-                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
-            }
-
-            val upConsumed = try {
-                webView.dispatchTouchEvent(upEvent)
-            } finally {
-                upEvent.recycle()
-            }
-
-            log(
-                accountUsername,
-                "ADS: ACCESSIBILITY_NATIVE_TAP localX=" + px +
-                    " localY=" + py +
-                    " downConsumed=" + downConsumed +
-                    " upConsumed=" + upConsumed
-            )
-        }, 120L)
-    }
-
-    /**
-     * Finds the real Yandex rewarded "Получить награду" control through the
-     * Android accessibility tree exposed by Chromium/WebView. This is needed
-     * because the rewarded UI can live in a cross-origin iframe invisible to
-     * page JavaScript.
-     */
-    private fun autoClaimRewardFromAccessibility(
-        accountUsername: String,
-        webView: WebView
-    ): Boolean {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post {
-                autoClaimRewardFromAccessibility(accountUsername, webView)
-            }
-            return false
-        }
-
-        if (!webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) {
-            log(
-                accountUsername,
-                "ADS: ACCESSIBILITY_SCAN_SKIP attached=" + webView.isAttachedToWindow +
-                    " size=" + webView.width + "x" + webView.height,
-                true
-            )
-            return false
-        }
-
-        val root = try {
-            webView.createAccessibilityNodeInfo()
-        } catch (e: Exception) {
-            log(
-                accountUsername,
-                "ADS: ACCESSIBILITY_SCAN_ERROR root=" + e.message,
-                true
-            )
-            return false
-        }
-
-        val queue = ArrayDeque<Pair<android.view.accessibility.AccessibilityNodeInfo, Int>>()
-        queue.add(root to 0)
-
-        data class Candidate(
-            val node: android.view.accessibility.AccessibilityNodeInfo,
-            val label: String,
-            val bounds: android.graphics.Rect,
-            val exact: Boolean,
-            val clickable: Boolean
-        )
-
-        val candidates = mutableListOf<Candidate>()
-        var visited = 0
-        val maxVisited = 600
-
-        while (queue.isNotEmpty() && visited < maxVisited) {
-            val (node, depth) = queue.removeFirst()
-            visited++
-
-            val label = buildString {
-                node.text?.toString()?.let { append(it) }
-                node.contentDescription?.toString()?.let {
-                    if (isNotEmpty()) append(" ")
-                    append(it)
-                }
-            }.replace("\\s+".toRegex(), " ").trim()
-
-            val normalized = label.lowercase()
-            val exact = normalized.contains("получить награду")
-            val rewardLike = exact ||
-                (normalized.contains("получить") && normalized.contains("наград")) ||
-                normalized.contains("claim reward") ||
-                normalized.contains("get reward")
-
-            if (rewardLike && node.isVisibleToUser) {
-                val bounds = android.graphics.Rect()
-                try {
-                    node.getBoundsInScreen(bounds)
-                } catch (_: Exception) {
-                    bounds.setEmpty()
-                }
-
-                if (!bounds.isEmpty) {
-                    candidates += Candidate(
-                        node = node,
-                        label = label,
-                        bounds = bounds,
-                        exact = exact,
-                        clickable = node.isClickable
-                    )
-                }
-            }
-
-            if (depth < 14) {
-                for (i in 0 until node.childCount) {
-                    try {
-                        node.getChild(i)?.let { child ->
-                            queue.add(child to (depth + 1))
-                        }
-                    } catch (_: Exception) {
-                        // The ad accessibility subtree can change during transitions.
-                    }
-                }
-            }
-        }
-
-        log(
-            accountUsername,
-            "ADS: ACCESSIBILITY_SCAN visited=" + visited +
-                " candidates=" + candidates.size
-        )
-
-        val candidate = candidates.sortedWith(
-            compareByDescending<Candidate> { it.exact }
-                .thenByDescending { it.clickable }
-                .thenBy { it.bounds.width().toLong() * it.bounds.height().toLong() }
-        ).firstOrNull() ?: return false
-
-        log(
-            accountUsername,
-            "ADS: ACCESSIBILITY_REWARD_FOUND text=" + candidate.label.take(180) +
-                " clickable=" + candidate.clickable +
-                " bounds=" + candidate.bounds.toShortString()
-        )
-
-        try {
-            if (candidate.node.performAction(
-                    android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
-                )
-            ) {
-                log(
-                    accountUsername,
-                    "ADS: ACCESSIBILITY_REWARD_ACTION_CLICK success=true"
-                )
-                return true
-            }
-        } catch (e: Exception) {
-            log(
-                accountUsername,
-                "ADS: ACCESSIBILITY_REWARD_ACTION_CLICK error=" + e.message,
-                true
-            )
-        }
-
-        val location = IntArray(2)
-        webView.getLocationOnScreen(location)
-        val centerX = candidate.bounds.centerX().toFloat() - location[0]
-        val centerY = candidate.bounds.centerY().toFloat() - location[1]
-
-        log(
-            accountUsername,
-            "ADS: ACCESSIBILITY_REWARD_ACTION_CLICK fallback_tap " +
-                "screen=" + candidate.bounds.centerX() + "," + candidate.bounds.centerY() +
-                " webViewOrigin=" + location[0] + "," + location[1] +
-                " local=" + centerX + "," + centerY
-        )
-
-        dispatchNativeLocalTap(accountUsername, webView, centerX, centerY)
-        return true
     }
 
     private fun dispatchNativeSwipe(
@@ -805,29 +476,6 @@ class MangaBuffAutomation(
         "Как всегда интересно. Спасибо за новую главу!"
     )
 
-    private val deckCommentPhrases = listOf(
-        "Какая классная колода! Просто мечта! 😍",
-        "Вау, вот это колода! Очень круто собрано! 🔥",
-        "Шикарная колода, глаз не оторвать! ✨",
-        "Вот это подборка! Я бы такую колоду тоже хотел! ❤️",
-        "Очень крутая колода, настоящая мечта коллекционера! 😍",
-        "Какая красота! Отличная колода! 💜",
-        "Сильная и очень стильная колода! 🔥",
-        "Просто восторг! Очень понравилась эта колода! 😍",
-        "Вот это состав! Выглядит невероятно круто! ✨",
-        "Мечта, а не колода! Очень классная работа! ❤️",
-        "Ух ты, какая замечательная колода! 😍",
-        "Очень удачная подборка, выглядит потрясающе! 🔥",
-        "Какие красивые карты! Колода получилась шикарной! ✨",
-        "Сразу видно, сколько души вложено в эту колоду! ❤️",
-        "Невероятно классная колода, мне очень нравится! 💜",
-        "Вот это уровень! Такая колода реально радует глаз! 😍",
-        "Отличная идея и очень крутая подборка! 🔥",
-        "Прям хочется собрать себе такую же колоду! ✨",
-        "Очень атмосферная колода, получилась просто супер! ❤️",
-        "Красота! Такая колода точно заслуживает внимания! 😍"
-    )
-
     private val recentCommentIndexes = mutableListOf<Int>()
 
     private var currentMangaUrl = ""
@@ -969,67 +617,6 @@ class MangaBuffAutomation(
             .substringBefore(" — Манга")
             .substringBefore(" | MangaBuff")
             .trim()
-    }
-
-    private fun logWebViewNetworkRequest(
-        account: MangaBuffAccount,
-        request: WebResourceRequest
-    ) {
-        val url = request.url.toString()
-        if (!url.startsWith("https://mangabuff.ru")) return
-
-        val important = listOf(
-            "/addHistory",
-            "/balance",
-            "/mine",
-            "/battle",
-            "/quiz",
-            "/ads",
-            "/auth",
-            "/login",
-            "/api/"
-        )
-        if (important.none { url.contains(it, ignoreCase = true) }) return
-
-        val interestingHeaders = request.requestHeaders
-            .asSequence()
-            .filter { (name, _) ->
-                name.lowercase() in setOf(
-                    "accept",
-                    "accept-language",
-                    "content-type",
-                    "origin",
-                    "referer",
-                    "sec-ch-ua",
-                    "sec-ch-ua-mobile",
-                    "sec-ch-ua-platform",
-                    "sec-fetch-dest",
-                    "sec-fetch-mode",
-                    "sec-fetch-site",
-                    "x-requested-with",
-                    "x-csrf-token"
-                )
-            }
-            .sortedBy { it.key.lowercase() }
-            .joinToString(";") { (name, value) ->
-                val lower = name.lowercase()
-                val safeValue = when (lower) {
-                    "x-csrf-token",
-                    "x-xsrf-token",
-                    "authorization",
-                    "proxy-authorization",
-                    "cookie",
-                    "set-cookie" -> "<redacted len=${value.length}>"
-                    else -> value.take(240)
-                }
-                "$name=$safeValue"
-            }
-            .ifBlank { "none" }
-
-        log(
-            account.username,
-            "NET: WEBVIEW_REQUEST method=${request.method} url=$url headers=$interestingHeaders"
-        )
     }
 
     private fun getBaseHeaders(account: MangaBuffAccount): Headers {
@@ -1186,7 +773,7 @@ class MangaBuffAutomation(
 
             webView.addJavascriptInterface(BalanceBridge(), "AndroidBalanceBridge")
 
-            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+            webView.webViewClient = object : WebViewClient() {
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
@@ -1499,25 +1086,14 @@ class MangaBuffAutomation(
 
         refreshCsrfToken(account)
 
-        if (taskType == TaskType.ADS) {
-            /*
-             * Pure ad test: runAdsTask() owns the /balance navigation and waits
-             * for the page before injecting the ad runner. Do not run the
-             * general balance/diagnostic pass first, because it installs its
-             * own WebViewClient and executes unrelated page diagnostics before
-             * the ad test gets control of the WebView.
-             */
-            log(account.username, "TASK: ADS_TEST_PREP skip_initial_balance_refresh")
-        } else {
-            log(account.username, "STAT: REFRESH_BEFORE_START (Обновление баланса и статистики)")
-            val balanceResult = fetchAndLogBalanceInfo(account, webView)
+        log(account.username, "STAT: REFRESH_BEFORE_START (Обновление баланса и статистики)")
+        val balanceResult = fetchAndLogBalanceInfo(account, webView)
 
-            if (balanceResult.contains("Требуется повторный вход") ||
-                account.getSafeStatusMessage().contains("Требуется повторный вход")
-            ) {
-                log(account.username, "AUTH: ABORTING_TASKS due to expired session")
-                return
-            }
+        if (balanceResult.contains("Требуется повторный вход") ||
+            account.getSafeStatusMessage().contains("Требуется повторный вход")
+        ) {
+            log(account.username, "AUTH: ABORTING_TASKS due to expired session")
+            return
         }
 
         if (taskType == TaskType.ALL || taskType == TaskType.BATTLE) {
@@ -1529,10 +1105,13 @@ class MangaBuffAutomation(
                 val elapsed = SystemClock.elapsedRealtime() - start
 
                 when (result) {
-                    is TaskResult.Success -> {
-                        log(account.username, "BATTLE: TASK_SUCCESS elapsed=${elapsed}ms")
+                    is TaskResult.BattleFinished -> {
+                        log(account.username, "BATTLE: TASK_SUCCESS battles=" + result.battles + " wins=" + result.wins + " elapsed=" + elapsed + "ms")
                     }
-                    is TaskResult.Failed -> log(account.username, "BATTLE: TASK_FAILED reason=${result.reason}", true)
+                    is TaskResult.Success -> {
+                        log(account.username, "BATTLE: TASK_SUCCESS elapsed=" + elapsed + "ms")
+                    }
+                    is TaskResult.Failed -> log(account.username, "BATTLE: TASK_FAILED reason=" + result.reason, true)
                     is TaskResult.Cancelled -> log(account.username, "BATTLE: TASK_CANCELLED")
                     else -> log(account.username, "BATTLE: TASK_FINISHED elapsed=${elapsed}ms")
                 }
@@ -1561,14 +1140,9 @@ class MangaBuffAutomation(
                 log(account.username, "TASK: ADS_END elapsed=" + (SystemClock.elapsedRealtime() - start) + "ms success=" + adsSuccess)
                 fetchAndLogBalanceInfo(account, webView)
                 if (!adsSuccess) {
-                    updateStatus(
-                        account,
-                        "⚠️ Реклама: награда не подтверждена — продолжаем",
-                        true,
-                        "Реклама",
-                        0f
-                    )
-                    log(account.username, "TASK: ADS_FAILED_CONTINUE reason=REWARD_NOT_CONFIRMED", true)
+                    updateStatus(account, "❌ Реклама не подтверждена", false, "Реклама", 0f)
+                    log(account.username, "TASK: ACCOUNT_ABORTED reason=ADS_FAILED", true)
+                    return
                 }
             }
         }
@@ -1600,27 +1174,8 @@ class MangaBuffAutomation(
                 log(account.username, "TASK: COMMENT_START")
                 val start = SystemClock.elapsedRealtime()
                 runCommentTask(account, settings, webView)
-                log(
-                    account.username,
-                    "TASK: COMMENT_END elapsed=" +
-                        (SystemClock.elapsedRealtime() - start) + "ms"
-                )
+                log(account.username, "TASK: COMMENT_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
                 fetchAndLogBalanceInfo(account, webView)
-            }
-
-            if (account.deckCommentEnabled) {
-                coroutineContext.ensureActive()
-                log(account.username, "TASK: DECK_COMMENT_ENABLED")
-                val start = SystemClock.elapsedRealtime()
-                runDeckCommentTask(account, webView)
-                log(
-                    account.username,
-                    "TASK: DECK_COMMENT_END elapsed=" +
-                        (SystemClock.elapsedRealtime() - start) + "ms"
-                )
-                fetchAndLogBalanceInfo(account, webView)
-            } else {
-                log(account.username, "COMMENT: DECK_DISABLED")
             }
         }
 
@@ -1642,41 +1197,16 @@ class MangaBuffAutomation(
         var battleCount = 0
         var winCount = 0
 
-        log(
-            account.username,
-            "BATTLE: START targetBattles=" + battleTarget + " targetWins=" + BATTLE_WIN_TARGET
-        )
-        updateStatus(
-            account,
-            "⚔️ " + battleTarget + "(боев)/" + winCount + " победы",
-            true,
-            "Бои",
-            0f
-        )
+        log(account.username, "BATTLE: START targetBattles=" + battleTarget)
+        updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои", 0f)
 
         while (battleCount < battleTarget) {
             coroutineContext.ensureActive()
 
-            val progress = if (battleTarget > 0) {
-                battleCount.toFloat() / battleTarget
-            } else {
-                1f
-            }
+            val progress = if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f
+            updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои", progress)
 
-            updateStatus(
-                account,
-                "⚔️ " + battleTarget + "(боев)/" + winCount + " победы",
-                true,
-                "Бои",
-                progress
-            )
-
-            when (val roundResult = runSingleBattleRound(
-                account,
-                webView,
-                battleCount + 1,
-                battleTarget
-            )) {
+            when (val roundResult = runSingleBattleRound(account, webView, battleCount + 1, battleTarget)) {
                 is TaskResult.BattleWon -> {
                     battleCount++
                     winCount++
@@ -1686,59 +1216,29 @@ class MangaBuffAutomation(
                             battles = it.battles + 1
                         )
                     }
-                    log(
-                        account.username,
-                        "BATTLE: RESULT=WIN battles=" + battleCount +
-                            "/" + battleTarget + " wins=" + winCount +
-                            " dailyAttempts=" + dailyStats.battleAttempts +
-                            " dailyWins=" + dailyStats.battles
-                    )
+                    log(account.username, "BATTLE: RESULT=WIN battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
                 }
-
                 is TaskResult.BattleLost -> {
                     battleCount++
-                    addDaily(account) {
-                        it.copy(
-                            battleAttempts = it.battleAttempts + 1
-                        )
-                    }
-                    log(
-                        account.username,
-                        "BATTLE: RESULT=LOSS battles=" + battleCount +
-                            "/" + battleTarget + " wins=" + winCount +
-                            " dailyAttempts=" + dailyStats.battleAttempts +
-                            " dailyWins=" + dailyStats.battles
-                    )
+                    addDaily(account) { it.copy(battleAttempts = it.battleAttempts + 1) }
+                    log(account.username, "BATTLE: RESULT=LOSS battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
                 }
-
                 is TaskResult.Cancelled -> return TaskResult.Cancelled
                 is TaskResult.Failed -> return roundResult
                 else -> return TaskResult.Failed("unexpected_battle_round_result")
             }
 
-            updateStatus(
-                account,
-                "⚔️ " + battleTarget + "(боев)/" + winCount + " победы",
-                true,
-                "Бои",
-                if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f
-            )
+            updateStatus(account, "⚔️ Бои " + battleTarget + "/" + winCount + " победы", true, "Бои",
+                if (battleTarget > 0) battleCount.toFloat() / battleTarget else 1f)
 
             if (battleCount < battleTarget) {
                 delay(BATTLE_COOLDOWN_MS)
             }
         }
 
-        log(
-            account.username,
-            "BATTLE: TARGET_REACHED battles=" + battleCount +
-                "/" + battleTarget + " wins=" + winCount
-        )
-        log(account.username, "BATTLE: REWARDS_START")
+        log(account.username, "BATTLE: TARGET_REACHED battles=" + battleCount + "/" + battleTarget + " wins=" + winCount)
         claimBattleRewards(account, webView)
-        log(account.username, "BATTLE: REWARDS_COMPLETED")
-
-        return TaskResult.Success
+        return TaskResult.BattleFinished(battleCount, winCount)
     }
 
     private suspend fun runSingleBattleRound(
@@ -1801,16 +1301,13 @@ class MangaBuffAutomation(
                 fun onBattleResult(result: String) {
                     val normalized = result.trim().lowercase()
                     log(account.username, "BATTLE: RESULT_DETECTED value=" + normalized)
-
                     mainHandler.post {
                         if (!continuation.isActive) return@post
-
+                        try { webView.loadUrl("https://mangabuff.ru/battle") } catch (_: Exception) {}
                         when (normalized) {
                             "win", "победа" -> safeResume(TaskResult.BattleWon)
                             "loss", "lose", "поражение" -> safeResume(TaskResult.BattleLost)
-                            else -> safeResume(
-                                TaskResult.Failed("unknown_battle_result=" + normalized)
-                            )
+                            else -> safeResume(TaskResult.Failed("unknown_battle_result=" + normalized))
                         }
                     }
                 }
@@ -1824,7 +1321,7 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidBattleBridge") } catch (_: Exception) {}
             webView.addJavascriptInterface(BattleBridge(), "AndroidBattleBridge")
 
-            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+            webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/battle") != true) return
 
@@ -1841,47 +1338,27 @@ class MangaBuffAutomation(
                                         });
 
                                     function waitForResultPanel(startedAt) {
-                                        var panel = document.querySelector('.battle-finish-panel');
-                                        var title = panel
-                                            ? panel.querySelector('.battle-finish-panel__title')
-                                            : null;
-                                        var resultText = title
-                                            ? (title.textContent || '').replace(/\\s+/g, ' ').trim()
-                                            : '';
-
-                                        if (title && /^победа$/i.test(resultText)) {
-                                            AndroidBattleBridge.onStateLog(
-                                                'RESULT_PANEL',
-                                                'title=Победа class=' + (panel.className || '')
-                                            );
-                                            AndroidBattleBridge.onBattleResult('win');
-                                            return;
+                                        var title = document.querySelector('.battle-finish-panel__title');
+                                        if (title) {
+                                            var text = (title.textContent || '').replace(/\\s+/g, ' ').trim();
+                                            if (/победа/i.test(text)) {
+                                                AndroidBattleBridge.onBattleResult('win');
+                                                return;
+                                            }
+                                            if (/поражение/i.test(text)) {
+                                                AndroidBattleBridge.onBattleResult('loss');
+                                                return;
+                                            }
                                         }
-
-                                        if (title && /^поражение$/i.test(resultText)) {
-                                            AndroidBattleBridge.onStateLog(
-                                                'RESULT_PANEL',
-                                                'title=Поражение class=' + (panel.className || '')
-                                            );
-                                            AndroidBattleBridge.onBattleResult('loss');
-                                            return;
-                                        }
-
-                                        if (Date.now() - startedAt >= 15000) {
+                                        if (Date.now() - startedAt >= 12000) {
                                             AndroidBattleBridge.onRoundFailed('result_panel_timeout');
                                             return;
                                         }
-
-                                        setTimeout(function() {
-                                            waitForResultPanel(startedAt);
-                                        }, 300);
+                                        setTimeout(function() { waitForResultPanel(startedAt); }, 300);
                                     }
 
                                     if (skip) {
-                                        AndroidBattleBridge.onStateLog(
-                                            'RESULTS_BUTTON_FOUND',
-                                            'Кнопка К итогам найдена'
-                                        );
+                                        AndroidBattleBridge.onStateLog('RESULTS_BUTTON_FOUND', 'Кнопка К итогам найдена');
                                         skip.click();
                                         waitForResultPanel(Date.now());
                                         return;
@@ -1890,11 +1367,10 @@ class MangaBuffAutomation(
                                     var elapsed = 0;
                                     var timer = setInterval(function() {
                                         elapsed += 500;
-                                        var btn = Array.from(
-                                            document.querySelectorAll('button.battle-control__button--skip')
-                                        ).find(function(x) {
-                                            return (x.textContent || '').trim() === 'К итогам' && !x.disabled;
-                                        });
+                                        var btn = Array.from(document.querySelectorAll('button.battle-control__button--skip'))
+                                            .find(function(x) {
+                                                return (x.textContent || '').trim() === 'К итогам' && !x.disabled;
+                                            });
 
                                         if (btn) {
                                             clearInterval(timer);
@@ -1998,7 +1474,7 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidQuiz") } catch (_: Exception) {}
             webView.addJavascriptInterface(QuizBridge(), "AndroidQuiz")
 
-            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+            webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     val script = """
                         (function() {
@@ -2289,42 +1765,6 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
-                fun onAutoRewardClaimRequested() {
-                    mainHandler.post {
-                        val success = try {
-                            autoClaimRewardFromAccessibility(account.username, webView)
-                        } catch (e: Exception) {
-                            log(
-                                account.username,
-                                "ADS: ACCESSIBILITY_REWARD_EXCEPTION error=" + e.message,
-                                true
-                            )
-                            false
-                        }
-
-                        log(
-                            account.username,
-                            "ADS: ACCESSIBILITY_REWARD_REQUEST result=" + success
-                        )
-
-                        try {
-                            webView.evaluateJavascript(
-                                "window.__mbAdsAccessibilityClaimResult && " +
-                                    "window.__mbAdsAccessibilityClaimResult(" +
-                                    success + ");",
-                                null
-                            )
-                        } catch (e: Exception) {
-                            log(
-                                account.username,
-                                "ADS: ACCESSIBILITY_CALLBACK_ERROR error=" + e.message,
-                                true
-                            )
-                        }
-                    }
-                }
-
-                @JavascriptInterface
                 fun onCloseTapRequested(x: Float, y: Float, source: String) {
                     log(
                         account.username,
@@ -2385,36 +1825,6 @@ class MangaBuffAutomation(
                                 var closeWasVisible = false;
                                 var closeAvailableLogged = false;
 
-                                var rewardClaimAttempts = 0;
-                                var rewardClaimPending = false;
-                                var rewardClaimFinished = false;
-
-                                window.__mbAdsAccessibilityClaimResult = function(success) {
-                                    rewardClaimPending = false;
-
-                                    if (finished) return;
-
-                                    AndroidAds.onStateLog(
-                                        "ACCESSIBILITY_REWARD_RESULT",
-                                        "success=" + !!success +
-                                            " attempts=" + rewardClaimAttempts
-                                    );
-
-                                    if (success) {
-                                        rewardClaimFinished = true;
-                                        clearInterval(watchTimer);
-
-                                        AndroidAds.onStateLog(
-                                            "REWARD_BUTTON_CLICKED",
-                                            "source=ANDROID_ACCESSIBILITY"
-                                        );
-
-                                        setTimeout(function() {
-                                            verifyReward(0);
-                                        }, 750);
-                                    }
-                                };
-
                                 function textOf(el) {
                                     return (el && (el.innerText || el.textContent) || "")
                                         .replace(/\s+/g, " ")
@@ -2423,7 +1833,7 @@ class MangaBuffAutomation(
 
                                 function findWatchButton() {
                                     var direct = document.querySelector(
-                                        "button.wallet-panel__action.wallet-panel__action--ads.user-quest__watch-ads-btn"
+                                        ".wallet-panel__action.user-quest__watch-ads-btn"
                                     );
                                     if (direct) return direct;
 
@@ -2519,8 +1929,107 @@ class MangaBuffAutomation(
                                  * Hook it as an additional completion signal and diagnostic.
                                  * The MangaBuff server balance remains authoritative.
                                  */
-                                window.__mbYandexRewardHookState = { rewarded: false, callbackValue: null };
+                                function installYandexRewardHook() {
+                                    try {
+                                        if (window.__mbYandexRewardHookState) return true;
 
+                                        window.__mbYandexRewardHookState = {
+                                            installed: false,
+                                            rewarded: false,
+                                            callbackValue: null
+                                        };
+
+                                        function tryInstall() {
+                                            try {
+                                                var adv = window.Ya &&
+                                                    window.Ya.Context &&
+                                                    window.Ya.Context.AdvManager;
+
+                                                if (!adv || typeof adv.render !== "function") return false;
+                                                if (adv.__mbOriginalRender) {
+                                                    window.__mbYandexRewardHookState.installed = true;
+                                                    return true;
+                                                }
+
+                                                var originalRender = adv.render;
+                                                adv.__mbOriginalRender = originalRender;
+
+                                                adv.render = function(options) {
+                                                    try {
+                                                        if (options && typeof options.onRewarded === "function") {
+                                                            var originalOnRewarded = options.onRewarded;
+                                                            var wrappedOptions = Object.assign({}, options);
+
+                                                            wrappedOptions.onRewarded = function(isRewarded) {
+                                                                window.__mbYandexRewardHookState.callbackValue = !!isRewarded;
+                                                                window.__mbYandexRewardHookState.rewarded = !!isRewarded;
+
+                                                                AndroidAds.onStateLog(
+                                                                    "YANDEX_REWARDED_CALLBACK",
+                                                                    "isRewarded=" + !!isRewarded
+                                                                );
+
+                                                                try {
+                                                                    return originalOnRewarded.apply(this, arguments);
+                                                                } finally {
+                                                                    if (isRewarded) {
+                                                                        setTimeout(function() {
+                                                                            try { verifyReward(0); } catch (e) {}
+                                                                        }, 250);
+                                                                    }
+                                                                }
+                                                            };
+
+                                                            return originalRender.call(this, wrappedOptions);
+                                                        }
+                                                    } catch (e) {
+                                                        AndroidAds.onStateLog(
+                                                            "YANDEX_REWARD_HOOK_ERROR",
+                                                            "error=" + (e && e.message ? e.message : String(e))
+                                                        );
+                                                    }
+
+                                                    return originalRender.apply(this, arguments);
+                                                };
+
+                                                window.__mbYandexRewardHookState.installed = true;
+                                                AndroidAds.onStateLog("YANDEX_REWARD_HOOK", "installed");
+                                                return true;
+                                            } catch (e) {
+                                                return false;
+                                            }
+                                        }
+
+                                        if (!tryInstall()) {
+                                            var tries = 0;
+                                            var retry = setInterval(function() {
+                                                if (finished || window.__mbYandexRewardHookState.rewarded) {
+                                                    clearInterval(retry);
+                                                    return;
+                                                }
+
+                                                tries++;
+                                                if (tryInstall() || tries >= 40) {
+                                                    clearInterval(retry);
+                                                    if (!window.__mbYandexRewardHookState.installed) {
+                                                        AndroidAds.onStateLog(
+                                                            "YANDEX_REWARD_HOOK",
+                                                            "not_installed_after_40_tries"
+                                                        );
+                                                    }
+                                                }
+                                            }, 250);
+                                        }
+
+                                        return true;
+                                    } catch (e) {
+                                        AndroidAds.onStateLog(
+                                            "YANDEX_REWARD_HOOK_ERROR",
+                                            "error=" + (e && e.message ? e.message : String(e))
+                                        );
+                                        return false;
+                                    }
+                                }
                                 var initialButton = findWatchButton();
                                 var initialDiamond = readDiamondBalance(document);
                                 var initialButtonCount = readButtonCount(initialButton);
@@ -2851,41 +2360,61 @@ class MangaBuffAutomation(
                                         );
                                     }
 
-                                    if (!exact || exact.width <= 0 || exact.height <= 0) {
+                                    if (exact && exact.width > 0 && exact.height > 0) {
                                         AndroidAds.onStateLog(
-                                            "NATIVE_CLOSE_UNAVAILABLE",
-                                            "close_control_found_but_geometry_unavailable"
-                                        );
-                                        return false;
-                                    }
-
-                                    var tapX = exact.left + exact.width / 2;
-                                    var tapY = exact.top + exact.height / 2;
-
-                                    AndroidAds.onStateLog(
-                                        "NATIVE_CLOSE_AUTO_TAP",
-                                        "x=" + tapX +
-                                            " y=" + tapY +
+                                            "NATIVE_CLOSE_AVAILABLE",
+                                            "x=" + (exact.left + exact.width / 2) +
+                                            " y=" + (exact.top + exact.height / 2) +
                                             " rect=" + exact.width + "x" + exact.height +
-                                            " selector=data-fullscreen-element:close"
-                                    );
-
-                                    try {
-                                        AndroidAds.onCloseTapRequested(
-                                            tapX,
-                                            tapY,
-                                            "Yandex data-fullscreen-element=close"
+                                            " action=MANUAL_REQUIRED"
                                         );
-                                        return true;
-                                    } catch (e) {
+                                    } else {
+                                        try {
+                                            var frames = Array.from(document.querySelectorAll("iframe"));
+                                            var best = null;
+                                            var bestArea = 0;
+
+                                            frames.forEach(function(frame) {
+                                                try {
+                                                    var r = frame.getBoundingClientRect();
+                                                    var area = Math.max(0, r.width) * Math.max(0, r.height);
+                                                    if (
+                                                        r.width >= width * 0.8 &&
+                                                        r.height >= height * 0.8 &&
+                                                        area > bestArea
+                                                    ) {
+                                                        bestArea = area;
+                                                        best = r;
+                                                    }
+                                                } catch (e) {}
+                                            });
+
+                                            if (best) {
+                                                AndroidAds.onStateLog(
+                                                    "NATIVE_CLOSE_IFRAME_RECT",
+                                                    "left=" + best.left +
+                                                    " top=" + best.top +
+                                                    " width=" + best.width +
+                                                    " height=" + best.height +
+                                                    " action=DIAGNOSTIC_ONLY"
+                                                );
+                                            }
+                                        } catch (e) {
+                                            AndroidAds.onStateLog(
+                                                "NATIVE_CLOSE_IFRAME_RECT_ERROR",
+                                                "error=" + (e && e.message ? e.message : String(e))
+                                            );
+                                        }
+
                                         AndroidAds.onStateLog(
-                                            "NATIVE_CLOSE_AUTO_TAP_ERROR",
-                                            "error=" + (e && e.message ? e.message : String(e))
+                                            "NATIVE_CLOSE_MANUAL_REQUIRED",
+                                            "close_control_inaccessible_to_parent_document viewport=" +
+                                                width + "x" + height
                                         );
-                                        return false;
                                     }
-                                }
 
+                                    return false;
+                                }
                                 function verifyReward(attempt) {
                                     if (finished) return;
 
@@ -3038,194 +2567,24 @@ class MangaBuffAutomation(
                                     });
                                 }
 
-                                var nativeCloseAttempts = 0;
-                                var nativeCloseRetryTimer = null;
-                                var nativeCloseRequested = false;
-
-                                function finishNativeCloseRetryTimer() {
-                                    if (nativeCloseRetryTimer) {
-                                        clearTimeout(nativeCloseRetryTimer);
-                                        nativeCloseRetryTimer = null;
-                                    }
-                                }
-
-                                /*
-                                 * Screenshot-verified position of the Yandex fullscreen close
-                                 * cross on the actual 384x850 CSS viewport:
-                                 *
-                                 *   cross center ~= (354, 64) CSS px
-                                 *
-                                 * It is immediately above the "U" in our overlaid
-                                 * "Вернуться в UI" button. The previous (364,20) point was
-                                 * demonstrably wrong: it landed in the status-bar area and did
-                                 * not close the ad.
-                                 *
-                                 * Do not use getBoundingClientRect() from the injected page here:
-                                 * that rect may belong to a nested/cross-origin Yandex frame and is
-                                 * not necessarily in the parent WebView coordinate space.
-                                 */
-                                var verifiedViewportWidth =
-                                    window.visualViewport && window.visualViewport.width
-                                        ? window.visualViewport.width
-                                        : (window.innerWidth || 384);
-                                var VERIFIED_CLOSE_FALLBACK_X =
-                                    Math.max(20.0, verifiedViewportWidth - 30.0);
-                                var VERIFIED_CLOSE_FALLBACK_Y = 64.0;
-                                var verifiedFallbackRequested = false;
-
-                                function verifyAfterNativeClose() {
-                                    setTimeout(function() {
-                                        if (!finished) verifyReward(0);
-
-                                        /*
-                                         * If the fallback tap did not close the fullscreen ad
-                                         * (e.g. the control appeared a little later), let the
-                                         * accessibility path attempt the actual reward control.
-                                         */
-                                        if (
-                                            !finished &&
-                                            !window.__mbAdsRewardFallbackStarted
-                                        ) {
-                                            window.__mbAdsRewardFallbackStarted = true;
-                                            AndroidAds.onStateLog(
-                                                "AD_REWARD_FALLBACK",
-                                                "verified_top_right_tap_did_not_confirm_reward"
-                                            );
-                                            requestRewardClaim();
-                                        }
-                                    }, 1200);
-                                }
-
-                                function attemptAutoClose() {
-                                    if (
-                                        finished ||
-                                        nativeCloseRequested ||
-                                        nativeCloseAttempts >= 2
-                                    ) {
-                                        return;
-                                    }
-
-                                    /*
-                                     * IMPORTANT:
-                                     * The Yandex fullscreen close element can be discovered in
-                                     * the injected DOM, but its getBoundingClientRect() coordinates
-                                     * are NOT guaranteed to be coordinates of the parent WebView.
-                                     * The previous test proved this: the DOM returned a point near
-                                     * the bottom of the WebView and the native tap opened the ad's
-                                     * Google Play destination instead of closing the ad.
-                                     *
-                                     * Therefore NEVER dispatch a native tap using the DOM rect here.
-                                     * Use the previously verified fullscreen top-right point.
-                                     */
-                                    AndroidAds.onStateLog(
-                                        "AUTO_CLOSE_SEARCH",
-                                        "attempt=" + (nativeCloseAttempts + 1) +
-                                            " dom_coordinate_tap=DISABLED source=VERIFIED_FALLBACK"
-                                    );
-
-                                    if (!verifiedFallbackRequested) {
-                                        verifiedFallbackRequested = true;
-                                        nativeCloseAttempts++;
-
-                                        AndroidAds.onStateLog(
-                                            "AUTO_CLOSE_SEARCH",
-                                            "attempt=" + nativeCloseAttempts +
-                                                " found=false visible=false " +
-                                                "source=VERIFIED_FALLBACK"
-                                        );
-
-                                        AndroidAds.onStateLog(
-                                            "NATIVE_CLOSE_FALLBACK",
-                                            "x=" + VERIFIED_CLOSE_FALLBACK_X +
-                                                " y=" + VERIFIED_CLOSE_FALLBACK_Y +
-                                                " viewport=" +
-                                                (window.innerWidth || 0) + "x" +
-                                                (window.innerHeight || 0) +
-                                                " source=fullscreen_top_right_fallback"
-                                        );
-
-                                        try {
-                                            AndroidAds.onCloseTapRequested(
-                                                VERIFIED_CLOSE_FALLBACK_X,
-                                                VERIFIED_CLOSE_FALLBACK_Y,
-                                                "fullscreen_top_right_fallback"
-                                            );
-
-                                            nativeCloseRequested = true;
-
-                                            AndroidAds.onStateLog(
-                                                "CLOSE_NATIVE_REQUESTED",
-                                                "elapsed=32s source=fullscreen_top_right_fallback"
-                                            );
-
-                                            verifyAfterNativeClose();
-                                            return;
-                                        } catch (e) {
-                                            AndroidAds.onStateLog(
-                                                "NATIVE_CLOSE_FALLBACK_ERROR",
-                                                "error=" +
-                                                    (e && e.message ? e.message : String(e))
-                                            );
-                                        }
-                                    }
-
-                                    /*
-                                     * Do not hammer the fullscreen overlay. After one verified
-                                     * fallback tap, a later retry is allowed only if the native
-                                     * request itself could not be issued.
-                                     */
-                                    if (!nativeCloseRequested) {
-                                        nativeCloseRetryTimer = setTimeout(
-                                            attemptAutoClose,
-                                            1000
-                                        );
-                                    }
-                                }
-
-                                function requestRewardClaim() {
-                                    if (
-                                        finished ||
-                                        rewardClaimFinished ||
-                                        rewardClaimPending ||
-                                        rewardClaimAttempts >= 20
-                                    ) {
-                                        return;
-                                    }
-
-                                    rewardClaimPending = true;
-                                    rewardClaimAttempts++;
-
-                                    AndroidAds.onStateLog(
-                                        "REWARD_BUTTON_SEARCH",
-                                        "attempt=" + rewardClaimAttempts +
-                                            " source=ANDROID_ACCESSIBILITY"
-                                    );
-
-                                    try {
-                                        AndroidAds.onAutoRewardClaimRequested();
-                                    } catch (e) {
-                                        rewardClaimPending = false;
-                                        AndroidAds.onStateLog(
-                                            "ACCESSIBILITY_REWARD_REQUEST_EXCEPTION",
-                                            "error=" + (e && e.message ? e.message : String(e))
-                                        );
-                                    }
-                                }
-
                                 function startAdMonitoring() {
                                     /*
-                                     * Exact Yandex close markup confirmed for this rewarded format:
-                                     *   [data-fullscreen-element="close"]
-                                     *     [data-survey-fullscreen-control]
-                                     *       <svg width="40" height="40">...</svg>
+                                     * Do not depend on Yandex's internal countdown.
+                                     * MangaBuff/Yandex markup changes frequently, while
+                                     * the required viewing window is 30 seconds.
                                      *
-                                     * After the minimum viewing period, press that REAL close
-                                     * control through the native WebView. Accessibility remains
-                                     * only as a fallback when the cross-origin/iframe DOM is not
-                                     * exposed to page JavaScript.
+                                     * Our flow is deliberately simple:
+                                     *   WATCH_CLICKED
+                                     *       -> own 30s timer
+                                     *       -> find close button
+                                     *       -> click close
+                                     *       -> verify reward
+                                     *
+                                     * The Yandex timer is only diagnostic now.
                                      */
                                     var adStartedAt = Date.now();
                                     var ownWatchDurationMs = 32000;
+                                    var hardTimeoutMs = 35000;
                                     var lastSecondLogged = -1;
 
                                     AndroidAds.onStateLog(
@@ -3236,7 +2595,6 @@ class MangaBuffAutomation(
                                     watchTimer = setInterval(function() {
                                         if (finished) {
                                             clearInterval(watchTimer);
-                                            finishNativeCloseRetryTimer();
                                             return;
                                         }
 
@@ -3244,36 +2602,260 @@ class MangaBuffAutomation(
                                         var remainingMs = Math.max(0, ownWatchDurationMs - elapsed);
                                         var remainingSec = Math.ceil(remainingMs / 1000);
 
+                                        // Log only when the displayed second changes.
                                         if (remainingSec !== lastSecondLogged) {
                                             lastSecondLogged = remainingSec;
-                                            AndroidAds.onStateLog(
-                                                "OUR_TIMER",
-                                                "remaining=" + remainingSec + "s"
-                                            );
+
+                                            if (remainingSec > 0) {
+                                                AndroidAds.onStateLog(
+                                                    "OUR_TIMER",
+                                                    "remaining=" + remainingSec + "s"
+                                                );
+                                            } else {
+                                                AndroidAds.onStateLog(
+                                                    "OUR_TIMER",
+                                                    "remaining=0s close_search=true"
+                                                );
+                                            }
                                         }
 
+                                        /*
+                                         * Before 30 seconds we intentionally do not click
+                                         * anything, even if Yandex already exposes the close
+                                         * control. This is our hard minimum viewing period.
+                                         */
                                         if (elapsed < ownWatchDurationMs) {
                                             return;
                                         }
 
+                                        var yandexSeconds = readYandexTimerSeconds();
+                                        if (yandexSeconds === null && !window.__mbYandexRewardHookState.rewarded) {
+                                            logYandexSurfaceDiagnostics(false);
+                                        }
+                                        var yandexRewarded = !!(
+                                            window.__mbYandexRewardHookState &&
+                                            window.__mbYandexRewardHookState.rewarded
+                                        );
+
                                         /*
-                                         * First preference: exact Yandex close control.
-                                         * Secondary preference: Android accessibility reward
-                                         * control if the close node is not visible to page JS.
+                                         * The live RSYA fullscreen used by MangaBuff is normally
+                                         * the 30-second rewarded format. Its controls can live in
+                                         * a cross-origin iframe, so the parent page cannot inspect
+                                         * the Yandex timer/callback. After our 32s minimum, allow
+                                         * a short safety margin and perform the real native close
+                                         * tap. The reward is considered successful only after the
+                                         * MangaBuff balance confirms the +7 diamonds.
                                          */
-                                        if (!nativeCloseRequested) {
-                                            attemptAutoClose();
+                                        var yandexReady = yandexRewarded ||
+                                            (yandexSeconds !== null && yandexSeconds <= 0) ||
+                                            elapsed >= ownWatchDurationMs;
+
+                                        if (!yandexReady) {
+                                            AndroidAds.onStateLog(
+                                                "AD_WAIT_YANDEX_REWARD",
+                                                "ownElapsed=" + Math.floor(elapsed / 1000) +
+                                                "s yandexTimer=" + (yandexSeconds === null ? "?" : yandexSeconds) +
+                                                " rewarded=" + yandexRewarded
+                                            );
+
+                                            if (elapsed >= hardTimeoutMs && !yandexReady) {
+                                                /*
+                                                 * The Yandex timer/callback is not always observable
+                                                 * from the MangaBuff document (the live ad can be hosted
+                                                 * in a cross-origin frame). Do not deadlock the task in
+                                                 * that case. 65s is above the documented 60s maximum
+                                                 * rewarded countdown, so use the native close as a final
+                                                 * watchdog and let the server balance decide whether the
+                                                 * reward actually happened.
+                                                 */
+                                                clearInterval(watchTimer);
+
+                                                AndroidAds.onStateLog(
+                                                    "AD_HARD_TIMEOUT_CLOSE",
+                                                    "elapsed=" + Math.floor(elapsed / 1000) +
+                                                    "s yandexTimer=" +
+                                                    (yandexSeconds === null ? "?" : yandexSeconds) +
+                                                    " rewarded=" + yandexRewarded
+                                                );
+
+                                                /*
+                                                 * The ad may be hosted in a cross-origin fullscreen iframe.
+                                                 * At this point the parent document cannot safely press its X.
+                                                 * Do not synthesize a rewarded-ad click. Instead keep the
+                                                 * session alive, continue checking the real server balance,
+                                                 * and wait for the user to close the visible ad.
+                                                 */
+                                                AndroidAds.onStateLog(
+                                                    "AD_HARD_TIMEOUT_WAIT_USER",
+                                                    "elapsed=" + Math.floor(elapsed / 1000) +
+                                                    "s action=MANUAL_REQUIRED"
+                                                );
+
+                                                clearInterval(watchTimer);
+
+                                                /*
+                                                 * Start reward verification immediately. If MangaBuff has
+                                                 * already credited +7, this finishes without requiring DOM
+                                                 * access to the cross-origin Yandex iframe.
+                                                 */
+                                                verifyReward(0);
+
+                                                /*
+                                                 * Keep a lightweight diagnostic watcher alive so a real
+                                                 * user close can be recorded even when the close button
+                                                 * itself is inaccessible to the parent document.
+                                                 */
+                                                var userCloseWatchStartedAt = Date.now();
+                                                var userCloseWatch = null;
+
+                                                function watchForUserCloseAfterTimeout() {
+                                                    if (finished) {
+                                                        if (userCloseWatch) clearTimeout(userCloseWatch);
+                                                        return;
+                                                    }
+
+                                                    var currentClose = findCloseButton();
+                                                    var stillVisible = isVisibleElement(currentClose);
+
+                                                    if (!stillVisible) {
+                                                        AndroidAds.onStateLog(
+                                                            "AD_CLOSE_USER_CONFIRMED",
+                                                            "source=POST_TIMEOUT_DOM_DISAPPEARED"
+                                                        );
+                                                        return;
+                                                    }
+
+                                                    if (Date.now() - userCloseWatchStartedAt >= 30000) {
+                                                        AndroidAds.onStateLog(
+                                                            "AD_CLOSE_USER_WAIT_TIMEOUT",
+                                                            "source=POST_TIMEOUT"
+                                                        );
+                                                        return;
+                                                    }
+
+                                                    userCloseWatch = setTimeout(
+                                                        watchForUserCloseAfterTimeout,
+                                                        250
+                                                    );
+                                                                 var close = findCloseButton();
+                                        var closeVisible = isVisibleElement(close);
+
+                                        AndroidAds.onStateLog(
+                                            "CLOSE_SEARCH",
+                                            "elapsed=" + Math.floor(elapsed / 1000) +
+                                            "s found=" + !!close +
+                                            " visible=" + closeVisible +
+                                            " yandexTimer=" + (yandexSeconds === null ? "?" : yandexSeconds) +
+                                            " rewarded=" + yandexRewarded
+                                        );
+
+                                        /*
+                                         * Keep the monitoring loop alive after the X becomes available.
+                                         * Previously we stopped the loop at this point, which meant that
+                                         * a real user close could not be reliably observed afterwards.
+                                         *
+                                         * We only diagnose the control and its geometry here. The actual
+                                         * rewarded-ad close remains a real user interaction.
+                                         */
+                                        if (closeVisible) {
+                                            closeWasVisible = true;
+
+                                            if (!closeAvailableLogged) {
+                                                closeAvailableLogged = true;
+
+                                                var closeRect = null;
+                                                try {
+                                                    closeRect = getTopViewportRect(close);
+                                                } catch (e) {}
+
+                                                AndroidAds.onStateLog(
+                                                    "AD_CLOSE_AVAILABLE",
+                                                    "elapsed=" + Math.floor(elapsed / 1000) +
+                                                    "s action=MANUAL_REQUIRED" +
+                                                    (closeRect
+                                                        ? " x=" + (closeRect.left + closeRect.width / 2) +
+                                                          " y=" + (closeRect.top + closeRect.height / 2) +
+                                                          " rect=" + closeRect.width + "x" + closeRect.height
+                                                        : " rect=unavailable")
+                                                );
+                                            }
+
                                             return;
                                         }
 
-                                        if (!rewardClaimFinished && !rewardClaimPending) {
-                                            /*
-                                             * Fallback is triggered by verifyAfterNativeClose()
-                                             * only when the verified native close did not produce a
-                                             * reward confirmation.
-                                             */
+                                        /*
+                                         * If the close control was previously visible and is now gone,
+                                         * record that the ad surface changed after the user interaction.
+                                         * The reward is still accepted only after the server confirms +7.
+                                         *
+                                         * For cross-origin Yandex iframes this is best-effort: the parent
+                                         * document may not be able to see the internal close state.
+                                         */
+                                        if (closeWasVisible && !closeVisible) {
+                                            closeWasVisible = false;
+
+                                            AndroidAds.onStateLog(
+                                                "AD_CLOSE_USER_CONFIRMED",
+                                                "source=DOM_DISAPPEARED elapsed=" +
+                                                    Math.floor(elapsed / 1000) + "s"
+                                            );
+
+                                            verifyReward(0);
+                                            return;
                                         }
-                                    }, 750);
+
+                                       250
+                                                );
+                                            }
+
+                                            waitForRealUserClose();
+                                            return;
+                                        }
+
+                                        if (!window.__mbAdsManualVerifyStarted) {
+                                            window.__mbAdsManualVerifyStarted = true;
+                                            window.__mbAdsNativeCloseAttempts = 0;
+
+                                            function requestNativeClose() {
+                                                if (finished) return;
+
+                                                window.__mbAdsNativeCloseAttempts++;
+                                                var close = findCloseButton();
+                                                var rect = null;
+                                                try { rect = close ? getTopViewportRect(close) : null; } catch (e) {}
+
+                                                var x = rect ? (rect.left + rect.width / 2) : Math.max(1, window.innerWidth - 35);
+                                                var y = rect ? (rect.top + rect.height / 2) : 35;
+
+                                                AndroidAds.onStateLog(
+                                                    "AD_CLOSE_NATIVE_REQUEST",
+                                                    "attempt=" + window.__mbAdsNativeCloseAttempts +
+                                                    " x=" + x + " y=" + y +
+                                                    " source=" + (rect ? "DOM" : "TOP_RIGHT_FALLBACK")
+                                                );
+
+                                                AndroidAds.onCloseTapRequested(x, y, rect ? "DOM" : "TOP_RIGHT_FALLBACK");
+
+                                                setTimeout(function() {
+                                                    if (finished) return;
+                                                    verifyReward(0);
+
+                                                    if (window.__mbAdsNativeCloseAttempts < 3) {
+                                                        setTimeout(requestNativeClose, 1800);
+                                                    }
+                                                }, 1200);
+                                            }
+
+                                            AndroidAds.onStateLog(
+                                                "AD_CLOSE_NATIVE_ENABLED",
+                                                "elapsed=" + Math.floor(elapsed / 1000) + "s"
+                                            );
+
+                                            requestNativeClose();
+                                        }
+
+
+                                    }, 250);
                                 }
 
                                 function tryFindAndClick() {
@@ -3330,6 +2912,8 @@ class MangaBuffAutomation(
                                     initialButtonCount = readButtonCount(btn);
                                     initialDiamond = readDiamondBalance(document);
 
+                                    installYandexRewardHook();
+
                                     try {
                                         btn.click();
                                     } catch (e) {
@@ -3338,11 +2922,6 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
-                                    AndroidAds.onStateLog(
-                                        "WATCH_BUTTON_CLICKED",
-                                        "button=.wallet-panel__action--ads.user-quest__watch-ads-btn data-count=" +
-                                            (btn.getAttribute("data-count") || "")
-                                    );
                                     AndroidAds.onStateLog("WATCH_CLICKED", "Клик по кнопке рекламы");
                                     startAdMonitoring();
                                 }
@@ -3377,7 +2956,7 @@ class MangaBuffAutomation(
             var pageFinishedSeen = false
             var recoveryReloadUsed = false
 
-            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+            webView.webViewClient = object : WebViewClient() {
 
                 override fun shouldOverrideUrlLoading(
                     view: WebView?,
@@ -3543,7 +3122,7 @@ class MangaBuffAutomation(
             // Keep AndroidMine registered across the /mine navigation.
             webView.addJavascriptInterface(MineBridge(), "AndroidMine")
 
-            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+            webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/mine") != true) return
                     if (view == null) { safeResume(false); return }
@@ -3857,6 +3436,7 @@ class MangaBuffAutomation(
         webView: WebView
     ) {
         log(account.username, "READER: OPEN")
+        log(account.username, "READER: START targetChapters=${settings.readerChapters}")
 
         currentMangaUrl = ensureCanonicalMangaUrl(account.getSafeActiveMangaUrl())
 
@@ -3888,10 +3468,9 @@ class MangaBuffAutomation(
         var dailyCommentCount = 0
         var nextChapterUrlToOpen = ""
 
-        val target = settings.readerChapters.coerceIn(1, READER_MAX_CHAPTERS)
+        val target = settings.readerChapters
         currentSessionTarget = target
         currentSessionChaptersRead = 0
-        log(account.username, "READER: START targetChapters=$target")
 
         while (chaptersReadCount < target) {
             coroutineContext.ensureActive()
@@ -3977,8 +3556,7 @@ class MangaBuffAutomation(
 
                     if (account.commentEnabled &&
                         chaptersSinceComment >= nextCommentAfter &&
-                        dailyCommentCount < settings.commentCount &&
-                        dailyStats.comments < COMMENT_DAILY_LIMIT
+                        dailyCommentCount < settings.commentCount
                     ) {
                         val targetCommentUrl = chUrl.ifBlank {
                             activeChapterContext?.actualChapterUrl?.ifBlank { null }
@@ -4207,23 +3785,6 @@ class MangaBuffAutomation(
                 fun onLogStep(msg: String) {
                     log(account.username, "[Читалка] $msg")
                     onStepInfo(msg)
-                }
-
-                @JavascriptInterface
-                fun isScreenOff(): Boolean = BackgroundExecutionState.isScreenOff()
-
-                @JavascriptInterface
-                fun startBackgroundScroll() {
-                    mainHandler.post {
-                        startBackgroundScroll(account.username, webView)
-                    }
-                }
-
-                @JavascriptInterface
-                fun cancelBackgroundScroll() {
-                    mainHandler.post {
-                        stopBackgroundScroll()
-                    }
                 }
 
                 @JavascriptInterface
@@ -4560,7 +4121,7 @@ class MangaBuffAutomation(
                 fun requestServerReadQuest(progress: Int) {
                     log(account.username, "READER: SERVER_QUEST_NATIVE_REQUEST progress=" + progress + "%")
 
-                    accountIoScope.launch {
+                    CoroutineScope(Dispatchers.IO).launch {
                         try {
                             val request = Request.Builder()
                                 .url("https://mangabuff.ru/balance")
@@ -4765,23 +4326,16 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidReaderBridge") } catch (_: Exception) {}
             webView.addJavascriptInterface(ReaderBridge(), "AndroidReaderBridge")
 
-            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+            webView.webViewClient = object : WebViewClient() {
 
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest?
                 ): WebResourceResponse? {
-                    if (request != null) {
-                        logWebViewNetworkRequest(account, request)
-
-                        val urlStr = request.url.toString()
-                        if (urlStr.contains("/addHistory")) {
-                            log(
-                                account.username,
-                                "READER: MB_HISTORY_SHOULD_INTERCEPT " +
-                                    "url=$urlStr method=${request.method}"
-                            )
-                        }
+                    val urlStr = request?.url?.toString() ?: ""
+                    if (urlStr.contains("/addHistory")) {
+                        val method = request?.method ?: "POST"
+                        log(account.username, "READER: MB_HISTORY_SHOULD_INTERCEPT url=$urlStr method=$method")
                     }
                     return super.shouldInterceptRequest(view, request)
                 }
@@ -5482,10 +5036,6 @@ class MangaBuffAutomation(
                                     }
 
                                     function stopScroll() {
-                                        try {
-                                            AndroidReaderBridge.cancelBackgroundScroll();
-                                        } catch(e) {}
-
                                         if (window.__mbScrollTimer) {
                                             clearTimeout(window.__mbScrollTimer);
                                             window.__mbScrollTimer = null;
@@ -6287,66 +5837,13 @@ class MangaBuffAutomation(
                                     function humanScroll() {
                                         if (chapterDone) return;
 
-                                        // Keep the existing smooth visible-screen rAF path, but add a
-                                        // native Android tick path for screen-off periods. Chromium can
-                                        // throttle rAF heavily when the display is locked.
+                                        // MangaBuff's native autoscroll is intentionally not used for the
+                                        // actual reader motion: its maximum practical speed is too slow
+                                        // (about 330 px/s on long chapters). Use one smooth native
+                                        // requestAnimationFrame loop instead. This keeps continuous
+                                        // scrolling without large jumps and still lets checkEnd() observe
+                                        // the dynamically growing document.
                                         try { stopScroll(); } catch(e) {}
-
-                                        window.__mbBackgroundStep = function() {
-                                            try {
-                                                if (
-                                                    chapterDone ||
-                                                    !window.__mbFastScrollRunning
-                                                ) {
-                                                    return;
-                                                }
-
-                                                var scrollingElement =
-                                                    document.scrollingElement ||
-                                                    document.documentElement ||
-                                                    document.body;
-
-                                                var viewport = Math.max(
-                                                    window.innerHeight || 0,
-                                                    scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                                    1
-                                                );
-                                                var height = Math.max(
-                                                    scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
-                                                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
-                                                    document.body ? (document.body.scrollHeight || 0) : 0
-                                                );
-                                                var y = Math.max(
-                                                    window.scrollY || 0,
-                                                    scrollingElement ? (scrollingElement.scrollTop || 0) : 0
-                                                );
-                                                var remaining = Math.max(0, height - viewport - y);
-                                                if (remaining <= 2) return;
-
-                                                var step = Math.min(
-                                                    420,
-                                                    Math.max(140, Math.floor(viewport * 0.20))
-                                                );
-                                                step = Math.min(step, remaining);
-                                                window.scrollBy(0, step);
-                                            } catch(e) {
-                                                try {
-                                                    AndroidReaderBridge.onLogStep(
-                                                        'READER: BACKGROUND_SCROLL_STEP_ERROR ' +
-                                                        (e.message || String(e))
-                                                    );
-                                                } catch(ignore) {}
-                                            }
-                                        };
-
-                                        try {
-                                            AndroidReaderBridge.startBackgroundScroll();
-                                        } catch(e) {
-                                            AndroidReaderBridge.onLogStep(
-                                                'READER: BACKGROUND_SCROLL_BRIDGE_ERROR ' +
-                                                (e.message || String(e))
-                                            );
-                                        }
 
                                         var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000 px/s
                                         var lastFrame = performance.now();
@@ -6782,314 +6279,179 @@ class MangaBuffAutomation(
         account: MangaBuffAccount,
         webView: WebView,
         targetUrl: String
-    ): Boolean {
-        val cleanTarget = targetUrl
-            .substringBefore('?')
-            .substringBefore('#')
-            .trim()
-            .ifBlank {
-                webView.url.orEmpty()
-                    .substringBefore('?')
-                    .substringBefore('#')
-                    .trim()
+    ): Boolean = suspendCancellableCoroutine { continuation ->
+
+        var resumed = false
+
+        fun safeResume(result: Boolean) {
+            if (!resumed && continuation.isActive) {
+                resumed = true
+                continuation.resume(result)
             }
-
-        if (!cleanTarget.startsWith("https://mangabuff.ru/manga/")) {
-            log(account.username, "COMMENT: NON_CHAPTER_URL", true)
-            return false
         }
 
-        val chapterId = Regex("/manga/[^/]+/[^/]+/(\\d+)$")
-            .find(cleanTarget)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?: activeChapterContext
-                ?.takeIf { it.accountId == account.id }
-                ?.chapterId
-                ?.takeIf { it.isNotBlank() }
-            ?: cleanTarget.substringAfterLast('/')
-                .takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+        mainHandler.post {
+            class CommentBridge {
+                @JavascriptInterface
+                fun onCommentLog(msg: String) {
+                    log(account.username, "COMMENT: " + msg)
+                }
 
-        if (chapterId.isNullOrBlank()) {
-            log(
-                account.username,
-                "COMMENT: CHAPTER_ID_NOT_FOUND url=$cleanTarget",
-                true
-            )
-            return false
-        }
-
-        val commentText = commentPhrases.random()
-        val commentJs = com.google.gson.Gson().toJson(commentText)
-
-        suspend fun evalJs(script: String): String? =
-            suspendCancellableCoroutine { continuation ->
-                mainHandler.post {
-                    try {
-                        webView.evaluateJavascript(script) { result ->
-                            if (continuation.isActive) {
-                                continuation.resume(result)
-                            }
+                @JavascriptInterface
+                fun onTapRequested(x: Float, y: Float, source: String) {
+                    mainHandler.post {
+                        try {
+                            dispatchNativeTap(account.username, webView, x, y)
+                        } catch (e: Exception) {
+                            log(account.username, "COMMENT: NATIVE_TAP_ERROR " + e.message, true)
                         }
-                    } catch (e: Exception) {
-                        log(
-                            account.username,
-                            "COMMENT: JS_ERROR error=" + e.message,
-                            true
-                        )
-                        if (continuation.isActive) continuation.resume(null)
                     }
+                }
+
+                @JavascriptInterface
+                fun onCommentResult(success: Boolean) {
+                    safeResume(success)
                 }
             }
 
-        suspend fun waitForControls(timeoutMs: Long): Boolean {
-            var menuClicked = false
+            try { webView.removeJavascriptInterface("AndroidCommentBridge") } catch (_: Exception) {}
+            webView.addJavascriptInterface(CommentBridge(), "AndroidCommentBridge")
 
-            return withTimeoutOrNull(timeoutMs) {
-                var controlsReady = false
-
-                while (!controlsReady) {
-                    coroutineContext.ensureActive()
-
-                    val rawState = evalJs(
-                        """
-                        (function() {
-                            try {
-                                var menuButton = document.querySelector(
-                                    '.reader-menu__item--comment'
-                                );
-                                var textarea = document.querySelector(
-                                    'textarea[placeholder="Напишите что нибудь..."]'
-                                );
-                                var sendButton = document.querySelector(
-                                    'button.comments__send-btn'
-                                );
-
-                                if (!textarea && !menuClicked) {
-                                    if (menuButton) {
-                                        menuButton.click();
-                                        return "COMMENT_MENU_CLICKED";
-                                    }
-                                    return "WAIT_READER_COMMENT_UI";
-                                }
-
-                                if (!textarea || !sendButton) {
-                                    return "WAIT_COMMENT_CONTROLS";
-                                }
-
-                                if (sendButton.disabled) {
-                                    return "WAIT_SEND_BUTTON";
-                                }
-
-                                return "COMMENT_CONTROLS_READY";
-                            } catch (e) {
-                                return "ERROR:" +
-                                    (e && e.message ? e.message : String(e));
-                            }
-                        })();
-                        """.replace("!menuClicked", (!menuClicked).toString())
-                            .trimIndent()
-                    )
-
-                    val state = try {
-                        com.google.gson.Gson().fromJson(
-                            rawState,
-                            String::class.java
-                        ).orEmpty()
-                    } catch (_: Exception) {
-                        rawState.orEmpty()
-                    }
-
-                    when (state) {
-                        "COMMENT_CONTROLS_READY" -> controlsReady = true
-                        "COMMENT_MENU_CLICKED" -> {
-                            if (!menuClicked) {
-                                menuClicked = true
-                                log(
-                                    account.username,
-                                    "COMMENT: READER_MENU_CLICKED chapterId=$chapterId"
-                                )
-                            }
-                        }
-                        "WAIT_READER_COMMENT_UI",
-                        "WAIT_COMMENT_CONTROLS",
-                        "WAIT_SEND_BUTTON" -> Unit
-                        else -> {
-                            if (state.startsWith("ERROR:")) {
-                                log(
-                                    account.username,
-                                    "COMMENT: READER_UI_ERROR " + state,
-                                    true
-                                )
-                            }
-                        }
-                    }
-
-                    delay(300L)
-                }
-
-                controlsReady
-            } ?: false
-        }
-
-        if (!waitForControls(15_000L)) {
-            log(
-                account.username,
-                "COMMENT: READER_COMMENT_CONTROLS_TIMEOUT chapterId=$chapterId",
-                true
-            )
-            return false
-        }
-
-        log(
-            account.username,
-            "COMMENT: READER_CONTROLS_READY chapterId=$chapterId text='$commentText'"
-        )
-
-        val actionStateRaw = evalJs(
-            """
-            (function() {
-                try {
-                    var textarea = document.querySelector(
-                        'textarea[placeholder="Напишите что нибудь..."]'
-                    );
-                    var button = document.querySelector(
-                        'button.comments__send-btn'
-                    );
-
-                    if (!textarea || !button) return "WAIT";
-
-                    textarea.click();
-                    textarea.click();
-                    textarea.focus();
-
-                    var setter = Object.getOwnPropertyDescriptor(
-                        HTMLTextAreaElement.prototype,
-                        "value"
-                    );
-
-                    if (setter && setter.set) {
-                        setter.set.call(textarea, $commentJs);
-                    } else {
-                        textarea.value = $commentJs;
-                    }
-
-                    textarea.dispatchEvent(
-                        new Event("input", { bubbles: true })
-                    );
-                    textarea.dispatchEvent(
-                        new Event("change", { bubbles: true })
-                    );
-
-                    if (button.disabled) return "BUTTON_DISABLED";
-
-                    button.click();
-                    return "SENT";
-                } catch (e) {
-                    return "ERROR:" +
-                        (e && e.message ? e.message : String(e));
-                }
-            })();
-            """.trimIndent()
-        )
-
-        val actionState = try {
-            com.google.gson.Gson().fromJson(
-                actionStateRaw,
-                String::class.java
-            ).orEmpty()
-        } catch (_: Exception) {
-            actionStateRaw.orEmpty()
-        }
-
-        when (actionState) {
-            "SENT" -> {
-                log(
-                    account.username,
-                    "COMMENT: READER_TEXTAREA_DOUBLE_CLICKED chapterId=$chapterId"
-                )
-                log(
-                    account.username,
-                    "COMMENT: READER_TEXT_SET chapterId=$chapterId length=${commentText.length}"
-                )
-                log(
-                    account.username,
-                    "COMMENT: READER_SEND_CLICKED chapterId=$chapterId"
-                )
-            }
-            else -> {
-                log(
-                    account.username,
-                    "COMMENT: READER_SEND_FAILED chapterId=$chapterId state=$actionState",
-                    true
-                )
-                return false
-            }
-        }
-
-        val confirmed = withTimeoutOrNull(7_000L) {
-            var submitted = false
-
-            while (!submitted) {
-                coroutineContext.ensureActive()
-
-                val rawState = evalJs(
-                    """
+            fun injectScript() {
+                val text = commentPhrases.random()
+                val script = """
                     (function() {
                         try {
-                            var textarea = document.querySelector(
-                                'textarea[placeholder="Напишите что нибудь..."]'
-                            );
-                            var button = document.querySelector(
-                                'button.comments__send-btn'
-                            );
+                            var commentText = ${com.google.gson.Gson().toJson(text)};
 
-                            if (!textarea || !button) return "CONFIRMED";
-                            if (textarea.value.trim() === "" || button.disabled) {
-                                return "CONFIRMED";
+                            function visible(el) {
+                                if (!el) return false;
+                                var r = el.getBoundingClientRect();
+                                var s = getComputedStyle(el);
+                                return r.width > 0 && r.height > 0 &&
+                                       s.display !== 'none' &&
+                                       s.visibility !== 'hidden' &&
+                                       parseFloat(s.opacity || '1') > 0;
                             }
 
-                            return "WAIT";
+                            function center(el) {
+                                var r = el.getBoundingClientRect();
+                                return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                            }
+
+                            function openButton() {
+                                var icon = document.querySelector('i.icon-comment');
+                                return icon ? (icon.closest('button,a,[role="button"],.reader-menu__item') || icon) : null;
+                            }
+
+                            function closeWindow(done) {
+                                var close = document.querySelector('.reader-comments__close');
+                                if (close && visible(close)) {
+                                    var c = center(close);
+                                    AndroidCommentBridge.onTapRequested(c.x, c.y, 'close');
+                                }
+                                setTimeout(done, 700);
+                            }
+
+                            function fillAndSend(attempt) {
+                                var form = document.querySelector('.comments__send-form');
+                                var textarea = form ? form.querySelector('textarea') : null;
+                                var send = form ? form.querySelector('.comments__send-btn') : null;
+
+                                if (!form || !visible(form) || !textarea || !send) {
+                                    if (attempt >= 30) {
+                                        AndroidCommentBridge.onCommentLog('FORM_TIMEOUT');
+                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
+                                        return;
+                                    }
+                                    setTimeout(function() { fillAndSend(attempt + 1); }, 500);
+                                    return;
+                                }
+
+                                AndroidCommentBridge.onCommentLog('FORM_FOUND');
+
+                                try {
+                                    textarea.focus();
+                                    var setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+                                    if (setter && setter.set) setter.set.call(textarea, commentText);
+                                    else textarea.value = commentText;
+
+                                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                                    AndroidCommentBridge.onCommentLog('TEXT_ENTERED');
+                                } catch (e) {
+                                    AndroidCommentBridge.onCommentLog('INPUT_ERROR=' + (e.message || e));
+                                    closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
+                                    return;
+                                }
+
+                                setTimeout(function() {
+                                    var currentForm = document.querySelector('.comments__send-form');
+                                    var button = currentForm ? currentForm.querySelector('.comments__send-btn') : null;
+
+                                    if (!button || !visible(button) || button.disabled) {
+                                        AndroidCommentBridge.onCommentLog('SEND_NOT_READY');
+                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(false); });
+                                        return;
+                                    }
+
+                                    var bc = center(button);
+                                    AndroidCommentBridge.onCommentLog('SEND_REQUEST');
+                                    AndroidCommentBridge.onTapRequested(bc.x, bc.y, 'send');
+
+                                    setTimeout(function() {
+                                        var f = document.querySelector('.comments__send-form');
+                                        var t = f ? f.querySelector('textarea') : null;
+                                        var sent = !f || !visible(f) || (t && String(t.value || '').trim() === '');
+
+                                        AndroidCommentBridge.onCommentLog(sent ? 'SEND_CONFIRMED' : 'SEND_NOT_CONFIRMED');
+                                        closeWindow(function() { AndroidCommentBridge.onCommentResult(!!sent); });
+                                    }, 1800);
+                                }, 350);
+                            }
+
+                            var path = window.location.pathname || '';
+                            if (!/^\/manga\/[^/]+\/[0-9]+\/[0-9]+$/.test(path)) {
+                                AndroidCommentBridge.onCommentLog('NON_CHAPTER_URL');
+                                AndroidCommentBridge.onCommentResult(false);
+                                return;
+                            }
+
+                            var open = openButton();
+                            if (!open || !visible(open)) {
+                                AndroidCommentBridge.onCommentLog('BUTTON_NOT_FOUND');
+                                AndroidCommentBridge.onCommentResult(false);
+                                return;
+                            }
+
+                            AndroidCommentBridge.onCommentLog('BUTTON_FOUND');
+                            var oc = center(open);
+                            AndroidCommentBridge.onTapRequested(oc.x, oc.y, 'open');
+                            setTimeout(function() { fillAndSend(1); }, 700);
                         } catch (e) {
-                            return "WAIT";
+                            AndroidCommentBridge.onCommentLog('EXCEPTION=' + (e.message || e));
+                            AndroidCommentBridge.onCommentResult(false);
                         }
                     })();
-                    """.trimIndent()
-                )
+                """.trimIndent()
 
-                val state = try {
-                    com.google.gson.Gson().fromJson(
-                        rawState,
-                        String::class.java
-                    ).orEmpty()
-                } catch (_: Exception) {
-                    rawState.orEmpty()
-                }
-
-                if (state == "CONFIRMED") {
-                    submitted = true
-                } else {
-                    delay(300L)
-                }
+                webView.evaluateJavascript(script, null)
             }
 
-            submitted
-        } ?: false
+            val current = webView.url.orEmpty().substringBefore('?').substringBefore('#')
+            val cleanTarget = targetUrl.substringBefore('?').substringBefore('#')
 
-        if (confirmed) {
-            log(
-                account.username,
-                "COMMENT: READER_SUBMIT_CONFIRMED chapterId=$chapterId"
-            )
-        } else {
-            log(
-                account.username,
-                "COMMENT: READER_SUBMIT_NOT_CONFIRMED chapterId=$chapterId",
-                true
-            )
+            if (current == cleanTarget || current.startsWith(cleanTarget)) {
+                injectScript()
+            } else {
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        mainHandler.postDelayed({ if (continuation.isActive) injectScript() }, 900L)
+                    }
+                }
+                webView.loadUrl(targetUrl)
+            }
         }
-
-        return confirmed
     }
 
     // =========================================================
@@ -7101,25 +6463,8 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ) {
-        val requested = settings.commentCount.coerceAtLeast(0)
-        val remainingDaily = (COMMENT_DAILY_LIMIT - dailyStats.comments).coerceAtLeast(0)
-        val target = requested.coerceAtMost(remainingDaily)
-
-        log(
-            account.username,
-            "TASK: COMMENT_START requested=" + requested +
-                " dailyUsed=" + dailyStats.comments + "/" + COMMENT_DAILY_LIMIT +
-                " target=" + target
-        )
-
-        if (target <= 0) {
-            log(
-                account.username,
-                "COMMENT: DAILY_LIMIT_REACHED used=" + dailyStats.comments +
-                    "/" + COMMENT_DAILY_LIMIT
-            )
-            return
-        }
+        val target = settings.commentCount
+        log(account.username, "TASK: COMMENT_START count=$target")
 
         val targetUrl = activeChapterContext?.actualChapterUrl?.ifBlank { null }
             ?: lastFinishedChapterUrl.ifBlank { null }
@@ -7145,7 +6490,6 @@ class MangaBuffAutomation(
 
             if (result) {
                 successCount++
-                addDaily(account) { it.copy(comments = it.comments + 1) }
             } else {
                 failedCount++
             }
@@ -7156,451 +6500,6 @@ class MangaBuffAutomation(
         }
 
         log(account.username, "TASK: COMMENT_END sent=$successCount failed=$failedCount")
-    }
-
-    // =========================================================
-    // DECK COMMENTS
-    // =========================================================
-
-    private suspend fun runDeckCommentTask(
-        account: MangaBuffAccount,
-        webView: WebView
-    ): Int {
-        val remainingDaily = (COMMENT_DAILY_LIMIT - dailyStats.comments).coerceAtLeast(0)
-        if (remainingDaily <= 0) {
-            log(
-                account.username,
-                "COMMENT: DECK_DAILY_LIMIT_REACHED used=" +
-                    dailyStats.comments + "/" + COMMENT_DAILY_LIMIT
-            )
-            return 0
-        }
-
-        suspend fun evalJs(script: String): String? =
-            suspendCancellableCoroutine { continuation ->
-                mainHandler.post {
-                    try {
-                        webView.evaluateJavascript(script) { result ->
-                            if (continuation.isActive) {
-                                continuation.resume(result)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        log(
-                            account.username,
-                            "COMMENT: DECK_JS_ERROR error=" + e.message,
-                            true
-                        )
-                        if (continuation.isActive) continuation.resume(null)
-                    }
-                }
-            }
-
-        suspend fun loadUrl(url: String) {
-            mainHandler.post {
-                try {
-                    webView.loadUrl(url)
-                } catch (e: Exception) {
-                    log(
-                        account.username,
-                        "COMMENT: DECK_LOAD_URL_ERROR url=$url error=" + e.message,
-                        true
-                    )
-                }
-            }
-        }
-
-        suspend fun waitForUrl(targetUrl: String, timeoutMs: Long): Boolean {
-            val normalizedTarget = targetUrl
-                .substringBefore('?')
-                .substringBefore('#')
-                .trimEnd('/')
-
-            return withTimeoutOrNull(timeoutMs) {
-                var matched = false
-
-                while (!matched) {
-                    coroutineContext.ensureActive()
-
-                    val raw = evalJs("location.href")
-                    val current = try {
-                        com.google.gson.Gson().fromJson(raw, String::class.java).orEmpty()
-                    } catch (_: Exception) {
-                        raw.orEmpty()
-                    }
-
-                    val normalizedCurrent = current
-                        .substringBefore('?')
-                        .substringBefore('#')
-                        .trimEnd('/')
-
-                    if (normalizedCurrent == normalizedTarget) {
-                        matched = true
-                    } else {
-                        delay(250L)
-                    }
-                }
-
-                matched
-            } ?: false
-        }
-
-        loadUrl("https://mangabuff.ru/decks")
-
-        if (!waitForUrl("https://mangabuff.ru/decks", 20_000L)) {
-            log(account.username, "COMMENT: DECK_LIST_FAILED reason=PAGE_TIMEOUT", true)
-            return 0
-        }
-
-        delay(DECK_PAGE_SETTLE_MS)
-        log(
-            account.username,
-            "COMMENT: DECK_PAGE_SETTLE delayMs=" + DECK_PAGE_SETTLE_MS +
-                " stage=LIST"
-        )
-
-        val rawDeckJson = evalJs(
-            """
-            (function() {
-                try {
-                    var nodes = Array.from(
-                        document.querySelectorAll(
-                            'a.manga-cards__collection-name[href^="/decks/"]'
-                        )
-                    );
-
-                    var seen = {};
-                    var result = [];
-
-                    nodes.forEach(function(node) {
-                        if (result.length >= 9) return;
-
-                        var href = node.getAttribute('href') || '';
-                        var url = new URL(href, location.href).href
-                            .split('#')[0]
-                            .split('?')[0];
-
-                        if (
-                            !url.startsWith('https://mangabuff.ru/decks/') ||
-                            seen[url]
-                        ) {
-                            return;
-                        }
-
-                        seen[url] = true;
-                        result.push({
-                            url: url,
-                            name: (node.textContent || '')
-                                .replace(/\s+/g, ' ')
-                                .trim()
-                        });
-                    });
-
-                    return JSON.stringify(result);
-                } catch (e) {
-                    return "[]";
-                }
-            })();
-            """.trimIndent()
-        )
-
-        val deckJson = try {
-            com.google.gson.Gson().fromJson(
-                rawDeckJson,
-                String::class.java
-            ).orEmpty()
-        } catch (_: Exception) {
-            ""
-        }
-
-        val deckType =
-            object : com.google.gson.reflect.TypeToken<List<Map<String, String>>>() {}.type
-
-        val decks: List<Map<String, String>> = try {
-            com.google.gson.Gson().fromJson(deckJson, deckType) ?: emptyList()
-        } catch (e: Exception) {
-            log(
-                account.username,
-                "COMMENT: DECK_LIST_PARSE_ERROR error=" + e.message,
-                true
-            )
-            emptyList()
-        }
-
-        if (decks.isEmpty()) {
-            log(account.username, "COMMENT: DECK_LIST_FAILED reason=NO_DECKS", true)
-            return 0
-        }
-
-        log(
-            account.username,
-            "COMMENT: DECK_LIST_READY found=" + decks.size +
-                " dailyUsed=" + dailyStats.comments +
-                "/" + COMMENT_DAILY_LIMIT
-        )
-
-        decks.forEachIndexed { index, deck ->
-            log(
-                account.username,
-                "COMMENT: DECK_FOUND index=" + (index + 1) +
-                    " name='" + deck["name"].orEmpty() +
-                    "' url=" + deck["url"].orEmpty()
-            )
-        }
-
-        val targetDecks = decks.take(remainingDaily)
-        var sentCount = 0
-
-        for ((index, deck) in targetDecks.withIndex()) {
-            coroutineContext.ensureActive()
-
-            if (dailyStats.comments >= COMMENT_DAILY_LIMIT) {
-                log(
-                    account.username,
-                    "COMMENT: DECK_DAILY_LIMIT_STOP used=" +
-                        dailyStats.comments + "/" + COMMENT_DAILY_LIMIT
-                )
-                break
-            }
-
-            val deckUrl = deck["url"].orEmpty()
-            val deckName = deck["name"].orEmpty()
-            if (deckUrl.isBlank()) continue
-
-            val commentText = deckCommentPhrases.random()
-            val commentJs = com.google.gson.Gson().toJson(commentText)
-
-            log(
-                account.username,
-                "COMMENT: DECK_COMMENT_ATTEMPT index=" +
-                    (index + 1) + "/" + targetDecks.size +
-                    " name='" + deckName + "' text='" + commentText + "'"
-            )
-
-            loadUrl(deckUrl)
-
-            if (!waitForUrl(deckUrl, 20_000L)) {
-                log(
-                    account.username,
-                    "COMMENT: DECK_PAGE_TIMEOUT name='" + deckName + "'",
-                    true
-                )
-                continue
-            }
-
-            delay(DECK_PAGE_SETTLE_MS)
-            log(
-                account.username,
-                "COMMENT: DECK_PAGE_SETTLE delayMs=" + DECK_PAGE_SETTLE_MS +
-                    " stage=DECK name='" + deckName + "'"
-            )
-
-            var actionClicked = false
-
-            repeat(50) { attempt ->
-                if (actionClicked) return@repeat
-
-                coroutineContext.ensureActive()
-
-                val rawState = evalJs(
-                    """
-                    (function() {
-                        try {
-                            var textarea = document.querySelector(
-                                'textarea[placeholder="Напишите что нибудь..."]'
-                            );
-                            var button = document.querySelector(
-                                'button.comments__send-btn'
-                            );
-
-                            if (!textarea || !button) return "WAIT_CONTROLS";
-                            if (button.disabled) return "WAIT_BUTTON";
-
-                            textarea.click();
-                            textarea.click();
-                            textarea.focus();
-
-                            var setter = Object.getOwnPropertyDescriptor(
-                                HTMLTextAreaElement.prototype,
-                                "value"
-                            );
-
-                            if (setter && setter.set) {
-                                setter.set.call(textarea, $commentJs);
-                            } else {
-                                textarea.value = $commentJs;
-                            }
-
-                            textarea.dispatchEvent(
-                                new Event("input", { bubbles: true })
-                            );
-                            textarea.dispatchEvent(
-                                new Event("change", { bubbles: true })
-                            );
-
-                            button.click();
-                            return "CLICKED";
-                        } catch (e) {
-                            return "ERROR:" +
-                                (e && e.message ? e.message : String(e));
-                        }
-                    })();
-                    """.trimIndent()
-                )
-
-                val state = try {
-                    com.google.gson.Gson().fromJson(
-                        rawState,
-                        String::class.java
-                    ).orEmpty()
-                } catch (_: Exception) {
-                    rawState.orEmpty()
-                }
-
-                when {
-                    state == "WAIT_CONTROLS" -> delay(300L)
-                    state == "WAIT_BUTTON" -> delay(300L)
-                    state == "CLICKED" -> {
-                        actionClicked = true
-
-                        log(
-                            account.username,
-                            "COMMENT: DECK_CONTROLS_FOUND name='" +
-                                deckName + "' attempt=" + attempt
-                        )
-                        log(
-                            account.username,
-                            "COMMENT: DECK_TEXTAREA_DOUBLE_CLICKED name='" +
-                                deckName + "'"
-                        )
-                        log(
-                            account.username,
-                            "COMMENT: DECK_TEXT_SET name='" +
-                                deckName + "' length=" + commentText.length
-                        )
-                        log(
-                            account.username,
-                            "COMMENT: DECK_SEND_CLICKED name='" +
-                                deckName + "'"
-                        )
-                    }
-                    state.startsWith("ERROR:") -> {
-                        log(
-                            account.username,
-                            "COMMENT: DECK_ACTION_ERROR name='" +
-                                deckName + "' " + state,
-                            true
-                        )
-                    }
-                }
-
-                if (attempt == 49 && !actionClicked) {
-                    log(
-                        account.username,
-                        "COMMENT: DECK_CONTROLS_TIMEOUT name='" + deckName + "'",
-                        true
-                    )
-                }
-            }
-
-            if (!actionClicked) continue
-
-            val confirmed = withTimeoutOrNull(7_000L) {
-                var submitted = false
-
-                while (!submitted) {
-                    coroutineContext.ensureActive()
-
-                    val rawState = evalJs(
-                        """
-                        (function() {
-                            try {
-                                var textarea = document.querySelector(
-                                    'textarea[placeholder="Напишите что нибудь..."]'
-                                );
-                                var button = document.querySelector(
-                                    'button.comments__send-btn'
-                                );
-
-                                if (!textarea || !button) return "CONFIRMED";
-                                if (textarea.value.trim() === "" || button.disabled) {
-                                    return "CONFIRMED";
-                                }
-                                return "WAIT";
-                            } catch (e) {
-                                return "WAIT";
-                            }
-                        })();
-                        """.trimIndent()
-                    )
-
-                    val state = try {
-                        com.google.gson.Gson().fromJson(
-                            rawState,
-                            String::class.java
-                        ).orEmpty()
-                    } catch (_: Exception) {
-                        rawState.orEmpty()
-                    }
-
-                    if (state == "CONFIRMED") {
-                        submitted = true
-                    } else {
-                        delay(300L)
-                    }
-                }
-
-                submitted
-            } ?: false
-
-            if (confirmed) {
-                sentCount++
-                addDaily(account) { stats ->
-                    stats.copy(
-                        comments = (stats.comments + 1)
-                            .coerceAtMost(COMMENT_DAILY_LIMIT)
-                    )
-                }
-
-                log(
-                    account.username,
-                    "COMMENT: DECK_SUBMIT_CONFIRMED name='" +
-                        deckName + "' daily=" + dailyStats.comments +
-                        "/" + COMMENT_DAILY_LIMIT
-                )
-            } else {
-                log(
-                    account.username,
-                    "COMMENT: DECK_SUBMIT_NOT_CONFIRMED name='" +
-                        deckName + "'",
-                    true
-                )
-            }
-
-            if (
-                index + 1 < targetDecks.size &&
-                dailyStats.comments < COMMENT_DAILY_LIMIT
-            ) {
-                val nextCommentDelayMs = Random.nextLong(10_000L, 40_001L)
-
-                log(
-                    account.username,
-                    "COMMENT: DECK_NEXT_DELAY delayMs=" + nextCommentDelayMs +
-                        " delaySec=" + (nextCommentDelayMs / 1000)
-                )
-
-                delay(nextCommentDelayMs)
-            }
-        }
-
-        log(
-            account.username,
-            "TASK: DECK_COMMENT_END sent=" + sentCount +
-                " daily=" + dailyStats.comments +
-                "/" + COMMENT_DAILY_LIMIT
-        )
-
-        return sentCount
     }
 
     // =========================================================
@@ -7639,7 +6538,7 @@ class MangaBuffAutomation(
             try { webView.removeJavascriptInterface("AndroidBattleRewardsBridge") } catch (_: Exception) {}
             webView.addJavascriptInterface(RewardsBridge(), "AndroidBattleRewardsBridge")
 
-            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+            webView.webViewClient = object : WebViewClient() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/battle") != true) return
