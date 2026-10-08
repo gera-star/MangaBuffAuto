@@ -73,8 +73,8 @@ class NetworkResetManager(
                 "cmd connectivity airplane-mode enable"
             )
             onLog(
-                "NETWORK_RESET_AIRPLANE_ENABLE provider=$$provider " +
-                    "exit=$${enable.exitCode} output=$${sanitize(enable.output)}"
+                "NETWORK_RESET_AIRPLANE_ENABLE provider=${provider} " +
+                    "exit=${enable.exitCode} output=${sanitize(enable.output)}"
             )
             if (!enable.success) return false
 
@@ -86,8 +86,8 @@ class NetworkResetManager(
                 "cmd connectivity airplane-mode disable"
             )
             onLog(
-                "NETWORK_RESET_AIRPLANE_DISABLE provider=$$provider " +
-                    "exit=$${disable.exitCode} output=$${sanitize(disable.output)}"
+                "NETWORK_RESET_AIRPLANE_DISABLE provider=${provider} " +
+                    "exit=${disable.exitCode} output=${sanitize(disable.output)}"
             )
             enabled = false
 
@@ -95,12 +95,12 @@ class NetworkResetManager(
 
             onLog("NETWORK_WAIT_START")
             val ready = awaitValidatedNetwork(30_000L)
-            onLog("NETWORK_WAIT_RESULT ready=$$ready")
+            onLog("NETWORK_WAIT_RESULT ready=${ready}")
             return ready
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            onLog("NETWORK_RESET_ERROR error=$${e.message}")
+            onLog("NETWORK_RESET_ERROR error=${e.message}")
             return false
         } finally {
             if (enabled) {
@@ -111,7 +111,7 @@ class NetworkResetManager(
                     )
                     onLog(
                         "NETWORK_RESET_AIRPLANE_FORCE_DISABLE " +
-                            "provider=$$provider exit=$${restore.exitCode}"
+                            "provider=${provider} exit=${restore.exitCode}"
                     )
                 }
             }
@@ -237,27 +237,28 @@ class NetworkResetManager(
         )
 
     private fun parseUserServiceResult(raw: String): RootCommandResult {
-        val match = Regex(
-            "^exit=(-?$d+)$s+output=(.*)$",
-            RegexOption.DOT_MATCHES_ALL
-        ).find(raw.trim())
-
-        if (match == null) {
+        val text = raw.trim()
+        val separator = " output="
+        val separatorIndex = text.indexOf(separator)
+        if (!text.startsWith("exit=") || separatorIndex < 0) {
             return RootCommandResult(
                 success = false,
                 exitCode = -1,
-                output = raw.take(500)
+                output = text.take(500)
             )
         }
 
-        val exitCode = match.groupValues[1].toIntOrNull() ?: -1
+        val exitCode = text
+            .substring(startIndex = 5, endIndex = separatorIndex)
+            .toIntOrNull()
+            ?: -1
+
         return RootCommandResult(
             success = exitCode == 0,
             exitCode = exitCode,
-            output = match.groupValues[2]
+            output = text.substring(separatorIndex + separator.length)
         )
     }
-
     private suspend fun awaitValidatedNetwork(timeoutMs: Long): Boolean =
         withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
@@ -359,7 +360,7 @@ class NetworkResetManager(
     }
 
     private fun sanitize(value: String): String =
-        value.replace("\$s+".toRegex(), " ").take(300)
+        value.replace(Regex("\\s+"), " ").take(300)
 
     private data class RootCommandResult(
         val success: Boolean,
