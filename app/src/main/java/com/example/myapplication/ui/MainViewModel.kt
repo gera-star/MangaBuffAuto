@@ -343,23 +343,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 addLog(LogEntry(username = account.username, message = "Ошибка выполнения: ${e.message}", isError = true))
             } finally {
                 val currentJob = coroutineContext[Job]
-                if (accountJobs[account.id] == currentJob) {
+                val ownsCurrentSlot = accountJobs[account.id] == currentJob
+                if (ownsCurrentSlot) {
                     accountJobs.remove(account.id)
                     println("JOB: COMPLETE accountId=${account.id}")
+                    repository.updateAccount(account.id) { acc ->
+                        acc.copy(
+                            isRunning = false,
+                            taskProgress = 0f,
+                            statusMessage = if (acc.statusMessage?.contains("Завершено") == true) acc.statusMessage else "Остановлено пользователем"
+                        )
+                    }?.let { updated ->
+                        _accounts.update { list -> list.map { acc -> if (acc.id == account.id) updated else acc } }
+                    }
                 }
                 if (accountJobs.isEmpty()) {
                     _isRunning.value = false
                     releaseWakeLock()
                     MangaBuffForegroundService.stopService(getApplication())
-                }
-                repository.updateAccount(account.id) { acc ->
-                    acc.copy(
-                        isRunning = false,
-                        taskProgress = 0f,
-                        statusMessage = if (acc.statusMessage?.contains("Завершено") == true) acc.statusMessage else "Остановлено пользователем"
-                    )
-                }?.let { updated ->
-                    _accounts.update { list -> list.map { acc -> if (acc.id == account.id) updated else acc } }
                 }
             }
         }
