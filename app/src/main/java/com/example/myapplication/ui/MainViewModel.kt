@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.automation.MultiAccountAutomationRunner
+import com.example.myapplication.automation.NetworkResetManager
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
@@ -66,6 +67,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private val accountJobs = mutableMapOf<String, Job>()
+    private var sequentialJob: Job? = null
+    private var sequentialCurrentAccountId: String? = null
+    private val _keepScreenOn = MutableStateFlow(false)
+    val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
+
+    private val networkResetManager = NetworkResetManager(application) { message ->
+        addLog(LogEntry(message = message))
+    }
+
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     @Synchronized
@@ -317,9 +327,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun syncKeepScreenOnState() {
+        _keepScreenOn.value = _isRunning.value && _settings.value.keepScreenOn
+    }
+
     fun saveSettings(newSettings: GlobalSettings) {
         _settings.value = newSettings
         repository.saveSettings(newSettings)
+        syncKeepScreenOnState()
         addLog(LogEntry(message = "Параметры выполнения обновлены"))
     }
 
