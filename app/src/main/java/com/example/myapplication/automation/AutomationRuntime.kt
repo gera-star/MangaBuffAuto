@@ -95,8 +95,14 @@ class AutomationRuntime(
         }
         val engine = automationEngines.remove(accountId)
         if (engine != null) {
-            engine.closeNetworkResources()
-            onLog(LogEntry(username = accountId, component = "ENGINE", message = "STOP / DESTROY engineId=${engine.hashCode()} network=closed"))
+            engine.shutdown()
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "ENGINE",
+                    message = "STOP / DESTROY engineId=${engine.hashCode()} network=closed callbacks=cleared"
+                )
+            )
         }
     }
 
