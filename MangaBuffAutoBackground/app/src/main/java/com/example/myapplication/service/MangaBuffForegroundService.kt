@@ -32,6 +32,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlin.coroutines.coroutineContext
@@ -94,6 +96,8 @@ class MangaBuffForegroundService : Service() {
 
         private const val PREFS_RUNTIME = "mangabuff_runtime"
         private const val KEY_ACTIVE_RUNS = "active_runs"
+        private const val WATCHDOG_INTERVAL_MS = 15_000L
+        private const val WATCHDOG_MISSING_WEBVIEW_GRACE_MS = 30_000L
 
         fun startService(
             context: Context,
@@ -197,6 +201,9 @@ class MangaBuffForegroundService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val accountJobs = ConcurrentHashMap<String, Job>()
+    private val recoveryRequests = ConcurrentHashMap.newKeySet<String>()
+    private val missingWebViewSince = ConcurrentHashMap<String, Long>()
+    private var watchdogJob: Job? = null
     private val repository by lazy { AccountRepository(applicationContext) }
     private lateinit var automationRunner: MultiAccountAutomationRunner
 
@@ -250,7 +257,8 @@ class MangaBuffForegroundService : Service() {
                         message = "SERVICE_WEBVIEW_CLEARED accountId=$accountId instance=${webView.hashCode()}"
                     )
                 )
-            }
+            },
+            onAccountRecoveryNeeded = ::requestAccountRecovery
         )
 
         ContextCompat.registerReceiver(
@@ -268,6 +276,7 @@ class MangaBuffForegroundService : Service() {
         BackgroundExecutionState.setScreenOff(!powerManager.isInteractive)
 
         publishLog(LogEntry(message = "BG: SERVICE_CREATED owner=foreground_service"))
+        startWatchdog()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -349,6 +358,8 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun startAccountInternal(accountId: String, taskType: TaskType) {
+        recoveryRequests.remove(accountId)
+        missingWebViewSince.remove(accountId)
         val account = repository.getAccounts().firstOrNull { it.id == accountId }
         if (account == null) {
             publishLog(
@@ -402,15 +413,97 @@ class MangaBuffForegroundService : Service() {
                 if (currentJob != null && accountJobs[accountId] === currentJob) {
                     accountJobs.remove(accountId)
                     automationRunner.stopAccount(accountId)
-                    removePersistedRun(accountId)
-                    publishStatus(accountId, "Готово", false, "", 0f)
-                    releaseWakeLockIfIdle()
-                    stopSelfIfIdle()
+
+                    val recoveryRequested = recoveryRequests.remove(accountId)
+                    missingWebViewSince.remove(accountId)
+                    val persistedTask = readPersistedRuns()[accountId]
+                    val shouldRecover =
+                        recoveryRequested &&
+                            !stoppingExplicitly &&
+                            persistedTask == taskType
+
+                    if (shouldRecover) {
+                        publishLog(
+                            LogEntry(
+                                username = account.username,
+                                component = "BG",
+                                message = "WATCHDOG_RECOVERY_SCHEDULED accountId=$accountId taskType=${taskType.title}",
+                                isError = true
+                            )
+                        )
+                        publishStatus(
+                            accountId,
+                            "Восстановление после сбоя WebView...",
+                            true,
+                            taskType.title,
+                            0f
+                        )
+
+                        serviceScope.launch {
+                            delay(1_500L)
+                            if (!stoppingExplicitly && readPersistedRuns()[accountId] == taskType) {
+                                startAccountInternal(accountId, taskType)
+                            }
+                        }
+                    } else {
+                        removePersistedRun(accountId)
+                        publishStatus(accountId, "Готово", false, "", 0f)
+                        releaseWakeLockIfIdle()
+                        stopSelfIfIdle()
+                    }
                 }
             }
         }
 
         accountJobs[accountId] = job
+    }
+
+    private fun requestAccountRecovery(accountId: String) {
+        if (stoppingExplicitly) return
+        if (recoveryRequests.add(accountId)) {
+            publishLog(
+                LogEntry(
+                    username = accountId,
+                    component = "BG",
+                    message = "WATCHDOG_RECOVERY_REQUEST accountId=$accountId",
+                    isError = true
+                )
+            )
+        }
+    }
+
+    private fun startWatchdog() {
+        if (watchdogJob?.isActive == true) return
+        watchdogJob = serviceScope.launch {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                if (stoppingExplicitly) continue
+
+                val now = System.currentTimeMillis()
+                val activeIds = accountJobs
+                    .filterValues { it.isActive }
+                    .keys
+                    .toSet()
+                val webViews = AutomationWebViewRegistry.webViewsByAccount.value
+
+                missingWebViewSince.keys
+                    .filter { it !in activeIds }
+                    .forEach { missingWebViewSince.remove(it) }
+
+                for (accountId in activeIds) {
+                    if (webViews.containsKey(accountId)) {
+                        missingWebViewSince.remove(accountId)
+                        continue
+                    }
+
+                    val since = missingWebViewSince.putIfAbsent(accountId, now) ?: now
+                    if (now - since >= WATCHDOG_MISSING_WEBVIEW_GRACE_MS) {
+                        requestAccountRecovery(accountId)
+                    }
+                }
+            }
+        }
+        publishLog(LogEntry(message = "BG: WATCHDOG_STARTED interval=${WATCHDOG_INTERVAL_MS}ms"))
     }
 
     private fun startAllInternal(taskType: TaskType) {
@@ -433,6 +526,8 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun stopAccountInternal(accountId: String) {
+        recoveryRequests.remove(accountId)
+        missingWebViewSince.remove(accountId)
         removePersistedRun(accountId)
         accountJobs.remove(accountId)?.cancel()
         automationRunner.stopAccount(accountId)
@@ -449,6 +544,8 @@ class MangaBuffForegroundService : Service() {
             removePersistedRun(accountId)
             accountJobs.remove(accountId)?.cancel()
         }
+        recoveryRequests.clear()
+        missingWebViewSince.clear()
         automationRunner.stopAll()
 
         if (explicitUserStop) {
@@ -501,7 +598,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun releaseWakeLockIfIdle(force: Boolean = false) {
-        if (force || accountJobs.isEmpty()) {
+        if (force || (accountJobs.isEmpty() && recoveryRequests.isEmpty())) {
             try {
                 if (wakeLock.isHeld) {
                     wakeLock.release()
@@ -513,7 +610,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun stopSelfIfIdle() {
-        if (accountJobs.isNotEmpty() || readPersistedRuns().isNotEmpty()) return
+        if (accountJobs.isNotEmpty() || readPersistedRuns().isNotEmpty() || recoveryRequests.isNotEmpty()) return
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {
@@ -650,17 +747,18 @@ class MangaBuffForegroundService : Service() {
         runCatching { TaskType.valueOf(this) }.getOrNull()
 
     override fun onDestroy() {
+        watchdogJob?.cancel()
+        watchdogJob = null
+        recoveryRequests.clear()
+        missingWebViewSince.clear()
+
         try {
             if (screenRegistered) unregisterReceiver(screenReceiver)
         } catch (_: Exception) {
         }
 
         serviceScope.cancel()
-        if (!stoppingExplicitly) {
-            automationRunner.stopAll()
-        } else {
-            automationRunner.stopAll()
-        }
+        automationRunner.stopAll()
 
         releaseWakeLockIfIdle(force = true)
 
