@@ -29,7 +29,8 @@ class AutomationRuntime(
     private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     private val onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
-    private val onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
+    private val onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
+    private val onAccountRecoveryNeeded: (accountId: String) -> Unit = {}
 ) {
     private val runtimes = mutableMapOf<String, AccountRuntime>()
     private val automationEngines = mutableMapOf<String, MangaBuffAutomation>()
@@ -48,6 +49,7 @@ class AutomationRuntime(
                     isError = true
                 )
             )
+            onAccountRecoveryNeeded(accountId)
             val current = runtimes[accountId]
             if (current?.webView === webView) {
                 stopAccount(accountId)
