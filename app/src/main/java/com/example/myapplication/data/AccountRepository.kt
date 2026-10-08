@@ -15,7 +15,9 @@ class AccountRepository(context: Context) {
         private const val KEY_MINE_AUTO_EXCHANGE_MIGRATED = "key_mine_auto_exchange_manual_migrated"
     }
 
-    fun getAccounts(): List<MangaBuffAccount> {
+    private val accountsLock = Any()
+
+    fun getAccounts(): List<MangaBuffAccount> = synchronized(accountsLock) {
         val json = prefs.getString(KEY_ACCOUNTS, null) ?: return emptyList()
         val type = object : TypeToken<List<MangaBuffAccount>>() {}.type
         return try {
@@ -55,7 +57,7 @@ class AccountRepository(context: Context) {
         }
     }
 
-    fun saveAccounts(accounts: List<MangaBuffAccount>) {
+    fun saveAccounts(accounts: List<MangaBuffAccount>) = synchronized(accountsLock) {
         // При сохранении в SharedPreferences флаги выполнения всегда сохраняем как false
         val sanitized = accounts.map { acc ->
             acc.copy(isRunning = false, taskProgress = 0f)
@@ -64,7 +66,7 @@ class AccountRepository(context: Context) {
         prefs.edit().putString(KEY_ACCOUNTS, json).apply()
     }
 
-    fun saveAccount(account: MangaBuffAccount) {
+    fun saveAccount(account: MangaBuffAccount) = synchronized(accountsLock) {
         val list = getAccounts().toMutableList()
         val index = list.indexOfFirst { it.id == account.id }
         if (index >= 0) {
@@ -75,7 +77,21 @@ class AccountRepository(context: Context) {
         saveAccounts(list)
     }
 
-    fun deleteAccount(accountId: String) {
+    fun updateAccount(
+        accountId: String,
+        transform: (MangaBuffAccount) -> MangaBuffAccount
+    ): MangaBuffAccount? = synchronized(accountsLock) {
+        val list = getAccounts().toMutableList()
+        val index = list.indexOfFirst { it.id == accountId }
+        if (index < 0) return null
+
+        val updated = transform(list[index])
+        list[index] = updated
+        saveAccounts(list)
+        updated
+    }
+
+    fun deleteAccount(accountId: String) = synchronized(accountsLock) {
         val list = getAccounts().filterNot { it.id == accountId }
         saveAccounts(list)
     }
