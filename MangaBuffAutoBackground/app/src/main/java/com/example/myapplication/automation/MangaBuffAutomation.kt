@@ -7031,8 +7031,10 @@ class MangaBuffAutomation(
                 .substringBefore('#')
                 .trimEnd('/')
 
-            return withTimeoutOrNull(timeoutMs) {
-                while (true) {
+            withTimeoutOrNull(timeoutMs) {
+                var matched = false
+
+                while (!matched) {
                     coroutineContext.ensureActive()
 
                     val raw = evalJs("location.href")
@@ -7048,11 +7050,13 @@ class MangaBuffAutomation(
                         .trimEnd('/')
 
                     if (normalizedCurrent == normalizedTarget) {
-                        return@withTimeoutOrNull true
+                        matched = true
+                    } else {
+                        delay(250L)
                     }
-
-                    delay(250L)
                 }
+
+                matched
             } ?: false
         }
 
@@ -7303,7 +7307,9 @@ class MangaBuffAutomation(
             if (!actionClicked) continue
 
             val confirmed = withTimeoutOrNull(7_000L) {
-                while (true) {
+                var submitted = false
+
+                while (!submitted) {
                     coroutineContext.ensureActive()
 
                     val rawState = evalJs(
@@ -7339,11 +7345,13 @@ class MangaBuffAutomation(
                     }
 
                     if (state == "CONFIRMED") {
-                        return@withTimeoutOrNull true
+                        submitted = true
+                    } else {
+                        delay(300L)
                     }
-
-                    delay(300L)
                 }
+
+                submitted
             } ?: false
 
             if (confirmed) {
