@@ -94,8 +94,22 @@ class ProfileWebViewStore(
 
         webView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
-                onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "ATTACHED instance=${webView.hashCode()} runId=$runId"))
-                if (!deferred.isCompleted) {
+                val isCurrentWebView =
+                    activeWebViews[accountId] === webView &&
+                    webViewRunIds[accountId] == runId
+
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "ATTACHED instance=${webView.hashCode()} runId=$runId current=$isCurrentWebView"
+                    )
+                )
+
+                // A detached/released WebView can deliver its attach callback late.
+                // Never complete the deferred for an obsolete instance: doing so
+                // could unblock a new run/account on stale WebView lifecycle state.
+                if (isCurrentWebView && !deferred.isCompleted) {
                     deferred.complete(Unit)
                 }
             }
@@ -144,6 +158,21 @@ class ProfileWebViewStore(
     suspend fun awaitAttached(accountId: String, webView: WebView) {
         val deferred = attachDeferreds[accountId] ?: CompletableDeferred(Unit).also { it.complete(Unit) }
         onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "WAIT_ATTACH instance=${webView.hashCode()}"))
+
+        val isCurrentWebView = synchronized(this) {
+            activeWebViews[accountId] === webView
+        }
+        if (!isCurrentWebView) {
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "WEBVIEW",
+                    message = "WAIT_ATTACH_REJECTED reason=STALE_INSTANCE instance=${webView.hashCode()}",
+                    isError = true
+                )
+            )
+            throw IllegalStateException("WEBVIEW: STALE_INSTANCE accountId=$accountId")
+        }
 
         if (webView.isAttachedToWindow) {
             onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "ALREADY_ATTACHED instance=${webView.hashCode()}"))
