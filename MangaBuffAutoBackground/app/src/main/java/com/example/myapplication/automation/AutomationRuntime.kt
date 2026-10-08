@@ -74,9 +74,20 @@ class AutomationRuntime(
                 onMangaActiveUrlUpdate = onMangaActiveUrlUpdate,
                 onAccountStatsUpdate = onAccountStatsUpdate,
                 onDailyStatsUpdate = onDailyStatsUpdate,
-                onRendererGone = { failedAccountId, _ ->
-                    onAccountRecoveryNeeded(failedAccountId)
-                    stopAccount(failedAccountId)
+                onRendererGone = { failedAccountId, failedWebView ->
+                    val currentRuntime = runtimes[failedAccountId]
+                    if (currentRuntime?.webView === failedWebView) {
+                        onAccountRecoveryNeeded(failedAccountId)
+                        stopAccount(failedAccountId)
+                    } else {
+                        onLog(
+                            LogEntry(
+                                username = failedAccountId,
+                                component = "SECURITY",
+                                message = "STALE_TASK_RENDERER_IGNORED accountId=$failedAccountId webView=${failedWebView.hashCode()}"
+                            )
+                        )
+                    }
                 }
             )
             onLog(LogEntry(username = accountId, component = "ENGINE", message = "CREATE engineId=${engine.hashCode()}"))
