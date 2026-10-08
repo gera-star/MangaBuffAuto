@@ -31,6 +31,7 @@ data class MangaBuffAccount(
     val advEnabled: Boolean = true,
     val mineEnabled: Boolean = true,
     val commentEnabled: Boolean = true,
+    val deckCommentEnabled: Boolean = false,
     val battleEnabled: Boolean = false, // По умолчанию Карточные бои = ВЫКЛ
     val lastRunTime: Long = 0L,
     val statusMessage: String? = "Готов",
