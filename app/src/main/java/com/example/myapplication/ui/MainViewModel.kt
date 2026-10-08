@@ -339,6 +339,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runTaskForAccount(account: MangaBuffAccount, taskType: TaskType) {
+        if (_isRunning.value) {
+            addLog(
+                LogEntry(
+                    username = account.username,
+                    message = "JOB: START_REJECTED reason=AUTOMATION_ALREADY_RUNNING",
+                    isError = true
+                )
+            )
+            return
+        }
+
         accountJobs[account.id]?.cancel()
         accountJobs.remove(account.id)
         automationRunner.stopAccount(account.id)
@@ -388,7 +399,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun runTaskForAllAccounts(taskType: TaskType) {
         if (_isRunning.value) {
-            stopAllTasks()
+            addLog(
+                LogEntry(
+                    message = "SEQUENTIAL: START_REJECTED reason=AUTOMATION_ALREADY_RUNNING",
+                    isError = true
+                )
+            )
+            return
         }
 
         val enabledAccounts = _accounts.value.toList()
