@@ -78,7 +78,7 @@ fun MangaBuffAppUI(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
+                title = { Text("MangaBuff Auto", fontWeight = FontWeight.ExtraBold) },
                 actions = {
                     IconButton(onClick = { showSupportDialog = true }) {
                         Icon(
