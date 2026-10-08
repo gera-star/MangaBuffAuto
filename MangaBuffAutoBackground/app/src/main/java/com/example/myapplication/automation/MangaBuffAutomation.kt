@@ -7150,6 +7150,42 @@ class MangaBuffAutomation(
             }
         }
 
+        var pageReady = false
+        withTimeoutOrNull(20_000L) {
+            while (!pageReady) {
+                coroutineContext.ensureActive()
+
+                val currentUrl = withContext(Dispatchers.Main.immediate) {
+                    webView.url.orEmpty()
+                        .substringBefore('?')
+                        .substringBefore('#')
+                }
+
+                if (currentUrl == targetClean) {
+                    pageReady = true
+                } else {
+                    delay(250L)
+                }
+            }
+        }
+
+        if (!pageReady) {
+            val currentUrl = withContext(Dispatchers.Main.immediate) {
+                webView.url.orEmpty()
+            }
+            log(
+                account.username,
+                "COMMENT: TEST_TARGET_TIMEOUT target='$targetClean' current='$currentUrl'",
+                true
+            )
+            return
+        }
+
+        log(
+            account.username,
+            "COMMENT: TEST_TARGET_READY chapter=$COMMENT_TEST_CHAPTER url='$targetClean'"
+        )
+
         var successCount = 0
         var failedCount = 0
 
