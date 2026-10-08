@@ -152,12 +152,19 @@ class MangaBuffAutomation(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
-     * Releases all account-local native HTTP resources.
+     * Releases all account-local runtime resources.
      *
-     * This engine owns its OkHttpClient, so stopping this account must not leave
-     * queued calls or pooled sockets alive while another account continues.
+     * This engine owns its OkHttpClient and Handler, so stopping this account
+     * must not leave queued calls, pooled sockets or delayed reader callbacks
+     * alive while another account is being prepared.
      */
-    fun closeNetworkResources() {
+    fun shutdown() {
+        activeReaderSkip = null
+        activeReaderMarkRead = null
+        adSessionActive = false
+        adViewingLockedUntilElapsed = 0L
+
+        mainHandler.removeCallbacksAndMessages(null)
         httpClient.dispatcher.cancelAll()
         httpClient.connectionPool.evictAll()
     }
