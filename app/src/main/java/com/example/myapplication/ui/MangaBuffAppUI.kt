@@ -2,6 +2,8 @@ package com.example.myapplication.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
@@ -46,6 +48,9 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
+private const val SUPPORT_PAYMENT_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019df8ad-96b5-7cd8-82aa-e64b36e96b93"
+private const val SUPPORT_RECIPIENT = "Алексей Г."
+
 @SuppressLint("RestrictedApi")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +71,7 @@ fun MangaBuffAppUI(
     var selectedBalanceAccount by remember { mutableStateOf<MangaBuffAccount?>(null) }
     var promoCodeText by remember { mutableStateOf("") }
     var showBackgroundSettings by remember { mutableStateOf(false) }
+    var showSupportDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
@@ -74,6 +80,12 @@ fun MangaBuffAppUI(
             TopAppBar(
                 title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
                 actions = {
+                    IconButton(onClick = { showSupportDialog = true }) {
+                        Icon(
+                            Icons.Default.Favorite,
+                            contentDescription = "Поддержать проект"
+                        )
+                    }
                     IconButton(onClick = { showBackgroundSettings = true }) {
                         Icon(
                             Icons.Default.Settings,
@@ -164,6 +176,77 @@ fun MangaBuffAppUI(
             settings = settings,
             onSaveSettings = { viewModel.saveSettings(it) },
             onDismiss = { showBackgroundSettings = false }
+        )
+    }
+
+    if (showSupportDialog) {
+        AlertDialog(
+            onDismissRequest = { showSupportDialog = false },
+            icon = {
+                Icon(
+                    Icons.Default.Favorite,
+                    contentDescription = null
+                )
+            },
+            title = { Text("❤️ Поддержать проект") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Добровольное пожертвование на поддержку и развитие проекта MangaBuff Auto."
+                    )
+                    Text("Получатель: $SUPPORT_RECIPIENT")
+                    Text(
+                        "Пожертвование не является оплатой приложения, лицензии, доступа к функциям или услугам и не является обязательным."
+                    )
+                    Text(
+                        "Вы перейдете в свой браузер.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Перевод выполняется через СБП. Сумму вы выбираете самостоятельно в приложении своего банка.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        "Мы Любим Мангу ❤️",
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        try {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(SUPPORT_PAYMENT_URL)
+                                )
+                            )
+                            showSupportDialog = false
+                        } catch (_: Exception) {
+                            Toast.makeText(
+                                context,
+                                "Не удалось открыть страницу СБП",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Открыть страницу СБП")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSupportDialog = false }) {
+                    Text("Закрыть")
+                }
+            }
         )
     }
 
