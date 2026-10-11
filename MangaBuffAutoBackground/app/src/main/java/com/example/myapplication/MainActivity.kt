@@ -18,9 +18,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -135,16 +139,28 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val webViewsByAccount by AutomationWebViewRegistry.webViewsByAccount.collectAsState()
                     val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
-                    val debugWebView = if (webViewsByAccount.size == 1) {
-                        webViewsByAccount.values.first()
-                    } else {
-                        null
+                    val webViewAccountIds = webViewsByAccount.keys.toList()
+                    var selectedDebugAccountId by remember { mutableStateOf<String?>(null) }
+
+                    LaunchedEffect(webViewAccountIds) {
+                        if (selectedDebugAccountId !in webViewAccountIds) {
+                            selectedDebugAccountId = if (webViewAccountIds.size == 1) {
+                                webViewAccountIds.single()
+                            } else {
+                                null
+                            }
+                        }
                     }
+
+                    val debugWebView = selectedDebugAccountId?.let(webViewsByAccount::get)
 
                     Box(modifier = Modifier.fillMaxSize()) {
                         MangaBuffAppUI(
                             viewModel = viewModel,
-                            webViewContainer = debugWebView
+                            webViewContainer = debugWebView,
+                            webViewAccountIds = webViewAccountIds,
+                            selectedWebViewAccountId = selectedDebugAccountId,
+                            onSelectWebViewAccount = { selectedDebugAccountId = it }
                         )
 
                         debugWebView?.let { webView ->
