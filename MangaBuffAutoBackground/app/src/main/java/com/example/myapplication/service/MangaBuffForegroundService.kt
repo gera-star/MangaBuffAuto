@@ -29,6 +29,7 @@ import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -391,7 +392,10 @@ class MangaBuffForegroundService : Service() {
         )
         publishStatus(accountId, "Запуск...", true, taskType.title, 0f)
 
-        val job = serviceScope.launch {
+        // Register the Job before its body can execute. Main.immediate may otherwise
+        // complete a failing run inline before accountJobs[accountId] is populated,
+        // skipping finally cleanup and leaving a persisted run/WakeLock behind.
+        val job = serviceScope.launch(start = CoroutineStart.LAZY) {
             try {
                 automationRunner.runForAccount(account, repository.getSettings(), taskType)
             } catch (e: CancellationException) {
@@ -459,6 +463,7 @@ class MangaBuffForegroundService : Service() {
         }
 
         accountJobs[accountId] = job
+        job.start()
     }
 
     private fun requestAccountRecovery(accountId: String) {
