@@ -5991,10 +5991,20 @@ class MangaBuffAutomation(
                                         logReadState(state);
 
                                         if (state.confirmed) {
-                                            AndroidReaderBridge.onLogStep(
-                                                'READER: MB_READ_CONFIRMED chapterId=' + state.chapterId +
-                                                ' source=' + state.confirmSource
-                                            );
+                                            if (state.confirmSource === 'LOCAL_HISTORY_CCL_PENDING') {
+                                                // Local CCL batching lets the reader continue to the next
+                                                // chapter, but it is not server-side read confirmation.
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: MB_READ_CONTINUE_LOCAL_PENDING chapterId=' +
+                                                    state.chapterId +
+                                                    ' source=' + state.confirmSource
+                                                );
+                                            } else {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: MB_READ_CONFIRMED chapterId=' + state.chapterId +
+                                                    ' source=' + state.confirmSource
+                                                );
+                                            }
                                             onSuccess(state.confirmSource || 'UNKNOWN');
                                             return;
                                         }
