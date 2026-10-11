@@ -151,6 +151,39 @@ class MangaBuffAutomation(
 
     companion object {
         private const val READER_END_STABLE_MS = 3_000L
+        private const val BACKGROUND_SCROLL_SAMPLE_INTERVAL_MS = 2_000L
+        private const val BACKGROUND_SCROLL_METRICS_TIMEOUT_MS = 4_500L
+        private const val BACKGROUND_SCROLL_STALL_MS = 8_000L
+        private const val BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS = 15_000L
+        private const val BACKGROUND_SCROLL_METRICS_JS = """
+            (function() {
+                var s = document.scrollingElement || document.documentElement || document.body;
+                var v = Math.max(
+                    window.visualViewport ? window.visualViewport.height : 0,
+                    window.innerHeight || 0,
+                    s ? (s.clientHeight || 0) : 0,
+                    1
+                );
+                var h = Math.max(
+                    s ? (s.scrollHeight || 0) : 0,
+                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                    document.body ? (document.body.scrollHeight || 0) : 0
+                );
+                var y = Math.max(
+                    window.scrollY || 0,
+                    window.pageYOffset || 0,
+                    s ? (s.scrollTop || 0) : 0,
+                    document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
+                    document.body ? (document.body.scrollTop || 0) : 0
+                );
+                return [
+                    window.__mbFastScrollRunning ? 1 : 0,
+                    Math.round(y),
+                    Math.round(h),
+                    Math.round(v)
+                ].join(',');
+            })()
+        """
 
         private const val QUIZ_QUESTION_RESULT_DELAY_MS = 1500L
         private const val QUIZ_NEXT_QUESTION_DELAY_MS = 3500L
@@ -199,15 +232,41 @@ class MangaBuffAutomation(
     private var backgroundScrollRunnable: Runnable? = null
     private var backgroundScrollWebView: WebView? = null
     private var backgroundScreenWasOff = false
+    private var backgroundScrollGeneration = 0L
+    private var backgroundMetricsRequestId = 0L
+    private var backgroundMetricsRequestInFlight = false
+    private var backgroundMetricsRequestAt = 0L
+    private var backgroundLastMetricsRequestAt = 0L
+    private var backgroundLastScrollY: Long? = null
+    private var backgroundLastProgressAt = 0L
+    private var backgroundLastDiagnosticAt = 0L
+    private var backgroundObservedUrl: String? = null
+    private var backgroundFastScrollRunning = false
+    private var backgroundScrollHeight = 0L
+    private var backgroundViewportHeight = 0L
+    private var backgroundRemaining = Long.MAX_VALUE
 
     private fun startBackgroundScroll(accountUsername: String, webView: WebView) {
         mainHandler.post {
             if (backgroundScrollActive && backgroundScrollWebView === webView) return@post
 
             stopBackgroundScroll()
+            val generation = backgroundScrollGeneration
+            val now = SystemClock.elapsedRealtime()
             backgroundScrollActive = true
             backgroundScrollWebView = webView
             backgroundScreenWasOff = false
+            backgroundMetricsRequestInFlight = false
+            backgroundMetricsRequestAt = 0L
+            backgroundLastMetricsRequestAt = 0L
+            backgroundLastScrollY = null
+            backgroundLastProgressAt = now
+            backgroundLastDiagnosticAt = 0L
+            backgroundObservedUrl = webView.url.orEmpty()
+            backgroundFastScrollRunning = false
+            backgroundScrollHeight = 0L
+            backgroundViewportHeight = 0L
+            backgroundRemaining = Long.MAX_VALUE
 
             val runnable = object : Runnable {
                 override fun run() {
@@ -215,31 +274,100 @@ class MangaBuffAutomation(
                     if (
                         !backgroundScrollActive ||
                         target == null ||
-                        target !== webView
+                        target !== webView ||
+                        generation != backgroundScrollGeneration
                     ) return
 
                     val screenOff = BackgroundExecutionState.isScreenOff()
                     if (screenOff != backgroundScreenWasOff) {
                         backgroundScreenWasOff = screenOff
+                        backgroundLastProgressAt = SystemClock.elapsedRealtime()
+                        backgroundLastMetricsRequestAt = 0L
                         log(accountUsername, "READER: BACKGROUND_SCROLL_STATE screenOff=$screenOff")
                     }
 
                     if (screenOff) {
-                        try {
-                            target.evaluateJavascript(
-                                "window.__mbBackgroundStep && window.__mbBackgroundStep();",
-                                null
-                            )
-                        } catch (e: Exception) {
+                        val tickNow = SystemClock.elapsedRealtime()
+                        if (
+                            backgroundMetricsRequestInFlight &&
+                            tickNow - backgroundMetricsRequestAt >= BACKGROUND_SCROLL_METRICS_TIMEOUT_MS
+                        ) {
+                            backgroundMetricsRequestInFlight = false
+                            backgroundMetricsRequestId += 1L
+                            backgroundLastMetricsRequestAt = tickNow - BACKGROUND_SCROLL_SAMPLE_INTERVAL_MS
                             log(
                                 accountUsername,
-                                "READER: BACKGROUND_SCROLL_EVAL_ERROR error=${e.message}",
+                                "READER: BACKGROUND_SCROLL_METRICS_TIMEOUT elapsed=" +
+                                    (tickNow - backgroundMetricsRequestAt) + "ms url=${target.url.orEmpty()}",
                                 true
                             )
                         }
+
+                        if (
+                            !backgroundMetricsRequestInFlight &&
+                            tickNow - backgroundLastMetricsRequestAt >= BACKGROUND_SCROLL_SAMPLE_INTERVAL_MS
+                        ) {
+                            backgroundLastMetricsRequestAt = tickNow
+                            backgroundMetricsRequestAt = tickNow
+                            backgroundMetricsRequestInFlight = true
+                            val requestId = ++backgroundMetricsRequestId
+                            try {
+                                target.evaluateJavascript(BACKGROUND_SCROLL_METRICS_JS) { result ->
+                                    handleBackgroundScrollMetrics(
+                                        accountUsername = accountUsername,
+                                        webView = target,
+                                        generation = generation,
+                                        requestId = requestId,
+                                        result = result
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                if (
+                                    backgroundScrollActive &&
+                                    backgroundScrollWebView === target &&
+                                    generation == backgroundScrollGeneration &&
+                                    requestId == backgroundMetricsRequestId
+                                ) {
+                                    backgroundMetricsRequestInFlight = false
+                                    log(
+                                        accountUsername,
+                                        "READER: BACKGROUND_SCROLL_EVAL_ERROR error=${e.message}",
+                                        true
+                                    )
+                                }
+                            }
+                        }
+
+                        val idleMs = tickNow - backgroundLastProgressAt
+                        if (backgroundFastScrollRunning && idleMs >= BACKGROUND_SCROLL_STALL_MS) {
+                            val recoveryThreshold = maxOf(120L, backgroundViewportHeight / 4L)
+                            if (backgroundRemaining > recoveryThreshold) {
+                                log(
+                                    accountUsername,
+                                    "READER: BACKGROUND_SCROLL_STALLED idleMs=${idleMs} " +
+                                        "y=${backgroundLastScrollY ?: -1L} height=${backgroundScrollHeight} " +
+                                        "viewport=${backgroundViewportHeight} remaining=${backgroundRemaining} " +
+                                        "recovery=BOUNDED_NATIVE_SWIPE",
+                                    true
+                                )
+                                backgroundLastProgressAt = tickNow
+                                dispatchBackgroundRecoverySwipe(accountUsername, target, generation)
+                            } else if (tickNow - backgroundLastDiagnosticAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
+                                backgroundLastDiagnosticAt = tickNow
+                                log(
+                                    accountUsername,
+                                    "READER: BACKGROUND_SCROLL_STALLED_NEAR_BOTTOM idleMs=${idleMs} " +
+                                        "y=${backgroundLastScrollY ?: -1L} height=${backgroundScrollHeight} " +
+                                        "viewport=${backgroundViewportHeight} remaining=${backgroundRemaining} " +
+                                        "recovery=SKIPPED"
+                                )
+                            }
+                        }
                     }
 
-                    if (backgroundScrollActive) mainHandler.postDelayed(this, 180L)
+                    if (backgroundScrollActive && generation == backgroundScrollGeneration) {
+                        mainHandler.postDelayed(this, 180L)
+                    }
                 }
             }
 
@@ -249,15 +377,148 @@ class MangaBuffAutomation(
         }
     }
 
+    private fun handleBackgroundScrollMetrics(
+        accountUsername: String,
+        webView: WebView,
+        generation: Long,
+        requestId: Long,
+        result: String?
+    ) {
+        if (
+            !backgroundScrollActive ||
+            backgroundScrollWebView !== webView ||
+            generation != backgroundScrollGeneration ||
+            requestId != backgroundMetricsRequestId
+        ) return
+
+        backgroundMetricsRequestInFlight = false
+        val values = result?.trim()?.removeSurrounding("\"")?.split(',')
+        if (values == null || values.size != 4) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - backgroundLastDiagnosticAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
+                backgroundLastDiagnosticAt = now
+                log(
+                    accountUsername,
+                    "READER: BACKGROUND_SCROLL_METRICS_INVALID result=${result ?: "null"}",
+                    true
+                )
+            }
+            return
+        }
+
+        val isRunning = values[0].toIntOrNull() == 1
+        val y = values[1].toLongOrNull() ?: return
+        val height = values[2].toLongOrNull() ?: return
+        val viewport = values[3].toLongOrNull()?.coerceAtLeast(1L) ?: return
+        val now = SystemClock.elapsedRealtime()
+        val currentUrl = webView.url.orEmpty()
+
+        if (currentUrl != backgroundObservedUrl) {
+            val previousUrl = backgroundObservedUrl.orEmpty()
+            backgroundObservedUrl = currentUrl
+            backgroundLastScrollY = y
+            backgroundLastProgressAt = now
+            backgroundFastScrollRunning = isRunning
+            backgroundScrollHeight = height
+            backgroundViewportHeight = viewport
+            backgroundRemaining = (height - viewport - y).coerceAtLeast(0L)
+            log(
+                accountUsername,
+                "READER: BACKGROUND_SCROLL_PAGE_CHANGED from=$previousUrl to=$currentUrl " +
+                    "y=$y height=$height running=$isRunning"
+            )
+            return
+        }
+
+        backgroundFastScrollRunning = isRunning
+        backgroundScrollHeight = height
+        backgroundViewportHeight = viewport
+        backgroundRemaining = (height - viewport - y).coerceAtLeast(0L)
+
+        if (!isRunning) {
+            backgroundLastScrollY = y
+            backgroundLastProgressAt = now
+            return
+        }
+
+        val previousY = backgroundLastScrollY
+        if (previousY == null || y > previousY + 2L || y < previousY - 2L) {
+            backgroundLastScrollY = y
+            backgroundLastProgressAt = now
+        } else {
+            backgroundLastScrollY = y
+        }
+
+        if (now - backgroundLastDiagnosticAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
+            backgroundLastDiagnosticAt = now
+            log(
+                accountUsername,
+                "READER: BACKGROUND_SCROLL_WATCHDOG y=$y height=$height viewport=$viewport " +
+                    "remaining=${backgroundRemaining} idleMs=${now - backgroundLastProgressAt} " +
+                    "screenOff=true jsRunning=$isRunning"
+            )
+        }
+    }
+
+    private fun dispatchBackgroundRecoverySwipe(
+        accountUsername: String,
+        webView: WebView,
+        generation: Long
+    ) {
+        if (
+            !backgroundScrollActive ||
+            backgroundScrollWebView !== webView ||
+            generation != backgroundScrollGeneration
+        ) return
+
+        if (!webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) {
+            log(
+                accountUsername,
+                "READER: BACKGROUND_SCROLL_RECOVERY_SKIPPED reason=webview_not_attached",
+                true
+            )
+            return
+        }
+
+        val density = webView.resources.displayMetrics.density.coerceAtLeast(1f)
+        val cssWidth = webView.width / density
+        val cssHeight = webView.height / density
+        log(
+            accountUsername,
+            "READER: BACKGROUND_SCROLL_RECOVERY_GESTURE webView=${webView.hashCode()} " +
+                "generation=$generation width=${webView.width} height=${webView.height} density=$density"
+        )
+        dispatchNativeSwipe(
+            webView = webView,
+            x1 = cssWidth * 0.5f,
+            y1 = cssHeight * 0.74f,
+            x2 = cssWidth * 0.5f,
+            y2 = cssHeight * 0.52f,
+            durationMs = 375L,
+            triggerFling = false
+        )
+    }
+
     private fun stopBackgroundScroll(expectedWebView: WebView? = null) {
-        // A delayed callback from an obsolete reader must not stop a replacement WebView.
         if (expectedWebView != null && backgroundScrollWebView !== expectedWebView) return
 
+        backgroundScrollGeneration += 1L
+        backgroundMetricsRequestId += 1L
+        backgroundMetricsRequestInFlight = false
         backgroundScrollActive = false
         backgroundScrollRunnable?.let(mainHandler::removeCallbacks)
         backgroundScrollRunnable = null
         backgroundScrollWebView = null
         backgroundScreenWasOff = false
+        backgroundLastMetricsRequestAt = 0L
+        backgroundLastScrollY = null
+        backgroundLastProgressAt = 0L
+        backgroundLastDiagnosticAt = 0L
+        backgroundObservedUrl = null
+        backgroundFastScrollRunning = false
+        backgroundScrollHeight = 0L
+        backgroundViewportHeight = 0L
+        backgroundRemaining = Long.MAX_VALUE
     }
 
     /**
@@ -606,7 +867,8 @@ class MangaBuffAutomation(
         y1: Float,
         x2: Float,
         y2: Float,
-        durationMs: Long
+        durationMs: Long,
+        triggerFling: Boolean = true
     ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post {
@@ -691,29 +953,33 @@ class MangaBuffAutomation(
                 if (!webView.isAttachedToWindow) return@postDelayed
                 send(MotionEvent.ACTION_UP, endX, endY)
 
-                /*
-                 * Controlled inertia experiment: increase the post-release velocity
-                 * so the reader behaves more like a real phone swipe. The gesture
-                 * itself is still dispatched with real wall-clock MotionEvent times;
-                 * only this bounded native continuation is being changed.
-                 *
-                 * 2400 px/s was too weak on a high-density device (~800 CSS px/s
-                 * at density 3), producing only about 210-220 CSS px of continuation
-                 * in the logs. 4800 px/s should roughly double that continuation
-                 * while avoiding the old synthetic-timestamp runaway fling.
-                 */
-                val inertiaVelocity = 4800
+                if (triggerFling) {
+                    /*
+                     * Controlled inertia experiment: increase the post-release velocity
+                     * so the reader behaves more like a real phone swipe. The gesture
+                     * itself is still dispatched with real wall-clock MotionEvent times;
+                     * only this bounded native continuation is being changed.
+                     *
+                     * 2400 px/s was too weak on a high-density device (~800 CSS px/s
+                     * at density 3), producing only about 210-220 CSS px of continuation
+                     * in the logs. 4800 px/s should roughly double that continuation
+                     * while avoiding the old synthetic-timestamp runaway fling.
+                     */
+                    val inertiaVelocity = 4800
 
-                log(
-                    "SYSTEM",
-                    "READER: NATIVE_FLING_START velocity=$inertiaVelocity " +
-                        "duration=$safeDuration"
-                )
+                    log(
+                        "SYSTEM",
+                        "READER: NATIVE_FLING_START velocity=$inertiaVelocity " +
+                            "duration=$safeDuration"
+                    )
 
-                mainHandler.postDelayed({
-                    if (!webView.isAttachedToWindow) return@postDelayed
-                    webView.flingScroll(0, inertiaVelocity)
-                }, 20L)
+                    mainHandler.postDelayed({
+                        if (!webView.isAttachedToWindow) return@postDelayed
+                        webView.flingScroll(0, inertiaVelocity)
+                    }, 20L)
+                } else {
+                    log("SYSTEM", "READER: BACKGROUND_SCROLL_RECOVERY_GESTURE_FINISHED fling=false")
+                }
             }, settleMs)
         }, safeDuration)
     }
@@ -757,6 +1023,9 @@ class MangaBuffAutomation(
 
     @Volatile
     private var activeChapterContext: ChapterContext? = null
+
+    @Volatile
+    private var heartbeatChapterContext: Pair<String, String> = Pair("", "")
 
     @Volatile
     private var activeReaderSkip: (() -> Unit)? = null
@@ -867,6 +1136,9 @@ class MangaBuffAutomation(
     fun getCurrentMangaUrl(): String = currentMangaUrl
     fun getLastFinishedChapterId(): String = lastFinishedChapterId
     fun getLastFinishedChapterNumber(): String = lastFinishedChapterNumber
+
+    /** Current page chapter identity for heartbeat diagnostics, separate from last completion. */
+    fun getHeartbeatChapterContext(): Pair<String, String> = heartbeatChapterContext
 
     fun skipCurrentManga(): Boolean {
         if (activeReaderSkip == null) {
@@ -3875,6 +4147,7 @@ class MangaBuffAutomation(
         currentHistoryPostChapterIds.clear()
 
         activeChapterContext = null
+        heartbeatChapterContext = Pair("", "")
 
         lastFinishedChapterUrl = ""
         lastFinishedChapterNumber = ""
@@ -4345,6 +4618,18 @@ class MangaBuffAutomation(
                         mangaTitle = cleanMangaTitle(name.ifBlank { activeChapterContext?.mangaTitle ?: "" }),
                         chapterNumber = chapter.ifBlank { activeChapterContext?.chapterNumber ?: "" }
                     )
+
+                    val currentChapterNumber = activeChapterContext?.chapterNumber.orEmpty()
+                    if (
+                        currentChapterNumber.isNotBlank() &&
+                        (chapter.isBlank() || chapter == currentChapterNumber)
+                    ) {
+                        val previous = heartbeatChapterContext
+                        heartbeatChapterContext = Pair(
+                            chapterIdStr.ifBlank { previous.first },
+                            chapter.ifBlank { currentChapterNumber }
+                        )
+                    }
 
                     log(account.username, "CHAPTER_CONTEXT_SAVED id=$chapterIdStr mangaId=$mangaIdStr title='$name' chapter=$chapter")
                 }
@@ -4840,6 +5125,8 @@ class MangaBuffAutomation(
                             actualChapterUrl = currentUrl,
                             readQuestBefore = chapterReadQuestBefore
                         )
+                        // Do not attribute the previous chapter's ID to a newly loaded page.
+                        heartbeatChapterContext = Pair("", chapterNum)
 
                         log(account.username, "READER: CHAPTER_PAGE_READY")
                         log(account.username, "READER: CURRENT_CHAPTER num=$chapterNum url=$currentUrl")
@@ -6329,7 +6616,12 @@ class MangaBuffAutomation(
                                                     scrollingElement ? (scrollingElement.scrollTop || 0) : 0
                                                 );
                                                 var remaining = Math.max(0, height - viewport - y);
-                                                if (remaining <= 2) return;
+                                                if (remaining <= 2) {
+                                                    // The native Android pump keeps calling this function while the screen
+                                                    // is locked, so it must also drive end detection when JS timers are throttled.
+                                                    try { checkEnd(); } catch(ignoreEnd) {}
+                                                    return;
+                                                }
 
                                                 var step = Math.min(
                                                     420,
@@ -6337,6 +6629,7 @@ class MangaBuffAutomation(
                                                 );
                                                 step = Math.min(step, remaining);
                                                 window.scrollBy(0, step);
+                                                try { checkEnd(); } catch(ignoreEnd) {}
                                             } catch(e) {
                                                 try {
                                                     AndroidReaderBridge.onLogStep(

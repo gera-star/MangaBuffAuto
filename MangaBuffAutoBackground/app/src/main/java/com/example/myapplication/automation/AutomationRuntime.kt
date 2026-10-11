@@ -264,18 +264,30 @@ class AutomationRuntime(
         val engineHeartbeatJob = CoroutineScope(coroutineContext + Dispatchers.IO).launch {
             while (isActive) {
                 delay(15_000L)
-                val (url, isAttached) = withContext(Dispatchers.Main.immediate) {
-                    val currentUrl = runtime.webView.url ?: "UNKNOWN"
-                    val attached = runtime.webView.isAttachedToWindow
-                    Pair(currentUrl, attached)
+                val (url, isAttached, chapterContext) = withContext(Dispatchers.Main.immediate) {
+                    Triple(
+                        runtime.webView.url ?: "UNKNOWN",
+                        runtime.webView.isAttachedToWindow,
+                        engine.getHeartbeatChapterContext()
+                    )
                 }
+                val urlChapter = url.substringBefore('?')
+                    .trimEnd('/')
+                    .substringAfterLast('/')
+                    .takeIf { it.toIntOrNull() != null }
+                    .orEmpty()
+                val chapterMatchesUrl = urlChapter.isNotBlank() && urlChapter == chapterContext.second
+                val heartbeatChapterId = if (chapterMatchesUrl) chapterContext.first.ifBlank { "PENDING" } else "PENDING"
+                val heartbeatChapter = urlChapter
+                    .ifBlank { if (chapterMatchesUrl) chapterContext.second else "UNKNOWN" }
                 onLog(
                     LogEntry(
                         username = account.username,
                         component = "ENGINE",
                         message = "HEARTBEAT accountId=${account.id} engineId=${engine.hashCode()} " +
                             "url=$url attached=$isAttached manga=${engine.getCurrentMangaUrl()} " +
-                            "chapterId=${engine.getLastFinishedChapterId()} chapter=${engine.getLastFinishedChapterNumber()}"
+                            "chapterId=$heartbeatChapterId chapter=$heartbeatChapter " +
+                            "chapterContextMatchesUrl=$chapterMatchesUrl"
                     )
                 )
             }
