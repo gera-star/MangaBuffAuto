@@ -200,7 +200,9 @@ class MangaBuffForegroundService : Service() {
         }
     }
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // Use the dispatching Main dispatcher, not Main.immediate: account startup must not
+    // finish inline inside onStartCommand/startAllInternal before every account Job is registered.
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val accountJobs = ConcurrentHashMap<String, Job>()
     private val recoveryRequests = ConcurrentHashMap.newKeySet<String>()
     private val missingWebViewSince = ConcurrentHashMap<String, Long>()
