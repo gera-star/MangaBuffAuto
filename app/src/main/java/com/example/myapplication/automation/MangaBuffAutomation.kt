@@ -5475,6 +5475,11 @@ class MangaBuffAutomation(
                                             AndroidReaderBridge.cancelBackgroundScroll();
                                         } catch(e) {}
 
+                                        // Invalidate a delayed continuation from this reader run.
+                                        try {
+                                            window.__mbPendingReaderContinuation = null;
+                                        } catch(e) {}
+
                                         if (window.__mbScrollTimer) {
                                             clearTimeout(window.__mbScrollTimer);
                                             window.__mbScrollTimer = null;
