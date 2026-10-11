@@ -124,8 +124,8 @@ class MangaBuffForegroundService : Service() {
             }
         }
 
-        fun startAccount(context: Context, accountId: String, taskType: TaskType) {
-            startCommand(
+        fun startAccount(context: Context, accountId: String, taskType: TaskType): Boolean {
+            return startCommand(
                 context,
                 ACTION_START_ACCOUNT,
                 accountId = accountId,
@@ -134,8 +134,8 @@ class MangaBuffForegroundService : Service() {
             )
         }
 
-        fun startAll(context: Context, taskType: TaskType) {
-            startCommand(
+        fun startAll(context: Context, taskType: TaskType): Boolean {
+            return startCommand(
                 context,
                 ACTION_START_ALL,
                 taskType = taskType,
@@ -156,13 +156,11 @@ class MangaBuffForegroundService : Service() {
         }
 
         fun skipManga(context: Context, accountId: String): Boolean {
-            startCommand(context, ACTION_SKIP_MANGA, accountId = accountId)
-            return true
+            return startCommand(context, ACTION_SKIP_MANGA, accountId = accountId)
         }
 
         fun markRead(context: Context, accountId: String): Boolean {
-            startCommand(context, ACTION_MARK_READ, accountId = accountId)
-            return true
+            return startCommand(context, ACTION_MARK_READ, accountId = accountId)
         }
 
         fun updateStatus(context: Context, status: String) {
@@ -191,7 +189,7 @@ class MangaBuffForegroundService : Service() {
             accountId: String? = null,
             taskType: TaskType? = null,
             startAsForeground: Boolean = false
-        ) {
+        ): Boolean {
             try {
                 val intent = Intent(context, MangaBuffForegroundService::class.java).apply {
                     this.action = action
@@ -203,6 +201,7 @@ class MangaBuffForegroundService : Service() {
                 } else {
                     context.startService(intent)
                 }
+                return true
             } catch (e: Exception) {
                 Log.e(
                     "MangaBuffForegroundService",
@@ -210,6 +209,7 @@ class MangaBuffForegroundService : Service() {
                         "taskType=${taskType?.name ?: "none"} startAsForeground=$startAsForeground",
                     e
                 )
+                return false
             }
         }
     }
