@@ -77,34 +77,88 @@ fun MangaBuffAppUI(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
-                actions = {
-                    IconButton(onClick = { showSupportDialog = true }) {
+            Column {
+                TopAppBar(
+                    title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
+                    actions = {
+                        IconButton(onClick = { showSupportDialog = true }) {
+                            Icon(
+                                Icons.Default.Favorite,
+                                contentDescription = "Поддержать проект"
+                            )
+                        }
+                        IconButton(onClick = { showBackgroundSettings = true }) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Фоновая работа"
+                            )
+                        }
+                        if (webViewContainer != null) {
+                            TextButton(
+                                onClick = { viewModel.setDebugWebViewVisible(!debugWebViewVisible) }
+                            ) {
+                                Text(if (debugWebViewVisible) "UI" else "WEB")
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                )
+
+                Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Icon(
-                            Icons.Default.Favorite,
-                            contentDescription = "Поддержать проект"
+                            imageVector = if (settings.keepScreenOn) {
+                                Icons.Default.LightMode
+                            } else {
+                                Icons.Default.Brightness4
+                            },
+                            contentDescription = null,
+                            tint = if (settings.keepScreenOn) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(20.dp)
                         )
-                    }
-                    IconButton(onClick = { showBackgroundSettings = true }) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Фоновая работа"
-                        )
-                    }
-                    if (webViewContainer != null) {
-                        TextButton(
-                            onClick = { viewModel.setDebugWebViewVisible(!debugWebViewVisible) }
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Не выключать экран",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                if (settings.keepScreenOn) {
+                                    "Включено во время работы автоматизации"
+                                } else {
+                                    "Выключено"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.saveSettings(
+                                    settings.copy(keepScreenOn = !settings.keepScreenOn)
+                                )
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                            modifier = Modifier.height(36.dp)
                         ) {
-                            Text(if (debugWebViewVisible) "UI" else "WEB")
+                            Text(if (settings.keepScreenOn) "Отключить" else "Включить")
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            )
+                }
+            }
         },
         floatingActionButton = {
             if (activeTab == 0) {
@@ -1097,31 +1151,6 @@ fun TasksTab(
                             { readerChapters = it },
                             "📖 Главы",
                             Modifier.weight(1f)
-                        )
-                    }
-
-                    Spacer(Modifier.height(7.dp))
-
-                    OutlinedButton(
-                        onClick = {
-                            onSaveSettings(settings.copy(keepScreenOn = !settings.keepScreenOn))
-                        },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.fillMaxWidth().height(36.dp),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(
-                            if (settings.keepScreenOn) Icons.Default.LightMode else Icons.Default.Brightness4,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            if (settings.keepScreenOn) {
-                                "Экран не гаснет: ВКЛ"
-                            } else {
-                                "Не выключать экран: ВЫКЛ"
-                            }
                         )
                     }
 
