@@ -14,6 +14,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.MainActivity
@@ -114,8 +115,12 @@ class MangaBuffForegroundService : Service() {
                 } else {
                     context.startService(intent)
                 }
-            } catch (_: Exception) {
-                // Caller cannot recover a rejected service start synchronously.
+            } catch (e: Exception) {
+                Log.e(
+                    "MangaBuffForegroundService",
+                    "Failed to start foreground service action=$ACTION_START",
+                    e
+                )
             }
         }
 
@@ -167,8 +172,12 @@ class MangaBuffForegroundService : Service() {
                     putExtra(EXTRA_STATUS, status)
                 }
                 context.startService(intent)
-            } catch (_: Exception) {
-                // Ignore service update failures.
+            } catch (e: Exception) {
+                Log.e(
+                    "MangaBuffForegroundService",
+                    "Failed to update service notification action=$ACTION_UPDATE",
+                    e
+                )
             }
         }
 
@@ -194,8 +203,13 @@ class MangaBuffForegroundService : Service() {
                 } else {
                     context.startService(intent)
                 }
-            } catch (_: Exception) {
-                // Ignore command dispatch failures.
+            } catch (e: Exception) {
+                Log.e(
+                    "MangaBuffForegroundService",
+                    "Failed to dispatch command action=$action accountId=${accountId ?: "none"} " +
+                        "taskType=${taskType?.name ?: "none"} startAsForeground=$startAsForeground",
+                    e
+                )
             }
         }
     }
