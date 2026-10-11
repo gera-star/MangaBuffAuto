@@ -157,7 +157,7 @@ fun BackgroundSettingsDialog(
 
                 SettingSwitchRow(
                     title = "Не выключать экран во время автоматизации",
-                    description = "Экран остаётся включённым на протяжении всей последовательной сессии.",
+                    description = "Экран не гаснет, пока MangaBuffAuto открыт на переднем плане. При сворачивании Android может погасить дисплей.",
                     checked = settings.keepScreenOn,
                     onCheckedChange = {
                         onSaveSettings(settings.copy(keepScreenOn = it))
