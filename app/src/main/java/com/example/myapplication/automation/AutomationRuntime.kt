@@ -87,12 +87,14 @@ class AutomationRuntime(
 
     @Synchronized
     fun stopAccount(accountId: String) {
+        // Remove the runtime from lookup immediately so no new work can bind to it.
         val runtime = runtimes.remove(accountId)
         if (runtime != null) {
             runtime.state = AccountState.STOPPED
-            onWebViewCleared(accountId, runtime.webView)
-            webViewStore.releaseWebView(accountId)
         }
+
+        // Cancel account-local scroll callbacks and OkHttp calls before destroying
+        // the WebView they may still reference. Never touch another account's engine.
         val engine = automationEngines.remove(accountId)
         if (engine != null) {
             engine.shutdown()
@@ -100,9 +102,14 @@ class AutomationRuntime(
                 LogEntry(
                     username = accountId,
                     component = "ENGINE",
-                    message = "STOP / DESTROY engineId=${engine.hashCode()} network=closed callbacks=cleared"
+                    message = "STOP engineId=${engine.hashCode()} OKHTTP_CANCEL_AND_POOL_EVICT_DONE"
                 )
             )
+        }
+
+        if (runtime != null) {
+            onWebViewCleared(accountId, runtime.webView)
+            webViewStore.releaseWebView(accountId)
         }
     }
 
