@@ -1104,6 +1104,31 @@ fun TasksTab(
 
                     OutlinedButton(
                         onClick = {
+                            onSaveSettings(settings.copy(keepScreenOn = !settings.keepScreenOn))
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(
+                            if (settings.keepScreenOn) Icons.Default.LightMode else Icons.Default.Brightness4,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            if (settings.keepScreenOn) {
+                                "Экран не гаснет: ВКЛ"
+                            } else {
+                                "Не выключать экран: ВЫКЛ"
+                            }
+                        )
+                    }
+
+                    Spacer(Modifier.height(7.dp))
+
+                    OutlinedButton(
+                        onClick = {
                             onSaveSettings(
                                 settings.copy(
                                     battleTargetCount = battleTarget.toIntOrNull() ?: settings.battleTargetCount,
