@@ -197,31 +197,36 @@ class ProfileWebViewStore(
         attachDeferreds.remove(accountId)
         webViewRunIds.remove(accountId)
         if (webView != null) {
-            try {
-                // WebView.destroy() requires it to be removed from the view system.
-                // Compose may not have recomposed yet after onWebViewCleared(), so
-                // detach explicitly before stopping and destroying this instance.
+            val failures = mutableListOf<String>()
+
+            // Attempt every cleanup step independently: a detach/stop exception
+            // must not prevent the final destroy() call.
+            runCatching {
+                // Compose may not have recomposed yet after onWebViewCleared().
                 (webView.parent as? ViewGroup)?.removeView(webView)
-                webView.stopLoading()
-                webView.loadUrl("about:blank")
-                webView.destroy()
-                onLog(
-                    LogEntry(
-                        username = accountId,
-                        component = "WEBVIEW",
-                        message = "RELEASED profile=mb_$accountId instance=${webView.hashCode()}"
-                    )
+            }.onFailure { failures += "detach:${it.javaClass.simpleName}" }
+
+            runCatching { webView.stopLoading() }
+                .onFailure { failures += "stop:${it.javaClass.simpleName}" }
+
+            runCatching { webView.loadUrl("about:blank") }
+                .onFailure { failures += "blank:${it.javaClass.simpleName}" }
+
+            runCatching { webView.destroy() }
+                .onFailure { failures += "destroy:${it.javaClass.simpleName}" }
+
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "WEBVIEW",
+                    message = if (failures.isEmpty()) {
+                        "RELEASED profile=mb_$accountId instance=${webView.hashCode()}"
+                    } else {
+                        "RELEASE_ATTEMPT_FINISHED profile=mb_$accountId instance=${webView.hashCode()} failures=${failures.joinToString(",")}"
+                    },
+                    isError = failures.isNotEmpty()
                 )
-            } catch (e: Exception) {
-                onLog(
-                    LogEntry(
-                        username = accountId,
-                        component = "WEBVIEW",
-                        message = "RELEASE_FAILED profile=mb_$accountId instance=${webView.hashCode()} error=${e.message}",
-                        isError = true
-                    )
-                )
-            }
+            )
         }
     }
 
