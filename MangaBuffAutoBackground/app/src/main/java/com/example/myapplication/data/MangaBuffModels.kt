@@ -115,5 +115,6 @@ data class GlobalSettings(
     val mineAutoExchange: Boolean = false,
     val readerChapters: Int = 10,
     val commentCount: Int = 3,
-    val battleTargetCount: Int = 20
+    val battleTargetCount: Int = 20,
+    val keepScreenOn: Boolean = false
 )
