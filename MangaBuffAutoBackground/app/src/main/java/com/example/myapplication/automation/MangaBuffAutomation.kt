@@ -5494,8 +5494,6 @@ class MangaBuffAutomation(
                                         } catch(e) {}
 
                                         // Prevent an old reader run from firing after stop/reload.
-                                        window.__mbPendingReaderContinuation = null;
-
                                         if (window.__mbScrollTimer) {
                                             clearTimeout(window.__mbScrollTimer);
                                             window.__mbScrollTimer = null;
@@ -5977,54 +5975,6 @@ class MangaBuffAutomation(
                                     var confirmAttempt = 0;
                                     var maxConfirmAttempts = 40;
                                     var isWaitingConfirmation = false;
-                                    var readerContinuationId = 0;
-
-                                    window.__mbPendingReaderContinuation = null;
-
-                                    /*
-                                     * Native Android pulses can run due reader continuations while
-                                     * Chromium throttles JavaScript timers with the screen off.
-                                     * Each continuation has a token so timeout and native paths
-                                     * cannot execute the same callback twice.
-                                     */
-                                    function scheduleReaderContinuation(callback, delayMs) {
-                                        var task = {
-                                            id: ++readerContinuationId,
-                                            dueAt: Date.now() + delayMs,
-                                            callback: callback
-                                        };
-                                        window.__mbPendingReaderContinuation = task;
-
-                                        setTimeout(function() {
-                                            var pending = window.__mbPendingReaderContinuation;
-                                            if (!pending || pending.id !== task.id) return;
-
-                                            window.__mbPendingReaderContinuation = null;
-                                            try {
-                                                task.callback();
-                                            } catch(e) {
-                                                AndroidReaderBridge.onLogStep(
-                                                    'READER: CONTINUATION_ERROR ' +
-                                                    (e.message || String(e))
-                                                );
-                                            }
-                                        }, delayMs);
-                                    }
-
-                                    function runDueReaderContinuation() {
-                                        var task = window.__mbPendingReaderContinuation;
-                                        if (!task || Date.now() < task.dueAt) return;
-
-                                        window.__mbPendingReaderContinuation = null;
-                                        try {
-                                            task.callback();
-                                        } catch(e) {
-                                            AndroidReaderBridge.onLogStep(
-                                                'READER: BACKGROUND_CONTINUATION_ERROR ' +
-                                                (e.message || String(e))
-                                            );
-                                        }
-                                    }
 
                                     function waitForMangaBuffConfirmation(onSuccess) {
                                         confirmAttempt++;
@@ -6067,7 +6017,7 @@ class MangaBuffAutomation(
                                             ' chapterId=' + state.chapterId +
                                             ' reason=' + state.waitReason
                                         );
-                                        scheduleReaderContinuation(function() {
+                                        setTimeout(function() {
                                             waitForMangaBuffConfirmation(onSuccess);
                                         }, 350);
                                     }
@@ -6322,7 +6272,7 @@ class MangaBuffAutomation(
                                                         'NEXT_CHAPTER_DISCOVERY_RETRY attempt=' + (attempt + 1) +
                                                         '/15 reason=DOM_NOT_READY_AFTER_MANGABUFF_CONFIRMATION'
                                                     );
-                                                    scheduleReaderContinuation(function() {
+                                                    setTimeout(function() {
                                                         resolveNextChapterAfterBottom(attempt + 1);
                                                     }, 1000);
                                                     return;
@@ -6337,7 +6287,7 @@ class MangaBuffAutomation(
                                             });
                                         }
 
-                                        scheduleReaderContinuation(function() {
+                                        setTimeout(function() {
                                             resolveNextChapterAfterBottom(1);
                                         }, 1200);
                                     }
@@ -6379,20 +6329,14 @@ class MangaBuffAutomation(
                                                     scrollingElement ? (scrollingElement.scrollTop || 0) : 0
                                                 );
                                                 var remaining = Math.max(0, height - viewport - y);
+                                                if (remaining <= 2) return;
 
-                                                if (remaining > 2) {
-                                                    var step = Math.min(
-                                                        420,
-                                                        Math.max(140, Math.floor(viewport * 0.20))
-                                                    );
-                                                    step = Math.min(step, remaining);
-                                                    window.scrollBy(0, step);
-                                                }
-
-                                                // Reaching the bottom must run the same end/confirmation
-                                                // state machine as foreground scrolling.
-                                                checkEnd();
-                                                runDueReaderContinuation();
+                                                var step = Math.min(
+                                                    420,
+                                                    Math.max(140, Math.floor(viewport * 0.20))
+                                                );
+                                                step = Math.min(step, remaining);
+                                                window.scrollBy(0, step);
                                             } catch(e) {
                                                 try {
                                                     AndroidReaderBridge.onLogStep(
