@@ -91,9 +91,11 @@ class NetworkResetManager(
                 "NETWORK_RESET_AIRPLANE_DISABLE provider=${provider} " +
                     "exit=${disable.exitCode} output=${sanitize(disable.output)}"
             )
-            enabled = false
-
             if (!disable.success) return false
+
+            // Only clear the flag after disable was confirmed successful.
+            // On failure, finally must retry disabling Airplane Mode.
+            enabled = false
 
             onLog("NETWORK_WAIT_START")
             val ready = awaitValidatedNetwork(30_000L)
