@@ -203,6 +203,7 @@ class MangaBuffAutomation(
                     val target = backgroundScrollWebView
                     if (
                         !backgroundScrollActive ||
+                        target == null ||
                         target !== webView ||
                         isShuttingDown
                     ) {
@@ -255,7 +256,12 @@ class MangaBuffAutomation(
         }
     }
 
-    private fun stopBackgroundScroll() {
+    private fun stopBackgroundScroll(expectedWebView: WebView? = null) {
+        // A late callback from an obsolete WebView must not cancel a replacement.
+        if (expectedWebView != null && backgroundScrollWebView !== expectedWebView) {
+            return
+        }
+
         backgroundScrollActive = false
         backgroundScrollRunnable?.let { mainHandler.removeCallbacks(it) }
         backgroundScrollRunnable = null
@@ -4032,7 +4038,7 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun cancelBackgroundScroll() {
                     mainHandler.post {
-                        stopBackgroundScroll()
+                        stopBackgroundScroll(webView)
                     }
                 }
 
