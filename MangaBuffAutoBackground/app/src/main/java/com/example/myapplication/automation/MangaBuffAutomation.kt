@@ -287,7 +287,7 @@ class MangaBuffAutomation(
                     }
 
                     if (screenOff) {
-                        // Keep the existing native scroll tick; the watchdog observes progress in parallel.
+                        // Keep the established native scroll tick for a locked screen.
                         try {
                             target.evaluateJavascript(
                                 "window.__mbBackgroundStep && window.__mbBackgroundStep();",
@@ -300,7 +300,11 @@ class MangaBuffAutomation(
                                 true
                             )
                         }
+                    }
 
+                    // Monitor minimized/hidden WebViews too, but do not double-scroll them every 180 ms.
+                    val backgroundMode = screenOff || !target.hasWindowFocus() || !target.isShown
+                    if (backgroundMode) {
                         val tickNow = SystemClock.elapsedRealtime()
                         if (
                             backgroundMetricsRequestInFlight &&
@@ -361,11 +365,26 @@ class MangaBuffAutomation(
                                     "READER: BACKGROUND_SCROLL_STALLED idleMs=${idleMs} " +
                                         "y=${backgroundLastScrollY ?: -1L} height=${backgroundScrollHeight} " +
                                         "viewport=${backgroundViewportHeight} remaining=${backgroundRemaining} " +
-                                        "recovery=BOUNDED_NATIVE_SWIPE",
+                                        "screenOff=${screenOff} windowFocus=${target.hasWindowFocus()} shown=${target.isShown} recovery=${if (screenOff) "BOUNDED_NATIVE_SWIPE" else "JS_BACKGROUND_TICK"}",
                                     true
                                 )
                                 backgroundLastProgressAt = tickNow
-                                dispatchBackgroundRecoverySwipe(accountUsername, target, generation)
+                                if (screenOff) {
+                                    dispatchBackgroundRecoverySwipe(accountUsername, target, generation)
+                                } else {
+                                    try {
+                                        target.evaluateJavascript(
+                                            "window.__mbBackgroundStep && window.__mbBackgroundStep();",
+                                            null
+                                        )
+                                    } catch (e: Exception) {
+                                        log(
+                                            accountUsername,
+                                            "READER: BACKGROUND_SCROLL_RECOVERY_EVAL_ERROR error=${e.message}",
+                                            true
+                                        )
+                                    }
+                                }
                             } else if (tickNow - backgroundLastDiagnosticAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
                                 backgroundLastDiagnosticAt = tickNow
                                 log(
@@ -469,7 +488,7 @@ class MangaBuffAutomation(
                 accountUsername,
                 "READER: BACKGROUND_SCROLL_WATCHDOG y=$y height=$height viewport=$viewport " +
                     "remaining=${backgroundRemaining} idleMs=${now - backgroundLastProgressAt} " +
-                    "screenOff=true jsRunning=$isRunning"
+                    "screenOff=${BackgroundExecutionState.isScreenOff()} windowFocus=${webView.hasWindowFocus()} shown=${webView.isShown} jsRunning=$isRunning"
             )
         }
     }
