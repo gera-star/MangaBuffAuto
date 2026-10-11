@@ -287,6 +287,20 @@ class MangaBuffAutomation(
                     }
 
                     if (screenOff) {
+                        // Keep the existing native scroll tick; the watchdog observes progress in parallel.
+                        try {
+                            target.evaluateJavascript(
+                                "window.__mbBackgroundStep && window.__mbBackgroundStep();",
+                                null
+                            )
+                        } catch (e: Exception) {
+                            log(
+                                accountUsername,
+                                "READER: BACKGROUND_SCROLL_EVAL_ERROR error=${e.message}",
+                                true
+                            )
+                        }
+
                         val tickNow = SystemClock.elapsedRealtime()
                         if (
                             backgroundMetricsRequestInFlight &&
