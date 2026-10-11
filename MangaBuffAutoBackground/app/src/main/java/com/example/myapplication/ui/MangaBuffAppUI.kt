@@ -57,6 +57,9 @@ private const val SUPPORT_RECIPIENT = "Алексей Г."
 fun MangaBuffAppUI(
     viewModel: MainViewModel,
     webViewContainer: WebView? = null,
+    webViewAccountIds: List<String> = emptyList(),
+    selectedWebViewAccountId: String? = null,
+    onSelectWebViewAccount: (String) -> Unit = {},
     onOpenAddAccountWebView: () -> Unit = {}
 ) {
     val accounts by viewModel.accounts.collectAsState()
@@ -72,6 +75,7 @@ fun MangaBuffAppUI(
     var promoCodeText by remember { mutableStateOf("") }
     var showBackgroundSettings by remember { mutableStateOf(false) }
     var showSupportDialog by remember { mutableStateOf(false) }
+    var showWebViewAccountMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
@@ -92,6 +96,33 @@ fun MangaBuffAppUI(
                                 Icons.Default.Settings,
                                 contentDescription = "Фоновая работа"
                             )
+                        }
+                        if (webViewAccountIds.size > 1) {
+                            Box {
+                                TextButton(onClick = { showWebViewAccountMenu = true }) {
+                                    val selectedName = accounts.firstOrNull {
+                                        it.id == selectedWebViewAccountId
+                                    }?.username
+                                    Text(selectedName?.let { "WEB: $it ▾" } ?: "Выбрать WEB ▾")
+                                }
+                                DropdownMenu(
+                                    expanded = showWebViewAccountMenu,
+                                    onDismissRequest = { showWebViewAccountMenu = false }
+                                ) {
+                                    webViewAccountIds.forEach { accountId ->
+                                        val accountName = accounts.firstOrNull {
+                                            it.id == accountId
+                                        }?.username ?: accountId
+                                        DropdownMenuItem(
+                                            text = { Text(accountName) },
+                                            onClick = {
+                                                onSelectWebViewAccount(accountId)
+                                                showWebViewAccountMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                         if (webViewContainer != null) {
                             TextButton(
