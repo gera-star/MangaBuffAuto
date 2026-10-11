@@ -12,9 +12,6 @@ import java.io.InputStreamReader
 @Keep
 class NetworkResetUserService : INetworkResetUserService.Stub() {
 
-    @Keep
-    constructor()
-
     override fun execute(command: String): String {
         return try {
             val process = ProcessBuilder("sh", "-c", command)
