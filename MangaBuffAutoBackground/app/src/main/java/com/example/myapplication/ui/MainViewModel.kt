@@ -367,7 +367,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runTaskForAccount(account: MangaBuffAccount, taskType: TaskType) {
-        MangaBuffForegroundService.startAccount(getApplication(), account.id, taskType)
+        val accepted = MangaBuffForegroundService.startAccount(getApplication(), account.id, taskType)
+        if (!accepted) {
+            addLog(
+                LogEntry(
+                    username = account.username,
+                    component = "BG",
+                    message = "START_REQUEST_FAILED accountId=${account.id} taskType=${taskType.title}",
+                    isError = true
+                )
+            )
+            return
+        }
         _isRunning.value = true
         addLog(
             LogEntry(
@@ -379,12 +390,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runTaskForAllAccounts(taskType: TaskType) {
-        MangaBuffForegroundService.startAll(getApplication(), taskType)
-        _isRunning.value = _accounts.value.isNotEmpty()
+        val requestedCount = _accounts.value.size
+        val accepted = MangaBuffForegroundService.startAll(getApplication(), taskType)
+        if (!accepted) {
+            addLog(
+                LogEntry(
+                    component = "BG",
+                    message = "START_ALL_REQUEST_FAILED accounts=$requestedCount taskType=${taskType.title}",
+                    isError = true
+                )
+            )
+            return
+        }
+        _isRunning.value = requestedCount > 0
         addLog(
             LogEntry(
                 component = "BG",
-                message = "START_ALL_REQUEST accounts=${_accounts.value.size} taskType=${taskType.title}"
+                message = "START_ALL_REQUEST accounts=$requestedCount taskType=${taskType.title}"
             )
         )
     }
