@@ -4,8 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.View
 import android.view.VelocityTracker
 import android.view.ViewConfiguration
 import android.webkit.JavascriptInterface
@@ -152,6 +154,115 @@ class MangaBuffAutomation(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
+    private var isShuttingDown = false
+
+    @Volatile
+    private var backgroundScrollActive = false
+
+    @Volatile
+    private var backgroundScrollWebView: WebView? = null
+
+    private var backgroundScrollRunnable: Runnable? = null
+
+    /*
+     * Chromium can throttle requestAnimationFrame for an invisible WebView or
+     * a screen-off window. The native polling loop is owned by this engine and
+     * drives only the WebView attached to this exact account instance.
+     */
+    private fun shouldDriveReaderScrollNatively(webView: WebView): Pair<Boolean, String> {
+        val powerManager =
+            context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+
+        if (powerManager?.isInteractive != true) return true to "screen_off"
+        if (webView.visibility != View.VISIBLE) return true to "webview_not_visible"
+        if (!webView.isShown) return true to "view_not_shown"
+        if (webView.windowVisibility != View.VISIBLE) return true to "window_not_visible"
+        if (!webView.hasWindowFocus()) return true to "window_no_focus"
+
+        return false to "foreground_visible"
+    }
+
+    private fun startBackgroundScroll(accountUsername: String, webView: WebView) {
+        if (isShuttingDown) return
+
+        mainHandler.post {
+            if (isShuttingDown) return@post
+
+            if (backgroundScrollActive && backgroundScrollWebView === webView) {
+                return@post
+            }
+
+            stopBackgroundScroll()
+            backgroundScrollActive = true
+            backgroundScrollWebView = webView
+
+            val runnable = object : Runnable {
+                private var lastNativeMode: Boolean? = null
+
+                override fun run() {
+                    val target = backgroundScrollWebView
+                    if (
+                        !backgroundScrollActive ||
+                        target !== webView ||
+                        isShuttingDown
+                    ) {
+                        return
+                    }
+
+                    val (nativeMode, reason) = shouldDriveReaderScrollNatively(target)
+                    if (lastNativeMode != nativeMode) {
+                        log(
+                            accountUsername,
+                            "READER: BACKGROUND_SCROLL_MODE native=" + nativeMode +
+                                " reason=" + reason
+                        )
+                    }
+
+                    try {
+                        if (nativeMode) {
+                            target.evaluateJavascript(
+                                "window.__mbBackgroundStep && window.__mbBackgroundStep();",
+                                null
+                            )
+                        } else if (lastNativeMode == true) {
+                            target.evaluateJavascript(
+                                "window.__mbResumeFastScroll && window.__mbResumeFastScroll();",
+                                null
+                            )
+                        }
+                    } catch (error: Exception) {
+                        log(
+                            accountUsername,
+                            "READER: BACKGROUND_SCROLL_EVAL_ERROR error=" + error.message,
+                            true
+                        )
+                    }
+
+                    lastNativeMode = nativeMode
+                    if (
+                        backgroundScrollActive &&
+                        backgroundScrollWebView === webView &&
+                        !isShuttingDown
+                    ) {
+                        mainHandler.postDelayed(this, 180L)
+                    }
+                }
+            }
+
+            backgroundScrollRunnable = runnable
+            log(accountUsername, "READER: BACKGROUND_SCROLL_NATIVE_STARTED")
+            runnable.run()
+        }
+    }
+
+    private fun stopBackgroundScroll() {
+        backgroundScrollActive = false
+        backgroundScrollRunnable?.let { mainHandler.removeCallbacks(it) }
+        backgroundScrollRunnable = null
+        backgroundScrollWebView = null
+    }
+
+    @Volatile
     private var activeWebViewUserAgent: String = ""
 
     fun bindWebViewUserAgent(userAgent: String) {
@@ -171,6 +282,8 @@ class MangaBuffAutomation(
      * alive while another account is being prepared.
      */
     fun shutdown() {
+        isShuttingDown = true
+        stopBackgroundScroll()
         activeWebViewUserAgent = ""
         activeReaderSkip = null
         activeReaderMarkRead = null
@@ -3912,6 +4025,18 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun startBackgroundScroll() {
+                    this@MangaBuffAutomation.startBackgroundScroll(account.username, webView)
+                }
+
+                @JavascriptInterface
+                fun cancelBackgroundScroll() {
+                    mainHandler.post {
+                        stopBackgroundScroll()
+                    }
+                }
+
+                @JavascriptInterface
                 fun nativeSwipe(
                     x1: Float,
                     y1: Float,
@@ -4793,6 +4918,56 @@ class MangaBuffAutomation(
                                     var stagnantChecks = 0;
                                     var completionScheduled = false;
                                     var swipeRecoveryAttempts = 0;
+                                    var readerContinuationId = 0;
+
+                                    window.__mbPendingReaderContinuation = null;
+
+                                    /*
+                                     * Keep essential reader continuations moving when the WebView is
+                                     * hidden and Chromium throttles timers. The normal setTimeout path
+                                     * remains active; the native pulse may execute the same pending
+                                     * continuation first, and the token prevents duplicate execution.
+                                     */
+                                    function scheduleReaderContinuation(callback, delayMs) {
+                                        var task = {
+                                            id: ++readerContinuationId,
+                                            dueAt: Date.now() + delayMs,
+                                            callback: callback
+                                        };
+                                        window.__mbPendingReaderContinuation = task;
+
+                                        setTimeout(function() {
+                                            var pending = window.__mbPendingReaderContinuation;
+                                            if (!pending || pending.id !== task.id) return;
+
+                                            window.__mbPendingReaderContinuation = null;
+                                            try {
+                                                task.callback();
+                                            } catch(e) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CONTINUATION_ERROR ' +
+                                                    (e.message || String(e))
+                                                );
+                                            }
+                                        }, delayMs);
+                                    }
+
+                                    function runDueReaderContinuation() {
+                                        if (!window.__mbNativeBackgroundMode) return;
+
+                                        var task = window.__mbPendingReaderContinuation;
+                                        if (!task || Date.now() < task.dueAt) return;
+
+                                        window.__mbPendingReaderContinuation = null;
+                                        try {
+                                            task.callback();
+                                        } catch(e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: BACKGROUND_CONTINUATION_ERROR ' +
+                                                (e.message || String(e))
+                                            );
+                                        }
+                                    }
 
                                     window.__mbHistoryPostStarted = false;
                                     window.__mbHistoryPostStatus = null;
@@ -5290,6 +5465,10 @@ class MangaBuffAutomation(
                                     }
 
                                     function stopScroll() {
+                                        try {
+                                            AndroidReaderBridge.cancelBackgroundScroll();
+                                        } catch(e) {}
+
                                         if (window.__mbScrollTimer) {
                                             clearTimeout(window.__mbScrollTimer);
                                             window.__mbScrollTimer = null;
@@ -5835,7 +6014,7 @@ class MangaBuffAutomation(
                                             ' chapterId=' + state.chapterId +
                                             ' reason=' + state.waitReason
                                         );
-                                        setTimeout(function() {
+                                        scheduleReaderContinuation(function() {
                                             waitForMangaBuffConfirmation(onSuccess);
                                         }, 350);
                                     }
@@ -6090,7 +6269,7 @@ class MangaBuffAutomation(
                                                         'NEXT_CHAPTER_DISCOVERY_RETRY attempt=' + (attempt + 1) +
                                                         '/15 reason=DOM_NOT_READY_AFTER_MANGABUFF_CONFIRMATION'
                                                     );
-                                                    setTimeout(function() {
+                                                    scheduleReaderContinuation(function() {
                                                         resolveNextChapterAfterBottom(attempt + 1);
                                                     }, 1000);
                                                     return;
@@ -6105,7 +6284,7 @@ class MangaBuffAutomation(
                                             });
                                         }
 
-                                        setTimeout(function() {
+                                        scheduleReaderContinuation(function() {
                                             resolveNextChapterAfterBottom(1);
                                         }, 1200);
                                     }
@@ -6124,17 +6303,19 @@ class MangaBuffAutomation(
                                         var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000 px/s
                                         var lastFrame = performance.now();
                                         window.__mbFastScrollRunning = true;
+                                        window.__mbNativeBackgroundMode = false;
 
                                         AndroidReaderBridge.onLogStep(
                                             'READER: FAST_SMOOTH_SCROLL_STARTED speed=' + speedPxPerSecond
                                         );
 
-                                        function tick(now) {
-                                            if (chapterDone || !window.__mbFastScrollRunning) {
-                                                return;
-                                            }
+                                        function scrollStep(now, maxDeltaSeconds) {
+                                            if (chapterDone || !window.__mbFastScrollRunning) return;
 
-                                            var dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+                                            var dt = Math.min(
+                                                maxDeltaSeconds,
+                                                Math.max(0.001, (now - lastFrame) / 1000)
+                                            );
                                             lastFrame = now;
 
                                             var scrollingElement =
@@ -6168,13 +6349,72 @@ class MangaBuffAutomation(
                                                 : speedPxPerSecond;
 
                                             if (remaining > 2) {
-                                                window.scrollBy(0, currentSpeed * dt);
+                                                window.scrollBy(0, Math.min(remaining, currentSpeed * dt));
                                             }
-
-                                            window.__mbFastScrollFrame = requestAnimationFrame(tick);
                                         }
 
+                                        function tick(now) {
+                                            if (chapterDone || !window.__mbFastScrollRunning) return;
+
+                                            if (window.__mbNativeBackgroundMode) {
+                                                window.__mbFastScrollFrame = null;
+                                                return;
+                                            }
+
+                                            scrollStep(now, 0.05);
+                                            if (!window.__mbNativeBackgroundMode && !chapterDone) {
+                                                window.__mbFastScrollFrame = requestAnimationFrame(tick);
+                                            }
+                                        }
+
+                                        /*
+                                         * Android calls this function periodically when the actual
+                                         * WebView is hidden, the Activity loses visibility, or the
+                                         * display is off. It also drives time-sensitive reader state
+                                         * checks so chapter confirmation/navigation won't depend only
+                                         * on background-throttled JavaScript timers.
+                                         */
+                                        window.__mbBackgroundStep = function() {
+                                            try {
+                                                if (chapterDone || !window.__mbFastScrollRunning) return;
+
+                                                window.__mbNativeBackgroundMode = true;
+                                                if (window.__mbFastScrollFrame) {
+                                                    cancelAnimationFrame(window.__mbFastScrollFrame);
+                                                }
+                                                window.__mbFastScrollFrame = null;
+
+                                                scrollStep(performance.now(), 0.20);
+                                                checkEnd();
+                                                runDueReaderContinuation();
+                                            } catch(e) {
+                                                try {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: BACKGROUND_SCROLL_STEP_ERROR ' +
+                                                        (e.message || String(e))
+                                                    );
+                                                } catch(ignore) {}
+                                            }
+                                        };
+
+                                        window.__mbResumeFastScroll = function() {
+                                            if (chapterDone || !window.__mbFastScrollRunning) return;
+                                            window.__mbNativeBackgroundMode = false;
+                                            lastFrame = performance.now();
+                                            if (!window.__mbFastScrollFrame) {
+                                                window.__mbFastScrollFrame = requestAnimationFrame(tick);
+                                            }
+                                        };
+
                                         window.__mbFastScrollFrame = requestAnimationFrame(tick);
+                                        try {
+                                            AndroidReaderBridge.startBackgroundScroll();
+                                        } catch(e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: BACKGROUND_SCROLL_BRIDGE_ERROR ' +
+                                                (e.message || String(e))
+                                            );
+                                        }
                                     }
 
                                     var interval = setInterval(function() {
