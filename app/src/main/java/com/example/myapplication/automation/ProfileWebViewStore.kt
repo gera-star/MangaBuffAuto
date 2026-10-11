@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -197,12 +198,29 @@ class ProfileWebViewStore(
         webViewRunIds.remove(accountId)
         if (webView != null) {
             try {
-                onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "DESTROYED profile=mb_$accountId"))
+                // WebView.destroy() requires it to be removed from the view system.
+                // Compose may not have recomposed yet after onWebViewCleared(), so
+                // detach explicitly before stopping and destroying this instance.
+                (webView.parent as? ViewGroup)?.removeView(webView)
                 webView.stopLoading()
                 webView.loadUrl("about:blank")
                 webView.destroy()
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "RELEASED profile=mb_$accountId instance=${webView.hashCode()}"
+                    )
+                )
             } catch (e: Exception) {
-                // ignore
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "RELEASE_FAILED profile=mb_$accountId instance=${webView.hashCode()} error=${e.message}",
+                        isError = true
+                    )
+                )
             }
         }
     }
