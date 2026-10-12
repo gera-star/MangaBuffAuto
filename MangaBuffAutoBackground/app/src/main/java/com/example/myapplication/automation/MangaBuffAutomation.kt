@@ -247,6 +247,8 @@ class MangaBuffAutomation(
     private var backgroundViewportHeight = 0L
     private var backgroundRemaining = Long.MAX_VALUE
     private var backgroundLastConfirmationTickAt = 0L
+    private var backgroundConfirmationTickInFlight = false
+    private var backgroundConfirmationTickRequestId = 0L
 
     private fun startBackgroundScroll(accountUsername: String, webView: WebView) {
         mainHandler.post {
@@ -270,6 +272,7 @@ class MangaBuffAutomation(
             backgroundViewportHeight = 0L
             backgroundRemaining = Long.MAX_VALUE
             backgroundLastConfirmationTickAt = 0L
+            backgroundConfirmationTickInFlight = false
 
             val runnable = object : Runnable {
                 override fun run() {
@@ -309,15 +312,36 @@ class MangaBuffAutomation(
                     val backgroundMode = screenOff || !target.hasWindowFocus() || !target.isShown
                     if (backgroundMode) {
                         val tickNow = SystemClock.elapsedRealtime()
-                        if (tickNow - backgroundLastConfirmationTickAt >= BACKGROUND_CONFIRMATION_TICK_INTERVAL_MS) {
+                        if (
+                            !backgroundConfirmationTickInFlight &&
+                            tickNow - backgroundLastConfirmationTickAt >= BACKGROUND_CONFIRMATION_TICK_INTERVAL_MS
+                        ) {
                             backgroundLastConfirmationTickAt = tickNow
+                            backgroundConfirmationTickInFlight = true
+                            val requestId = ++backgroundConfirmationTickRequestId
                             try {
-                                // Advance only a due reader-completion continuation for this account's WebView.
+                                // Keep at most one native continuation evaluation in flight for this account's WebView.
                                 target.evaluateJavascript(
-                                    "window.__mbNativeConfirmationTick && window.__mbNativeConfirmationTick();",
-                                    null
-                                )
+                                    "window.__mbNativeConfirmationTick && window.__mbNativeConfirmationTick();"
+                                ) { _ ->
+                                    if (
+                                        backgroundScrollActive &&
+                                        backgroundScrollWebView === target &&
+                                        generation == backgroundScrollGeneration &&
+                                        requestId == backgroundConfirmationTickRequestId
+                                    ) {
+                                        backgroundConfirmationTickInFlight = false
+                                    }
+                                }
                             } catch (e: Exception) {
+                                if (
+                                    backgroundScrollActive &&
+                                    backgroundScrollWebView === target &&
+                                    generation == backgroundScrollGeneration &&
+                                    requestId == backgroundConfirmationTickRequestId
+                                ) {
+                                    backgroundConfirmationTickInFlight = false
+                                }
                                 log(
                                     accountUsername,
                                     "READER: BACKGROUND_CONFIRMATION_TICK_ERROR error=${e.message}",
@@ -573,6 +597,8 @@ class MangaBuffAutomation(
         backgroundViewportHeight = 0L
         backgroundRemaining = Long.MAX_VALUE
         backgroundLastConfirmationTickAt = 0L
+        backgroundConfirmationTickInFlight = false
+        backgroundConfirmationTickRequestId += 1L
     }
 
     /**
