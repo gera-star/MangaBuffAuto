@@ -5432,6 +5432,56 @@ class MangaBuffAutomation(
                                         }
                                     }
 
+                                    // Observe the WebView/page lifecycle without spoofing visibility or focus.
+                                    // These records help distinguish Android WebView throttling from reader-script failures.
+                                    (function installPageActivityDiagnostics() {
+                                        if (window.__mbPageActivityDiagnosticsInstalled) return;
+                                        window.__mbPageActivityDiagnosticsInstalled = true;
+
+                                        var lastReportedState = '';
+
+                                        function reportPageActivity(source) {
+                                            try {
+                                                var hidden = !!document.hidden;
+                                                var visibility = String(document.visibilityState || 'unknown');
+                                                var focused = false;
+                                                try {
+                                                    focused = !!document.hasFocus();
+                                                } catch(ignoreFocus) {}
+
+                                                var state = 'hidden=' + hidden +
+                                                    ' visibility=' + visibility +
+                                                    ' hasFocus=' + focused;
+
+                                                if (source !== 'START' && state === lastReportedState) return;
+                                                lastReportedState = state;
+
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: PAGE_ACTIVITY source=' + source + ' ' + state
+                                                );
+                                            } catch(ignoreReport) {}
+                                        }
+
+                                        reportPageActivity('START');
+                                        document.addEventListener('visibilitychange', function() {
+                                            reportPageActivity('VISIBILITY_CHANGE');
+                                        }, { passive: true });
+                                        window.addEventListener('blur', function() {
+                                            reportPageActivity('WINDOW_BLUR');
+                                        }, { passive: true });
+                                        window.addEventListener('focus', function() {
+                                            reportPageActivity('WINDOW_FOCUS');
+                                        }, { passive: true });
+
+                                        // Chromium may dispatch these lifecycle events when freezing/resuming a page.
+                                        document.addEventListener('freeze', function() {
+                                            reportPageActivity('FREEZE');
+                                        }, { passive: true });
+                                        document.addEventListener('resume', function() {
+                                            reportPageActivity('RESUME');
+                                        }, { passive: true });
+                                    })();
+
                                     var startMs = Date.now();
                                     var chapterDone = false;
                                     var bottomStarted = 0;
