@@ -392,8 +392,27 @@ class MangaBuffAutomation(
                                     "READER: BACKGROUND_SCROLL_STALLED_NEAR_BOTTOM idleMs=${idleMs} " +
                                         "y=${backgroundLastScrollY ?: -1L} height=${backgroundScrollHeight} " +
                                         "viewport=${backgroundViewportHeight} remaining=${backgroundRemaining} " +
-                                        "recovery=SKIPPED"
+                                        "recovery=JS_END_CHECK"
                                 )
+
+                                // Near the bottom, avoid a disruptive page reload or another gesture.
+                                // Ask the reader's existing bounded step to advance/checkEnd once.
+                                try {
+                                    target.evaluateJavascript(
+                                        "window.__mbBackgroundStep && window.__mbBackgroundStep();",
+                                        null
+                                    )
+                                    log(
+                                        accountUsername,
+                                        "READER: BACKGROUND_SCROLL_NEAR_BOTTOM_RECOVERY_DISPATCHED"
+                                    )
+                                } catch (e: Exception) {
+                                    log(
+                                        accountUsername,
+                                        "READER: BACKGROUND_SCROLL_NEAR_BOTTOM_RECOVERY_ERROR error=${e.message}",
+                                        true
+                                    )
+                                }
                             }
                         }
                     }
