@@ -156,6 +156,7 @@ class MangaBuffAutomation(
         private const val BACKGROUND_SCROLL_STALL_MS = 8_000L
         private const val BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS = 15_000L
         private const val BACKGROUND_CONFIRMATION_TICK_INTERVAL_MS = 500L
+        private const val BACKGROUND_CONFIRMATION_TICK_TIMEOUT_MS = 4_500L
         private const val BACKGROUND_SCROLL_METRICS_JS = """
             (function() {
                 var s = document.scrollingElement || document.documentElement || document.body;
@@ -247,6 +248,8 @@ class MangaBuffAutomation(
     private var backgroundViewportHeight = 0L
     private var backgroundRemaining = Long.MAX_VALUE
     private var backgroundLastConfirmationTickAt = 0L
+    private var backgroundConfirmationTickAt = 0L
+    private var backgroundLastConfirmationTimeoutLogAt = 0L
     private var backgroundConfirmationTickInFlight = false
     private var backgroundConfirmationTickRequestId = 0L
 
@@ -272,6 +275,8 @@ class MangaBuffAutomation(
             backgroundViewportHeight = 0L
             backgroundRemaining = Long.MAX_VALUE
             backgroundLastConfirmationTickAt = 0L
+            backgroundConfirmationTickAt = 0L
+            backgroundLastConfirmationTimeoutLogAt = 0L
             backgroundConfirmationTickInFlight = false
 
             val runnable = object : Runnable {
@@ -313,10 +318,33 @@ class MangaBuffAutomation(
                     if (backgroundMode) {
                         val tickNow = SystemClock.elapsedRealtime()
                         if (
+                            backgroundConfirmationTickInFlight &&
+                            tickNow - backgroundConfirmationTickAt >= BACKGROUND_CONFIRMATION_TICK_TIMEOUT_MS
+                        ) {
+                            val timedOutMs = tickNow - backgroundConfirmationTickAt
+                            // A lost evaluateJavascript callback must not permanently block this
+                            // account's confirmation pump. Invalidate the stale callback before retrying.
+                            backgroundConfirmationTickInFlight = false
+                            backgroundConfirmationTickAt = 0L
+                            backgroundConfirmationTickRequestId += 1L
+                            if (
+                                backgroundLastConfirmationTimeoutLogAt == 0L ||
+                                tickNow - backgroundLastConfirmationTimeoutLogAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS
+                            ) {
+                                backgroundLastConfirmationTimeoutLogAt = tickNow
+                                log(
+                                    accountUsername,
+                                    "READER: BACKGROUND_CONFIRMATION_TICK_TIMEOUT elapsed=${timedOutMs}ms url=${target.url.orEmpty()}",
+                                    true
+                                )
+                            }
+                        }
+                        if (
                             !backgroundConfirmationTickInFlight &&
                             tickNow - backgroundLastConfirmationTickAt >= BACKGROUND_CONFIRMATION_TICK_INTERVAL_MS
                         ) {
                             backgroundLastConfirmationTickAt = tickNow
+                            backgroundConfirmationTickAt = tickNow
                             backgroundConfirmationTickInFlight = true
                             val requestId = ++backgroundConfirmationTickRequestId
                             try {
@@ -331,6 +359,7 @@ class MangaBuffAutomation(
                                         requestId == backgroundConfirmationTickRequestId
                                     ) {
                                         backgroundConfirmationTickInFlight = false
+                                        backgroundConfirmationTickAt = 0L
                                     }
                                 }
                             } catch (e: Exception) {
@@ -341,6 +370,7 @@ class MangaBuffAutomation(
                                     requestId == backgroundConfirmationTickRequestId
                                 ) {
                                     backgroundConfirmationTickInFlight = false
+                                    backgroundConfirmationTickAt = 0L
                                 }
                                 log(
                                     accountUsername,
@@ -597,6 +627,8 @@ class MangaBuffAutomation(
         backgroundViewportHeight = 0L
         backgroundRemaining = Long.MAX_VALUE
         backgroundLastConfirmationTickAt = 0L
+        backgroundConfirmationTickAt = 0L
+        backgroundLastConfirmationTimeoutLogAt = 0L
         backgroundConfirmationTickInFlight = false
         backgroundConfirmationTickRequestId += 1L
     }
