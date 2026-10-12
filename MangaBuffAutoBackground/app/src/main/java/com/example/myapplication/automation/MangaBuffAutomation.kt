@@ -6396,10 +6396,14 @@ class MangaBuffAutomation(
                                         try {
                                             continuation();
                                         } catch (e) {
+                                            cancelReaderContinuation();
+                                            chapterDone = true;
                                             AndroidReaderBridge.onLogStep(
-                                                'READER: CONTINUATION_ERROR source=' + source +
-                                                ' error=' + (e && e.message ? e.message : e)
+                                                'READER: CONTINUATION_ERROR_FAIL_CLOSED source=' + source +
+                                                ' error=' + (e && e.message ? e.message : e),
+                                                true
                                             );
+                                            AndroidReaderBridge.onNextChapterUnknown();
                                         } finally {
                                             readerContinuationRunning = false;
                                         }
