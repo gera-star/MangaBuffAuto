@@ -6807,8 +6807,8 @@ class MangaBuffAutomation(
                                                     var url = new URL(link.getAttribute('href') || link.href, window.location.href);
                                                     if (url.origin !== window.location.origin) return;
 
-                                                    var chapterPath = (url.pathname || '').replace(/\\/+$/, '');
-                                                    if (!/^\\/manga\\/[^/]+\\/\\d+\\/\\d+$/.test(chapterPath)) return;
+                                                    var chapterPath = (url.pathname || '').replace(/\/+$/, '');
+                                                    if (!/^\/manga\/[^/]+\/\d+\/\d+$/.test(chapterPath)) return;
 
                                                     uniqueChapterPaths.add(chapterPath);
                                                 } catch(ignoreLink) {}
