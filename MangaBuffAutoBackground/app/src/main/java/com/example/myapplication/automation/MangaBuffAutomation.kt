@@ -6855,6 +6855,10 @@ class MangaBuffAutomation(
 
                                         var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000 px/s
                                         var lastFrame = performance.now();
+                                        var lastScrollMetricsRefreshAt = 0;
+                                        var cachedScrollHeight = 0;
+                                        var cachedViewportHeight = 1;
+                                        var lastFrameGapLogAt = 0;
                                         window.__mbFastScrollRunning = true;
 
                                         AndroidReaderBridge.onLogStep(
@@ -6866,7 +6870,23 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
-                                            var dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+                                            var frameGapMs = Math.max(0, now - lastFrame);
+                                            if (frameGapMs >= 350) {
+                                                var logNow = Date.now();
+                                                if (logNow - lastFrameGapLogAt >= 15000) {
+                                                    lastFrameGapLogAt = logNow;
+                                                    try {
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'READER: SCROLL_FRAME_GAP durationMs=' + Math.round(frameGapMs) +
+                                                            ' visibility=' + document.visibilityState +
+                                                            ' hidden=' + document.hidden +
+                                                            ' readyState=' + document.readyState
+                                                        );
+                                                    } catch(e) {}
+                                                }
+                                            }
+
+                                            var dt = Math.min(0.05, frameGapMs / 1000);
                                             lastFrame = now;
 
                                             var scrollingElement =
@@ -6879,18 +6899,27 @@ class MangaBuffAutomation(
                                                 scrollingElement ? (scrollingElement.scrollTop || 0) : 0
                                             );
 
-                                            var viewport = Math.max(
-                                                window.innerHeight || 0,
-                                                scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                                1
-                                            );
+                                            // Scroll position changes every frame; expensive document-height
+                                            // reads are refreshed 4 times a second instead of on every frame.
+                                            if (
+                                                lastScrollMetricsRefreshAt === 0 ||
+                                                now - lastScrollMetricsRefreshAt >= 250
+                                            ) {
+                                                cachedViewportHeight = Math.max(
+                                                    window.innerHeight || 0,
+                                                    scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
+                                                    1
+                                                );
+                                                cachedScrollHeight = Math.max(
+                                                    scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
+                                                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                                                    document.body ? (document.body.scrollHeight || 0) : 0
+                                                );
+                                                lastScrollMetricsRefreshAt = now;
+                                            }
 
-                                            var height = Math.max(
-                                                scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
-                                                document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
-                                                document.body ? (document.body.scrollHeight || 0) : 0
-                                            );
-
+                                            var viewport = cachedViewportHeight;
+                                            var height = cachedScrollHeight;
                                             var remaining = Math.max(0, height - viewport - y);
 
                                             // Slow down only in the final viewport so the existing
@@ -7137,6 +7166,12 @@ class MangaBuffAutomation(
                         val script = """
                             (function() {
                                 try {
+                                    function parsePositiveCount(value) {
+                                        var digits = String(value || '').replace(/[^0-9]/g, '');
+                                        var count = parseInt(digits, 10);
+                                        return isFinite(count) && count > 0 ? count : 0;
+                                    }
+
                                     function detectTotalChapters() {
                                         try {
                                             var path = window.location.pathname || "";
@@ -7144,22 +7179,37 @@ class MangaBuffAutomation(
                                             var isMangaPage = (parts.length === 2 && parts[0] === 'manga');
                                             if (!isMangaPage) return 0;
 
-                                            var count1 = document.querySelectorAll('.chapters__item').length;
-                                            var count2 = document.querySelectorAll('.chapters__list a').length;
-                                            var count3 = document.querySelectorAll('.manga__chapters-list .chapters__item').length;
+                                            // MangaBuff's chapters tab displays the actual total, e.g. "Главы (314)".
+                                            // Do not use rendered DOM item count: the site can limit that list to 100 items.
+                                            var chapterTab = document.querySelector(
+                                                'button.tabs__item[data-page="chapters"], .tabs__item[data-page="chapters"]'
+                                            );
+                                            if (chapterTab) {
+                                                var candidates = [
+                                                    chapterTab.getAttribute('data-count'),
+                                                    chapterTab.getAttribute('data-total'),
+                                                    chapterTab.getAttribute('aria-label'),
+                                                    chapterTab.innerText || chapterTab.textContent || ''
+                                                ];
 
-                                            var total = Math.max(count1, count2, count3);
-                                            return total;
+                                                for (var i = 0; i < candidates.length; i++) {
+                                                    var candidate = String(candidates[i] || '').trim();
+                                                    if (!candidate) continue;
+
+                                                    var match = candidate.match(/\(\s*([0-9][0-9\s.,]*)\s*\)/);
+                                                    var count = parsePositiveCount(match ? match[1] : candidate);
+                                                    if (count > 0) return count;
+                                                }
+                                            }
                                         } catch(e) {
                                             console.warn("READER: TOTAL_CHAPTERS_SCAN_ERROR", e);
                                         }
+
+                                        // Unknown is safer than displaying a partial list's length as the total.
                                         return 0;
                                     }
 
                                     var totalFound = detectTotalChapters();
-                                    if (totalFound > 0) {
-                                        AndroidReaderBridge.onTotalChaptersFound(totalFound);
-                                    }
 
                                     var readBtn = document.querySelector('a.read-btn');
                                     var bodyText = (document.body && (document.body.innerText || document.body.textContent || '')).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -7181,6 +7231,11 @@ class MangaBuffAutomation(
                                         AndroidReaderBridge.onReadButtonUrlAudit(window.location.href, document.baseURI, raw, href);
                                         AndroidReaderBridge.onLogStep('OPEN_CHAPTER');
                                         AndroidReaderBridge.onSaveActiveManga(window.location.href, document.title || '');
+                                        if (totalFound > 0) {
+                                            AndroidReaderBridge.onTotalChaptersFound(totalFound);
+                                        } else {
+                                            AndroidReaderBridge.onLogStep('READER: TOTAL_CHAPTERS_UNKNOWN_ON_MANGA_PAGE');
+                                        }
 
                                         if (href) {
                                             window.location.href = href;
@@ -7201,16 +7256,7 @@ class MangaBuffAutomation(
                                         var path = window.location.pathname || "";
                                         var parts = path.split('/').filter(Boolean);
                                         var isMangaPage = (parts.length === 2 && parts[0] === 'manga');
-                                        if (isMangaPage) {
-                                            var count1 = document.querySelectorAll('.chapters__item').length;
-                                            var count2 = document.querySelectorAll('.chapters__list a').length;
-                                            var count3 = document.querySelectorAll('.manga__chapters-list .chapters__item').length;
-                                            var total = Math.max(count1, count2, count3);
-                                            if (total > 0) {
-                                                AndroidReaderBridge.onTotalChaptersFound(total);
-                                            }
-                                        }
-
+                                        var total = isMangaPage ? detectTotalChapters() : 0;
                                         var items = document.querySelectorAll('.chapters__item, .chapters__list a, [data-chapter-id], .manga__chapters-list .chapters__item');
                                         if (!items.length) {
                                             AndroidReaderBridge.onLogStep('MANGA_NO_CHAPTERS');
@@ -7218,7 +7264,12 @@ class MangaBuffAutomation(
                                             return;
                                         }
 
-                                        AndroidReaderBridge.onTotalChaptersFound(items.length);
+                                        AndroidReaderBridge.onSaveActiveManga(window.location.href, document.title || '');
+                                        if (total > 0) {
+                                            AndroidReaderBridge.onTotalChaptersFound(total);
+                                        } else {
+                                            AndroidReaderBridge.onLogStep('READER: TOTAL_CHAPTERS_UNKNOWN_ON_MANGA_PAGE');
+                                        }
 
                                         var first = Array.from(items).find(function(item) {
                                             return !!item.querySelector('a');
@@ -7226,7 +7277,6 @@ class MangaBuffAutomation(
 
                                         var a = first ? first.querySelector('a') : null;
                                         if (a && a.href) {
-                                            AndroidReaderBridge.onSaveActiveManga(window.location.href, document.title || '');
                                             window.location.href = a.href;
                                         } else {
                                             AndroidReaderBridge.onNextChapterUnknown();
