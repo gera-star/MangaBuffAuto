@@ -5,7 +5,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -24,6 +27,7 @@ class ProfileWebViewStore(
     private val onLog: (LogEntry) -> Unit = {},
     private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val activeWebViews = mutableMapOf<String, WebView>()
     private val attachDeferreds = mutableMapOf<String, CompletableDeferred<Unit>>()
     private val webViewRunIds = mutableMapOf<String, String>()
@@ -222,15 +226,46 @@ class ProfileWebViewStore(
         val webView = activeWebViews.remove(accountId)
         attachDeferreds.remove(accountId)
         webViewRunIds.remove(accountId)
-        if (webView != null) {
+        if (webView == null) return
+
+        // WebView lifecycle methods must run on the main thread. Account jobs may stop
+        // from an IO coroutine when a network/task failure occurs.
+        val release = Runnable {
             try {
-                onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "DESTROYED profile=mb_$accountId"))
+                (webView.parent as? ViewGroup)?.removeView(webView)
                 webView.stopLoading()
                 webView.loadUrl("about:blank")
                 webView.destroy()
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "DESTROYED_ON_MAIN profile=mb_$accountId instance=${webView.hashCode()}"
+                    )
+                )
             } catch (e: Exception) {
-                // ignore
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "WEBVIEW",
+                        message = "DESTROY_ERROR profile=mb_$accountId error=${e.message}",
+                        isError = true
+                    )
+                )
             }
+        }
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            release.run()
+        } else {
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "WEBVIEW",
+                    message = "DESTROY_SCHEDULED_ON_MAIN profile=mb_$accountId instance=${webView.hashCode()}"
+                )
+            )
+            mainHandler.post(release)
         }
     }
 
