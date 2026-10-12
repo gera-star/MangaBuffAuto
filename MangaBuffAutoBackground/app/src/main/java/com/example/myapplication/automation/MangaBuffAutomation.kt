@@ -6712,7 +6712,7 @@ class MangaBuffAutomation(
                                         var cachedViewport = 0;
                                         var cachedHeight = 0;
                                         var lastLayoutSampleAt = 0;
-                                        var lastFrameGapLogAt = 0;
+                                        var lastFrameGapLogAt = -5000;
 
                                         function tick(now) {
                                             if (chapterDone || !window.__mbFastScrollRunning) {
