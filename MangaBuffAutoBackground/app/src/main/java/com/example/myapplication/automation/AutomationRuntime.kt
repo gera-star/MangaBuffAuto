@@ -140,6 +140,20 @@ class AutomationRuntime(
     fun stopAccount(accountId: String) {
         executionJobs.remove(accountId)?.cancel()
 
+        // Stop account-scoped JS/native callbacks before releasing their WebView.
+        // Otherwise a queued reader tick may target a WebView while it is being destroyed.
+        val engine = automationEngines.remove(accountId)
+        if (engine != null) {
+            engine.closeRuntime()
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "ENGINE",
+                    message = "STOP / DESTROY engineId=${engine.hashCode()} accountId=$accountId"
+                )
+            )
+        }
+
         val runtime = runtimes.remove(accountId)
         if (runtime != null) {
             runtime.state = AccountState.STOPPED
@@ -150,18 +164,6 @@ class AutomationRuntime(
                     username = accountId,
                     component = "ACCOUNT",
                     message = "STOPPED accountId=$accountId runId=${runtime.runId} webView=${runtime.webView.hashCode()}"
-                )
-            )
-        }
-
-        val engine = automationEngines.remove(accountId)
-        if (engine != null) {
-            engine.closeRuntime()
-            onLog(
-                LogEntry(
-                    username = accountId,
-                    component = "ENGINE",
-                    message = "STOP / DESTROY engineId=${engine.hashCode()} accountId=$accountId"
                 )
             )
         }
