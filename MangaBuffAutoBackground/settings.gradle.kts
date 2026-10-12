@@ -22,6 +22,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MangaBuffAutoBackground"
+rootProject.name = "MangaBuffAutoBackground_ReaderFix"
 include(":app")
  
