@@ -4683,6 +4683,23 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun onReaderTotalChaptersFound(total: Int) {
+                    if (total <= 0) return
+
+                    // The reader's chapter menu is the authoritative list for this manga.
+                    // Replace the catalogue-derived value (which may only count a page of 100).
+                    val previous = totalMangaChapters
+                    if (previous != total) {
+                        totalMangaChapters = total
+                        log(
+                            account.username,
+                            "READER: TOTAL_CHAPTERS_READER_LIST total=$total previous=$previous"
+                        )
+                        updateReaderStatus(account)
+                    }
+                }
+
+                @JavascriptInterface
                 fun onSaveActiveManga(url: String, title: String) {
                     val canonical = ensureCanonicalMangaUrl(url)
                     if (canonical.isNotBlank() && canonical != currentMangaUrl) {
@@ -6690,13 +6707,29 @@ class MangaBuffAutomation(
                                             'READER: FAST_SMOOTH_SCROLL_STARTED speed=' + speedPxPerSecond
                                         );
 
+                                        // scrollHeight/clientHeight reads can force synchronous layout.
+                                        // Sample layout dimensions at most every 250 ms instead of every frame.
+                                        var cachedViewport = 0;
+                                        var cachedHeight = 0;
+                                        var lastLayoutSampleAt = 0;
+                                        var lastFrameGapLogAt = 0;
+
                                         function tick(now) {
                                             if (chapterDone || !window.__mbFastScrollRunning) {
                                                 return;
                                             }
 
-                                            var dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+                                            var frameDeltaMs = Math.max(0, now - lastFrame);
+                                            var dt = Math.min(0.05, frameDeltaMs / 1000);
                                             lastFrame = now;
+
+                                            if (frameDeltaMs >= 350 && now - lastFrameGapLogAt >= 5000) {
+                                                lastFrameGapLogAt = now;
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: SCROLL_FRAME_GAP deltaMs=' + Math.floor(frameDeltaMs) +
+                                                    ' y=' + Math.floor(window.scrollY || window.pageYOffset || 0)
+                                                );
+                                            }
 
                                             var scrollingElement =
                                                 document.scrollingElement ||
@@ -6708,18 +6741,26 @@ class MangaBuffAutomation(
                                                 scrollingElement ? (scrollingElement.scrollTop || 0) : 0
                                             );
 
-                                            var viewport = Math.max(
-                                                window.innerHeight || 0,
-                                                scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                                1
-                                            );
+                                            if (
+                                                cachedViewport <= 0 ||
+                                                cachedHeight <= 0 ||
+                                                now - lastLayoutSampleAt >= 250
+                                            ) {
+                                                cachedViewport = Math.max(
+                                                    window.innerHeight || 0,
+                                                    scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
+                                                    1
+                                                );
+                                                cachedHeight = Math.max(
+                                                    scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
+                                                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                                                    document.body ? (document.body.scrollHeight || 0) : 0
+                                                );
+                                                lastLayoutSampleAt = now;
+                                            }
 
-                                            var height = Math.max(
-                                                scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
-                                                document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
-                                                document.body ? (document.body.scrollHeight || 0) : 0
-                                            );
-
+                                            var viewport = cachedViewport;
+                                            var height = cachedHeight;
                                             var remaining = Math.max(0, height - viewport - y);
 
                                             // Slow down only in the final viewport so the existing
@@ -6752,6 +6793,91 @@ class MangaBuffAutomation(
                                             }, 1000);
                                         }
                                     }, 700);
+
+                                    function reportReaderChapterTotal(source) {
+                                        try {
+                                            var chapterList = document.querySelector('.reader-chapters');
+                                            if (!chapterList) return 0;
+
+                                            var links = chapterList.querySelectorAll('a.reader-chapters__item[href]');
+                                            var uniqueChapterPaths = new Set();
+
+                                            Array.prototype.forEach.call(links, function(link) {
+                                                try {
+                                                    var url = new URL(link.getAttribute('href') || link.href, window.location.href);
+                                                    if (url.origin !== window.location.origin) return;
+
+                                                    var chapterPath = (url.pathname || '').replace(/\\/+$/, '');
+                                                    if (!/^\\/manga\\/[^/]+\\/\\d+\\/\\d+$/.test(chapterPath)) return;
+
+                                                    uniqueChapterPaths.add(chapterPath);
+                                                } catch(ignoreLink) {}
+                                            });
+
+                                            var total = uniqueChapterPaths.size;
+                                            if (total > 0) {
+                                                AndroidReaderBridge.onReaderTotalChaptersFound(total);
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_TOTAL_FROM_READER_LIST total=' + total +
+                                                    ' source=' + source
+                                                );
+                                            }
+                                            return total;
+                                        } catch(e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: CHAPTER_TOTAL_SCAN_ERROR ' + (e.message || String(e))
+                                            );
+                                            return 0;
+                                        }
+                                    }
+
+                                    (function scanReaderChapterTotal() {
+                                        if (reportReaderChapterTotal('INITIAL_DOM') > 0) return;
+
+                                        var buttonSelector =
+                                            'button.reader-menu__item.reader-menu__item--chapters[data-popup="popup--chapters-select"]';
+                                        var menuButton = document.querySelector(buttonSelector);
+                                        if (!menuButton) {
+                                            AndroidReaderBridge.onLogStep('READER: CHAPTER_TOTAL_MENU_BUTTON_NOT_FOUND');
+                                            return;
+                                        }
+
+                                        var openedByScanner = false;
+                                        try {
+                                            menuButton.click();
+                                            openedByScanner = true;
+                                        } catch(ignoreOpen) {}
+
+                                        var attempts = 0;
+                                        function pollReaderChapterList() {
+                                            attempts++;
+                                            if (reportReaderChapterTotal('MENU_ATTEMPT_' + attempts) > 0) {
+                                                if (openedByScanner) {
+                                                    var buttonToClose = document.querySelector(buttonSelector);
+                                                    if (buttonToClose) {
+                                                        try { buttonToClose.click(); } catch(ignoreClose) {}
+                                                    }
+                                                }
+                                                return;
+                                            }
+
+                                            if (attempts < 6) {
+                                                setTimeout(pollReaderChapterList, 120);
+                                            } else {
+                                                if (openedByScanner) {
+                                                    var buttonToClose = document.querySelector(buttonSelector);
+                                                    if (buttonToClose) {
+                                                        try { buttonToClose.click(); } catch(ignoreClose) {}
+                                                    }
+                                                }
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_TOTAL_NOT_FOUND attempts=' + attempts
+                                                );
+                                            }
+                                        }
+
+                                        setTimeout(pollReaderChapterList, 100);
+                                    })();
 
                                     humanScroll();
 
