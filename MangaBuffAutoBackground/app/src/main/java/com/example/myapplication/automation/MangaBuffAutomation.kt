@@ -6831,55 +6831,71 @@ class MangaBuffAutomation(
                                         }
                                     }
 
+                                    var readerScrollStarted = false;
+                                    function startReaderScrollOnce() {
+                                        if (readerScrollStarted) return;
+                                        readerScrollStarted = true;
+                                        humanScroll();
+                                    }
+
                                     (function scanReaderChapterTotal() {
-                                        if (reportReaderChapterTotal('INITIAL_DOM') > 0) return;
-
-                                        var buttonSelector =
-                                            'button.reader-menu__item.reader-menu__item--chapters[data-popup="popup--chapters-select"]';
-                                        var menuButton = document.querySelector(buttonSelector);
-                                        if (!menuButton) {
-                                            AndroidReaderBridge.onLogStep('READER: CHAPTER_TOTAL_MENU_BUTTON_NOT_FOUND');
-                                            return;
-                                        }
-
-                                        var openedByScanner = false;
                                         try {
-                                            menuButton.click();
-                                            openedByScanner = true;
-                                        } catch(ignoreOpen) {}
-
-                                        var attempts = 0;
-                                        function pollReaderChapterList() {
-                                            attempts++;
-                                            if (reportReaderChapterTotal('MENU_ATTEMPT_' + attempts) > 0) {
-                                                if (openedByScanner) {
-                                                    var buttonToClose = document.querySelector(buttonSelector);
-                                                    if (buttonToClose) {
-                                                        try { buttonToClose.click(); } catch(ignoreClose) {}
-                                                    }
-                                                }
+                                            if (reportReaderChapterTotal('INITIAL_DOM') > 0) {
+                                                startReaderScrollOnce();
                                                 return;
                                             }
 
-                                            if (attempts < 6) {
-                                                setTimeout(pollReaderChapterList, 120);
-                                            } else {
-                                                if (openedByScanner) {
-                                                    var buttonToClose = document.querySelector(buttonSelector);
-                                                    if (buttonToClose) {
-                                                        try { buttonToClose.click(); } catch(ignoreClose) {}
-                                                    }
-                                                }
-                                                AndroidReaderBridge.onLogStep(
-                                                    'READER: CHAPTER_TOTAL_NOT_FOUND attempts=' + attempts
-                                                );
+                                            var buttonSelector =
+                                                'button.reader-menu__item.reader-menu__item--chapters[data-popup="popup--chapters-select"]';
+                                            var menuButton = document.querySelector(buttonSelector);
+                                            if (!menuButton) {
+                                                AndroidReaderBridge.onLogStep('READER: CHAPTER_TOTAL_MENU_BUTTON_NOT_FOUND');
+                                                startReaderScrollOnce();
+                                                return;
                                             }
+
+                                            var openedByScanner = false;
+                                            try {
+                                                menuButton.click();
+                                                openedByScanner = true;
+                                            } catch(ignoreOpen) {}
+
+                                            function closeMenuIfOpened() {
+                                                if (!openedByScanner) return;
+                                                var buttonToClose = document.querySelector(buttonSelector);
+                                                if (buttonToClose) {
+                                                    try { buttonToClose.click(); } catch(ignoreClose) {}
+                                                }
+                                            }
+
+                                            var attempts = 0;
+                                            function pollReaderChapterList() {
+                                                attempts++;
+                                                if (reportReaderChapterTotal('MENU_ATTEMPT_' + attempts) > 0) {
+                                                    closeMenuIfOpened();
+                                                    startReaderScrollOnce();
+                                                    return;
+                                                }
+
+                                                if (attempts < 6) {
+                                                    setTimeout(pollReaderChapterList, 120);
+                                                } else {
+                                                    closeMenuIfOpened();
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: CHAPTER_TOTAL_NOT_FOUND attempts=' + attempts
+                                                    );
+                                                    startReaderScrollOnce();
+                                                }
+                                            }
+
+                                            setTimeout(pollReaderChapterList, 100);
+                                        } catch(e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: CHAPTER_TOTAL_SCAN_ERROR ' + (e.message || String(e))
+                                            );
+                                            startReaderScrollOnce();
                                         }
-
-                                        setTimeout(pollReaderChapterList, 100);
                                     })();
-
-                                    humanScroll();
 
                                 } catch(e) {
                                     AndroidReaderBridge.onLogStep('READER: SCRIPT_EXCEPTION ' + (e.message || String(e)));
