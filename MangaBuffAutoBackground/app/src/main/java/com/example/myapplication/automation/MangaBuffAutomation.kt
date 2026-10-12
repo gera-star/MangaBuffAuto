@@ -155,6 +155,7 @@ class MangaBuffAutomation(
         private const val BACKGROUND_SCROLL_METRICS_TIMEOUT_MS = 4_500L
         private const val BACKGROUND_SCROLL_STALL_MS = 8_000L
         private const val BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS = 15_000L
+        private const val BACKGROUND_CONFIRMATION_TICK_INTERVAL_MS = 500L
         private const val BACKGROUND_SCROLL_METRICS_JS = """
             (function() {
                 var s = document.scrollingElement || document.documentElement || document.body;
@@ -245,6 +246,7 @@ class MangaBuffAutomation(
     private var backgroundScrollHeight = 0L
     private var backgroundViewportHeight = 0L
     private var backgroundRemaining = Long.MAX_VALUE
+    private var backgroundLastConfirmationTickAt = 0L
 
     private fun startBackgroundScroll(accountUsername: String, webView: WebView) {
         mainHandler.post {
@@ -267,6 +269,7 @@ class MangaBuffAutomation(
             backgroundScrollHeight = 0L
             backgroundViewportHeight = 0L
             backgroundRemaining = Long.MAX_VALUE
+            backgroundLastConfirmationTickAt = 0L
 
             val runnable = object : Runnable {
                 override fun run() {
@@ -306,6 +309,23 @@ class MangaBuffAutomation(
                     val backgroundMode = screenOff || !target.hasWindowFocus() || !target.isShown
                     if (backgroundMode) {
                         val tickNow = SystemClock.elapsedRealtime()
+                        if (tickNow - backgroundLastConfirmationTickAt >= BACKGROUND_CONFIRMATION_TICK_INTERVAL_MS) {
+                            backgroundLastConfirmationTickAt = tickNow
+                            try {
+                                // Advance only a due reader-completion continuation for this account's WebView.
+                                target.evaluateJavascript(
+                                    "window.__mbNativeConfirmationTick && window.__mbNativeConfirmationTick();",
+                                    null
+                                )
+                            } catch (e: Exception) {
+                                log(
+                                    accountUsername,
+                                    "READER: BACKGROUND_CONFIRMATION_TICK_ERROR error=${e.message}",
+                                    true
+                                )
+                            }
+                        }
+
                         if (
                             backgroundMetricsRequestInFlight &&
                             tickNow - backgroundMetricsRequestAt >= BACKGROUND_SCROLL_METRICS_TIMEOUT_MS
@@ -552,6 +572,7 @@ class MangaBuffAutomation(
         backgroundScrollHeight = 0L
         backgroundViewportHeight = 0L
         backgroundRemaining = Long.MAX_VALUE
+        backgroundLastConfirmationTickAt = 0L
     }
 
     /**
@@ -6296,6 +6317,94 @@ class MangaBuffAutomation(
                                     var maxConfirmAttempts = 40;
                                     var isWaitingConfirmation = false;
 
+                                    // The normal JS timer remains the primary scheduler. When Android
+                                    // reports a hidden/screen-off WebView, a throttled native tick may
+                                    // run the same due continuation. The stored callback + generation
+                                    // ensure a cleared/stale timeout cannot run it twice.
+                                    var pendingReaderContinuation = null;
+                                    var pendingReaderContinuationTimer = null;
+                                    var pendingReaderContinuationDueAt = 0;
+                                    var pendingReaderContinuationScheduledAt = 0;
+                                    var pendingReaderContinuationGeneration = 0;
+                                    var lastNativeReaderContinuationAt = 0;
+                                    var readerContinuationRunning = false;
+
+                                    function cancelReaderContinuation() {
+                                        pendingReaderContinuationGeneration++;
+                                        if (pendingReaderContinuationTimer !== null) {
+                                            clearTimeout(pendingReaderContinuationTimer);
+                                            pendingReaderContinuationTimer = null;
+                                        }
+                                        pendingReaderContinuation = null;
+                                        pendingReaderContinuationDueAt = 0;
+                                        pendingReaderContinuationScheduledAt = 0;
+                                    }
+
+                                    function runPendingReaderContinuation(source) {
+                                        if (chapterDone || !pendingReaderContinuation || readerContinuationRunning) {
+                                            return false;
+                                        }
+
+                                        var now = Date.now();
+                                        if (source === 'NATIVE') {
+                                            if (now - lastNativeReaderContinuationAt < 350) return false;
+                                            if (now < pendingReaderContinuationDueAt) return false;
+                                            lastNativeReaderContinuationAt = now;
+                                        }
+
+                                        if (pendingReaderContinuationTimer !== null) {
+                                            clearTimeout(pendingReaderContinuationTimer);
+                                            pendingReaderContinuationTimer = null;
+                                        }
+
+                                        var continuation = pendingReaderContinuation;
+                                        var waitedMs = Math.max(0, now - pendingReaderContinuationScheduledAt);
+                                        pendingReaderContinuation = null;
+                                        pendingReaderContinuationDueAt = 0;
+                                        pendingReaderContinuationScheduledAt = 0;
+                                        pendingReaderContinuationGeneration++;
+                                        readerContinuationRunning = true;
+                                        AndroidReaderBridge.onLogStep(
+                                            'READER: CONTINUATION_RUN source=' + source + ' waitedMs=' + waitedMs
+                                        );
+                                        try {
+                                            continuation();
+                                        } catch (e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: CONTINUATION_ERROR source=' + source +
+                                                ' error=' + (e && e.message ? e.message : e)
+                                            );
+                                        } finally {
+                                            readerContinuationRunning = false;
+                                        }
+                                        return true;
+                                    }
+
+                                    function scheduleReaderContinuation(callback, delayMs) {
+                                        if (chapterDone) return;
+                                        cancelReaderContinuation();
+                                        var generation = ++pendingReaderContinuationGeneration;
+                                        pendingReaderContinuation = callback;
+                                        pendingReaderContinuationScheduledAt = Date.now();
+                                        pendingReaderContinuationDueAt = pendingReaderContinuationScheduledAt + delayMs;
+                                        pendingReaderContinuationTimer = setTimeout(function() {
+                                            if (generation !== pendingReaderContinuationGeneration) return;
+                                            pendingReaderContinuationTimer = null;
+                                            runPendingReaderContinuation('JS_TIMER');
+                                        }, delayMs);
+                                    }
+
+                                    window.__mbNativeConfirmationTick = function() {
+                                        try {
+                                            runPendingReaderContinuation('NATIVE');
+                                        } catch (e) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: NATIVE_CONTINUATION_ERROR error=' +
+                                                (e && e.message ? e.message : e)
+                                            );
+                                        }
+                                    };
+
                                     function waitForMangaBuffConfirmation(onSuccess) {
                                         confirmAttempt++;
 
@@ -6303,6 +6412,7 @@ class MangaBuffAutomation(
                                         logReadState(state);
 
                                         if (state.confirmed) {
+                                            cancelReaderContinuation();
                                             AndroidReaderBridge.onLogStep(
                                                 'READER: MB_READ_CONFIRMED chapterId=' + state.chapterId +
                                                 ' source=' + state.confirmSource
@@ -6323,6 +6433,7 @@ class MangaBuffAutomation(
                                         }
 
                                         if (confirmAttempt >= maxConfirmAttempts) {
+                                            cancelReaderContinuation();
                                             AndroidReaderBridge.onLogStep(
                                                 'READER: MB_READ_CONFIRM_TIMEOUT chapterId=' + state.chapterId +
                                                 ' reason=' + state.waitReason
@@ -6337,7 +6448,7 @@ class MangaBuffAutomation(
                                             ' chapterId=' + state.chapterId +
                                             ' reason=' + state.waitReason
                                         );
-                                        setTimeout(function() {
+                                        scheduleReaderContinuation(function() {
                                             waitForMangaBuffConfirmation(onSuccess);
                                         }, 350);
                                     }
@@ -6592,7 +6703,7 @@ class MangaBuffAutomation(
                                                         'NEXT_CHAPTER_DISCOVERY_RETRY attempt=' + (attempt + 1) +
                                                         '/15 reason=DOM_NOT_READY_AFTER_MANGABUFF_CONFIRMATION'
                                                     );
-                                                    setTimeout(function() {
+                                                    scheduleReaderContinuation(function() {
                                                         resolveNextChapterAfterBottom(attempt + 1);
                                                     }, 1000);
                                                     return;
@@ -6607,7 +6718,7 @@ class MangaBuffAutomation(
                                             });
                                         }
 
-                                        setTimeout(function() {
+                                        scheduleReaderContinuation(function() {
                                             resolveNextChapterAfterBottom(1);
                                         }, 1200);
                                     }
