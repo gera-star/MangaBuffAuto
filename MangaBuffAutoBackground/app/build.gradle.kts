@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 37
         versionCode = 1
-        versionName = "1.0-bg-reader-fix"
+        versionName = "1.0-automation-deck-comments"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
