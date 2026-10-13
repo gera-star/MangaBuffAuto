@@ -454,6 +454,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun runPromoCodeForAllAccounts(promoCode: String): Boolean {
+        val code = promoCode.trim()
+        if (code.isEmpty()) return false
+
+        val requestedCount = _accounts.value.size
+        if (requestedCount == 0) {
+            addLog(LogEntry(component = "PROMO", message = "PROMO_START_REJECTED no_accounts", isError = true))
+            return false
+        }
+
+        val accepted = MangaBuffForegroundService.startAllWithPromoCode(getApplication(), code)
+        if (!accepted) {
+            addLog(
+                LogEntry(
+                    component = "PROMO",
+                    message = "PROMO_START_REQUEST_FAILED accounts=$requestedCount",
+                    isError = true
+                )
+            )
+            return false
+        }
+
+        _isRunning.value = true
+        addLog(
+            LogEntry(
+                component = "PROMO",
+                message = "PROMO_START_REQUEST accounts=$requestedCount codeLength=" + code.length
+            )
+        )
+        return true
+    }
+
     private fun stopAllTasksState() {
         _accounts.update { list ->
             list.map { acc ->
