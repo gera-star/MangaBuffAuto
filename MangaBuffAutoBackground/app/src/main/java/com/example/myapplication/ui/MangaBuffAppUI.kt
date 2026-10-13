@@ -84,7 +84,7 @@ fun MangaBuffAppUI(
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text("MangaBuff Automation", fontWeight = FontWeight.Bold) },
+                    title = { Text("MB+", fontWeight = FontWeight.Bold) },
                     actions = {
                         IconButton(onClick = { showSupportDialog = true }) {
                             Icon(
@@ -723,13 +723,26 @@ fun MangaBuffAppUI(
             },
             confirmButton = {
                 Button(onClick = {
-                    if (promoCodeText.isNotBlank()) {
-                        viewModel.setShowPromoDialog(false)
-                        Toast.makeText(context, "Промокод отправлен в обработку", Toast.LENGTH_SHORT).show()
-                        promoCodeText = ""
+                    val code = promoCodeText.trim()
+                    if (code.isNotEmpty()) {
+                        if (viewModel.runPromoCodeForAllAccounts(code)) {
+                            viewModel.setShowPromoDialog(false)
+                            Toast.makeText(
+                                context,
+                                "Задача «Промокод» запущена для аккаунтов",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            promoCodeText = ""
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Не удалось запустить задачу промокода",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
                 }) {
-                    Text("Применить")
+                    Text("Активировать")
                 }
             },
             dismissButton = {
@@ -1056,7 +1069,13 @@ fun AccountCard(
                     TaskSwitchRow("📖 Чтение", "${dailyReaderChapters} глав", account.readerEnabled) { r ->
                         onUpdateTasks(r, account.towerEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("💬 Комментарии", "${dailyComments}/13", account.commentEnabled) { c ->
+                    TaskSwitchRow(
+                        "💬 Комментарии",
+                        account.commentProgress.takeIf {
+                            Regex("""^\d+\s*/\s*\d+$""").matches(it.trim())
+                        } ?: "${dailyComments}/13",
+                        account.commentEnabled
+                    ) { c ->
                         onUpdateTasks(
                             account.readerEnabled,
                             account.towerEnabled,
