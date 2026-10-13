@@ -2447,11 +2447,34 @@ class MangaBuffAutomation(
                                         }) || null;
                                 }
                                 function selectedCards(root) {
-                                    return new Set(Array.from(root.querySelectorAll(
+                                    // First read the explicit selected-ID state exposed by the page.
+                                    var ids = attr(root, ['data-selected-card-ids']);
+                                    var fromAttribute = ids.split(/[;,\\s]+/).filter(function(id) { return id.length > 0; });
+                                    var marked = Array.from(root.querySelectorAll(
                                         '[data-card-id][aria-selected="true"],[data-card-id][aria-pressed="true"],' +
                                         '[data-card-id][data-selected="true"],[data-card-id].selected,' +
-                                        '[data-card-id].is-selected,[data-tower-card][aria-pressed="true"]'
-                                    ))).size;
+                                        '[data-card-id].is-selected,[data-tower-card][aria-pressed="true"],' +
+                                        '.mbf-abyss-tower__card[aria-selected="true"],' +
+                                        '.mbf-abyss-tower__card.is-selected,.mbf-abyss-tower__card.selected'
+                                    ));
+                                    return Math.max(new Set(fromAttribute).size, new Set(marked).size);
+                                }
+                                function truthyAttribute(value) {
+                                    return /^(1|true|yes)$/i.test(String(value || '').trim());
+                                }
+                                function expeditionState(root) {
+                                    var complete = truthyAttribute(root.getAttribute('data-expedition-complete')) ||
+                                        root.classList.contains('is-expedition-complete');
+                                    var timer = root.querySelector('[data-tower-timer]');
+                                    var remainingSeconds = timer
+                                        ? Number(timer.getAttribute('data-remaining-seconds') || 0)
+                                        : 0;
+                                    var active = !complete && (
+                                        truthyAttribute(root.getAttribute('data-expedition-active')) ||
+                                        root.classList.contains('is-expedition-active') ||
+                                        (timer && timer.classList.contains('is-ticking') && remainingSeconds > 0)
+                                    );
+                                    return {active: !!active, complete: !!complete, remainingSeconds: remainingSeconds};
                                 }
                                 function resonanceOpen(root) {
                                     return Array.from(root.querySelectorAll('[role="dialog"],.modal,.modal-dialog,[aria-modal="true"]'))
@@ -2478,7 +2501,22 @@ class MangaBuffAutomation(
                                     var startButton = action(root, /отправить\s+отряд|начать\s+экспедицию|отправить\s+в\s+экспедицию|запустить\s+экспедицию|start\s+expedition|send\s+squad/i);
                                     var squadButton = action(root, /сохранить\s+отряд|save\s+squad/i);
                                     var preparationButton = action(root, /сохранить\s+подготовку|сохранить\s+приказ|save\s+preparation/i);
+                                    var stateAtStart = expeditionState(root);
                                     var didAction = false;
+                                    send('EXPEDITION_STATE',
+                                        'active=' + stateAtStart.active +
+                                        ' complete=' + stateAtStart.complete +
+                                        ' remainingSeconds=' + stateAtStart.remainingSeconds +
+                                        ' rootActiveAttr=' + root.getAttribute('data-expedition-active') +
+                                        ' rootCompleteAttr=' + root.getAttribute('data-expedition-complete'));
+
+                                    // Live page uses data-expedition-active="1" and is-expedition-active.
+                                    // Do not save or start another squad while a non-complete expedition runs.
+                                    if (stateAtStart.active && !stateAtStart.complete) {
+                                        finish(true, 'expedition_already_active; remainingSeconds=' + stateAtStart.remainingSeconds);
+                                        return;
+                                    }
+
                                     send('ROOT_READY', 'claim=' + !!claimUrl + ' start=' + !!startUrl +
                                         ' squad=' + !!squadUrl + ' preparation=' + !!preparationUrl +
                                         ' csrfAvailable=' + !!csrf + ' selectedCards=' + selectedCards(root));
@@ -2573,7 +2611,7 @@ class MangaBuffAutomation(
                                         send('START_NOT_AVAILABLE', 'Configure a squad/preparation on /tower');
                                     }
 
-                                    var active = root.getAttribute('data-expedition-active') === 'true' ||
+                                    var active = stateAtStart.active || truthyAttribute(root.getAttribute('data-expedition-active')) ||
                                         /отряд\s+(уже\s+)?в\s+пути|экспедиция\s+отправлена|верн[её]тся\s+через|экспедиция\s+завершена/i.test(textOf(document.body));
                                     didAction = didAction ||
                                         sessionStorage.getItem(runKey + ':claimDone') === '1' ||
