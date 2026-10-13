@@ -1813,8 +1813,8 @@ class MangaBuffAutomation(
 
             watchdog = Runnable {
                 if (!resumed && continuation.isActive) {
-                    log(account.username, "STAT: BALANCE_TIMEOUT after=15000ms", true)
-                    safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13")
+                    log(account.username, "STAT: BALANCE_TIMEOUT after=15000ms; stats remain unknown", true)
+                    safeResume("⚠️ Статистика не обновлена: тайм-аут")
                 }
             }
 
@@ -1940,7 +1940,7 @@ class MangaBuffAutomation(
                 val start = SystemClock.elapsedRealtime()
                 runTowerTask(account, webView)
                 log(account.username, "TASK: TOWER_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
-                fetchAndLogBalanceInfo(account, webView)
+                // Balance is refreshed once at the end of the account run, not between tasks.
             } else {
                 log(account.username, "TOWER: SKIPPED_DISABLED")
             }
@@ -2513,7 +2513,9 @@ class MangaBuffAutomation(
                                     var preparationUrl = sameOriginUrl(attr(root, ['data-save-preparation-url','data-preparation-save-url']));
                                     var csrfMeta = document.querySelector('meta[name="csrf-token"]');
                                     var csrf = attr(root, ['data-csrf-token']) || (csrfMeta ? (csrfMeta.content || '') : '');
-                                    var claimButton = action(root, /забрать\s+(награды|награду)|получить\s+награды|claim\s+reward/i);
+                                    // Reward modal is outside [data-tower-root] in the live page.
+                                    var claimButton = document.querySelector("[data-tower-claim]") ||
+                                        action(document, /забрать\s+(награды|награду)|получить\s+награды|claim\s+reward/i);
                                     var startButton = action(root, /отправить\s+отряд|начать\s+экспедицию|отправить\s+в\s+экспедицию|запустить\s+экспедицию|start\s+expedition|send\s+squad/i);
                                     var squadButton = action(root, /сохранить\s+отряд|save\s+squad/i);
                                     var preparationButton = action(root, /сохранить\s+подготовку|сохранить\s+приказ|save\s+preparation/i);
@@ -2626,31 +2628,47 @@ class MangaBuffAutomation(
                                             send('START_REQUESTED', 'site request handler invoked');
                                             didAction = true;
                                             await new Promise(function(resolve) { setTimeout(resolve, 1200); });
-                                            if (resonanceOpen(document.querySelector('[data-tower-root]') || root)) {
-                                                send('RESONANCE_DECISION_REQUIRED', 'Review the offer manually');
-                                                finish(true, 'start_requested_resonance_needs_user_choice');
+                                            var liveRoot = document.querySelector('[data-tower-root]') || root;
+                                            if (resonanceOpen(liveRoot) || resonanceOpen(document)) {
+                                                send('RESONANCE_DECISION_REQUIRED', 'Review the offer manually; no paid choice was selected');
+                                                finish(false, 'resonance_decision_required');
                                                 return;
                                             }
+                                            var confirmedActive = false;
+                                            for (var verifyAttempt = 0; verifyAttempt < 5; verifyAttempt++) {
+                                                liveRoot = document.querySelector('[data-tower-root]') || root;
+                                                var verifyState = expeditionState(liveRoot);
+                                                if (verifyState.active && !verifyState.complete) {
+                                                    confirmedActive = true;
+                                                    break;
+                                                }
+                                                if (/отряд\s+(уже\s+)?в\s+пути|экспедиция\s+отправлена|верн[её]тся\s+через/i.test(textOf(document.body))) {
+                                                    confirmedActive = true;
+                                                    break;
+                                                }
+                                                await new Promise(function(resolve) { setTimeout(resolve, 700); });
+                                            }
+                                            if (!confirmedActive) {
+                                                send('START_NOT_CONFIRMED', 'Site did not confirm an active expedition after start request');
+                                                finish(false, 'start_not_confirmed');
+                                                return;
+                                            }
+                                            send('START_CONFIRMED', 'Live page confirms an active expedition');
                                         }
                                     } else if (!startButton) {
                                         send('START_NOT_AVAILABLE', 'Configure a squad/preparation on /tower');
                                     }
 
-                                    var active = stateAtStart.active || truthyAttribute(root.getAttribute('data-expedition-active')) ||
-                                        /отряд\s+(уже\s+)?в\s+пути|экспедиция\s+отправлена|верн[её]тся\s+через|экспедиция\s+завершена/i.test(textOf(document.body));
-                                    didAction = didAction ||
-                                        sessionStorage.getItem(runKey + ':claimDone') === '1' ||
-                                        sessionStorage.getItem(runKey + ':squadSaved') === '1' ||
-                                        sessionStorage.getItem(runKey + ':preparationSaved') === '1' ||
-                                        sessionStorage.getItem(runKey + ':startRequested') === '1';
+                                    var finalRoot = document.querySelector('[data-tower-root]') || root;
+                                    var finalState = expeditionState(finalRoot);
+                                    var active = finalState.active ||
+                                        /отряд\s+(уже\s+)?в\s+пути|экспедиция\s+отправлена|верн[её]тся\s+через/i.test(textOf(document.body));
                                     send('STATE_CHECK', 'expeditionActive=' + active +
+                                        ' complete=' + finalState.complete +
                                         ' claimButton=' + !!claimButton + ' startButton=' + !!startButton);
-                                    var completedOrActive = didAction || active;
-                                    finish(completedOrActive, didAction
-                                        ? 'requests_or_actions_processed; expeditionActive=' + active
-                                        : (active
-                                            ? 'expedition_already_active'
-                                            : 'nothing_to_do; choose four awakened cards and save preparation'));
+                                    finish(active, active
+                                        ? 'expedition_confirmed_active'
+                                        : 'expedition_not_confirmed; inspect squad, preparation, or reward state');
                                 }
                                 run(document.querySelector('[data-tower-root]'), 0).catch(function(e) {
                                     send('TASK_ERROR', e && e.message ? e.message : String(e));
