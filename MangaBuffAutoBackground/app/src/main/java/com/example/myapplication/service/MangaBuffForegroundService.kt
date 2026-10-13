@@ -637,7 +637,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun releaseWakeLockIfIdle(force: Boolean = false) {
-        if (force || (accountJobs.isEmpty() && recoveryRequests.isEmpty())) {
+        if (force || (accountJobs.isEmpty() && towerCycleJobs.isEmpty() && recoveryRequests.isEmpty())) {
             try {
                 if (wakeLock.isHeld) {
                     wakeLock.release()
