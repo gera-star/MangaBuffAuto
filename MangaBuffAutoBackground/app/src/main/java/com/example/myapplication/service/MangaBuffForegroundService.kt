@@ -58,6 +58,7 @@ class MangaBuffForegroundService : Service() {
         const val ACTION_RELOAD_ACCOUNT = "ACTION_RELOAD_ACCOUNT"
         const val ACTION_SKIP_MANGA = "ACTION_SKIP_MANGA"
         const val ACTION_MARK_READ = "ACTION_MARK_READ"
+        const val ACTION_TOWER_CYCLE_DUE = "ACTION_TOWER_CYCLE_DUE"
 
         const val EXTRA_STATUS = "EXTRA_STATUS_TEXT"
         const val EXTRA_ACCOUNT_ID = "EXTRA_ACCOUNT_ID"
@@ -312,10 +313,15 @@ class MangaBuffForegroundService : Service() {
                 ?: "Фоновая автоматизация активна"
         )
 
+        val towerDueAccountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
+        val towerDueEndsAt = intent?.getLongExtra(EXTRA_TOWER_ENDS_AT_MS, -1L) ?: -1L
+
         if (!restoredPersistedRuns) {
             restoredPersistedRuns = true
             restorePersistedRuns()
-            restoreTowerCycles()
+            restoreTowerCycles(
+                skipAccountId = towerDueAccountId.takeIf { action == ACTION_TOWER_CYCLE_DUE }
+            )
         }
 
         when (action) {
@@ -370,6 +376,20 @@ class MangaBuffForegroundService : Service() {
                 val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
                 if (accountId.isNotBlank()) {
                     automationRunner.markCurrentMangaAsRead(accountId)
+                }
+            }
+
+            ACTION_TOWER_CYCLE_DUE -> {
+                if (towerDueAccountId.isNotBlank() && towerDueEndsAt > 0L) {
+                    handleTowerCycleDue(towerDueAccountId, towerDueEndsAt)
+                } else {
+                    publishLog(
+                        LogEntry(
+                            component = "TOWER",
+                            message = "TOWER_CYCLE_DUE_REJECTED missing_account_or_deadline",
+                            isError = true
+                        )
+                    )
                 }
             }
 
@@ -573,6 +593,9 @@ class MangaBuffForegroundService : Service() {
     private fun stopAllInternal(explicitUserStop: Boolean) {
         if (explicitUserStop) stoppingExplicitly = true
 
+        (towerCycleEndsAt.keys + towerCycleJobs.keys + readPersistedTowerCycles().keys)
+            .toSet()
+            .forEach(::cancelTowerCycleAlarm)
         towerCycleJobs.values.forEach { it.cancel() }
         towerCycleJobs.clear()
         towerCycleEndsAt.clear()
@@ -637,7 +660,9 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun releaseWakeLockIfIdle(force: Boolean = false) {
-        if (force || (accountJobs.isEmpty() && towerCycleJobs.isEmpty() && recoveryRequests.isEmpty())) {
+        // A scheduled Tower timer does not need the CPU held awake. Only live automation
+        // jobs and immediate renderer recovery are allowed to retain the partial WakeLock.
+        if (force || (accountJobs.isEmpty() && recoveryRequests.isEmpty())) {
             try {
                 if (wakeLock.isHeld) {
                     wakeLock.release()
@@ -828,52 +853,29 @@ class MangaBuffForegroundService : Service() {
         persisted.add("$accountId|$endsAtMillis")
         runtimePrefs.edit().putStringSet(KEY_TOWER_CYCLE_ENDS, persisted).apply()
 
-        acquireWakeLockIfNeeded()
+        // Exact allow-while-idle alarms wake the device at expedition completion without
+        // pinning the CPU awake for hours. A coroutine remains as an in-process backstop.
+        scheduleTowerCycleAlarm(accountId, endsAtMillis)
         publishLog(
             LogEntry(
                 username = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty(),
                 component = "TOWER",
-                message = "TOWER_CYCLE_SCHEDULED endsAt=$endsAtMillis delayMs=${endsAtMillis - System.currentTimeMillis()}"
+                message = "TOWER_CYCLE_SCHEDULED endsAt=$endsAtMillis delayMs=${endsAtMillis - System.currentTimeMillis()} wakelock=not_required"
             )
         )
 
-        val job = serviceScope.launch {
+        val job = serviceScope.launch(start = CoroutineStart.LAZY) {
             try {
                 while (isActive) {
                     val remaining = endsAtMillis - System.currentTimeMillis()
                     if (remaining <= 0L) break
                     delay(remaining.coerceAtMost(60_000L))
                 }
-                if (stoppingExplicitly || towerCycleEndsAt[accountId] != endsAtMillis) return@launch
-
-                // Remove this finished timer before the new Tower pass reports its next timer.
-                towerCycleJobs.remove(accountId)
-                val account = repository.getAccounts().firstOrNull { it.id == accountId }
-                if (account == null) {
-                    cancelTowerCycle(accountId, clearPersisted = true)
-                    return@launch
-                }
-                val persistedTask = readPersistedRuns()[accountId]
-                if (persistedTask != null || accountJobs[accountId]?.isActive == true) {
-                    // Never start a second WebView task concurrently. Retry shortly after the
-                    // current account pass releases its WebView.
-                    towerCycleEndsAt.remove(accountId)
-                    scheduleTowerCycle(accountId, System.currentTimeMillis() + 5_000L)
-                    return@launch
-                }
-
-                publishLog(
-                    LogEntry(
-                        username = account.username,
-                        component = "TOWER",
-                        message = "TOWER_CYCLE_DUE reward_claim_and_next_expedition"
-                    )
-                )
-                startAccountInternal(accountId, TaskType.TOWER)
+                handleTowerCycleDue(accountId, endsAtMillis, coroutineContext[Job])
             } catch (_: CancellationException) {
-                // Expected when the user stops this account or all automation.
+                // Expected when the user stops this account or replaces the timer.
             } finally {
-                if (towerCycleJobs[accountId] == coroutineContext[Job]) {
+                if (towerCycleJobs[accountId] === coroutineContext[Job]) {
                     towerCycleJobs.remove(accountId)
                 }
                 releaseWakeLockIfIdle()
@@ -881,26 +883,180 @@ class MangaBuffForegroundService : Service() {
             }
         }
         towerCycleJobs[accountId] = job
+        job.start()
+    }
+
+    private fun scheduleTowerCycleAlarm(accountId: String, endsAtMillis: Long) {
+        val alarmManager = getSystemService(ALARM_SERVICE) as android.app.AlarmManager
+        val pendingIntent = TowerCycleAlarmReceiver.pendingIntent(this, accountId, endsAtMillis)
+        try {
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                alarmManager.canScheduleExactAlarms()
+            ) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    endsAtMillis,
+                    pendingIntent
+                )
+                publishLog(
+                    LogEntry(
+                        username = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty(),
+                        component = "TOWER",
+                        message = "TOWER_ALARM_ARMED exact=true endsAt=$endsAtMillis"
+                    )
+                )
+            } else {
+                // Without the user-granted exact-alarm access, retain the coroutine fallback
+                // and use an inexact wake-up alarm. Settings now exposes the exact-alarm switch.
+                alarmManager.setAndAllowWhileIdle(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    endsAtMillis,
+                    pendingIntent
+                )
+                publishLog(
+                    LogEntry(
+                        username = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty(),
+                        component = "TOWER",
+                        message = "TOWER_ALARM_ARMED exact=false fallback=inexact endsAt=$endsAtMillis"
+                    )
+                )
+            }
+        } catch (e: SecurityException) {
+            publishLog(
+                LogEntry(
+                    username = accountId,
+                    component = "TOWER",
+                    message = "TOWER_EXACT_ALARM_DENIED fallback=inexact reason=${e.message}",
+                    isError = true
+                )
+            )
+            runCatching {
+                alarmManager.setAndAllowWhileIdle(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    endsAtMillis,
+                    pendingIntent
+                )
+            }.onFailure { fallbackError ->
+                publishLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "TOWER",
+                        message = "TOWER_ALARM_FAILED reason=${fallbackError.message}",
+                        isError = true
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            publishLog(
+                LogEntry(
+                    username = accountId,
+                    component = "TOWER",
+                    message = "TOWER_ALARM_FAILED reason=${e.message}",
+                    isError = true
+                )
+            )
+        }
+    }
+
+    private fun cancelTowerCycleAlarm(accountId: String) {
+        runCatching {
+            val alarmManager = getSystemService(ALARM_SERVICE) as android.app.AlarmManager
+            alarmManager.cancel(TowerCycleAlarmReceiver.pendingIntent(this, accountId))
+        }
+    }
+
+    private fun readPersistedTowerCycles(): Map<String, Long> {
+        return runtimePrefs.getStringSet(KEY_TOWER_CYCLE_ENDS, emptySet()).orEmpty()
+            .mapNotNull { entry ->
+                val separator = entry.indexOf('|')
+                if (separator <= 0 || separator >= entry.length - 1) return@mapNotNull null
+                val accountId = entry.substring(0, separator)
+                val endsAt = entry.substring(separator + 1).toLongOrNull()
+                    ?: return@mapNotNull null
+                accountId to endsAt
+            }.toMap()
+    }
+
+    private fun removePersistedTowerCycle(accountId: String) {
+        val persisted = runtimePrefs.getStringSet(KEY_TOWER_CYCLE_ENDS, emptySet())
+            .orEmpty().filterNot { it.startsWith("$accountId|") }.toSet()
+        runtimePrefs.edit().putStringSet(KEY_TOWER_CYCLE_ENDS, persisted).apply()
+    }
+
+    private fun handleTowerCycleDue(
+        accountId: String,
+        endsAtMillis: Long,
+        sourceJob: Job? = null
+    ) {
+        val expectedEnd = towerCycleEndsAt[accountId] ?: readPersistedTowerCycles()[accountId]
+        if (expectedEnd != endsAtMillis) {
+            publishLog(
+                LogEntry(
+                    username = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty(),
+                    component = "TOWER",
+                    message = "TOWER_CYCLE_STALE_ALARM_IGNORED expected=${expectedEnd ?: -1L} received=$endsAtMillis"
+                )
+            )
+            return
+        }
+
+        towerCycleJobs.remove(accountId)?.let { job ->
+            if (job !== sourceJob) job.cancel()
+        }
+        towerCycleEndsAt.remove(accountId)
+        cancelTowerCycleAlarm(accountId)
+        removePersistedTowerCycle(accountId)
+
+        if (stoppingExplicitly) return
+
+        val account = repository.getAccounts().firstOrNull { it.id == accountId }
+        if (account == null) {
+            publishLog(
+                LogEntry(
+                    username = accountId,
+                    component = "TOWER",
+                    message = "TOWER_CYCLE_ACCOUNT_MISSING",
+                    isError = true
+                )
+            )
+            releaseWakeLockIfIdle()
+            stopSelfIfIdle()
+            return
+        }
+
+        val persistedTask = readPersistedRuns()[accountId]
+        if (persistedTask != null || accountJobs[accountId]?.isActive == true) {
+            // Never start a second WebView task concurrently; retry less aggressively to
+            // avoid repeated wake-ups while another task is still using this account.
+            scheduleTowerCycle(accountId, System.currentTimeMillis() + 15_000L)
+            return
+        }
+
+        publishLog(
+            LogEntry(
+                username = account.username,
+                component = "TOWER",
+                message = "TOWER_CYCLE_DUE reward_claim_and_next_expedition"
+            )
+        )
+        startAccountInternal(accountId, TaskType.TOWER)
     }
 
     private fun cancelTowerCycle(accountId: String, clearPersisted: Boolean) {
         towerCycleJobs.remove(accountId)?.cancel()
         towerCycleEndsAt.remove(accountId)
+        cancelTowerCycleAlarm(accountId)
         if (clearPersisted) {
-            val persisted = runtimePrefs.getStringSet(KEY_TOWER_CYCLE_ENDS, emptySet())
-                .orEmpty().filterNot { it.startsWith("$accountId|") }.toSet()
-            runtimePrefs.edit().putStringSet(KEY_TOWER_CYCLE_ENDS, persisted).apply()
+            removePersistedTowerCycle(accountId)
         }
     }
 
-    private fun restoreTowerCycles() {
-        val entries = runtimePrefs.getStringSet(KEY_TOWER_CYCLE_ENDS, emptySet()).orEmpty()
+    private fun restoreTowerCycles(skipAccountId: String? = null) {
+        val entries = readPersistedTowerCycles()
         val now = System.currentTimeMillis()
-        entries.forEach { entry ->
-            val separator = entry.indexOf('|')
-            if (separator <= 0) return@forEach
-            val accountId = entry.substring(0, separator)
-            val endsAt = entry.substring(separator + 1).toLongOrNull() ?: return@forEach
+        entries.forEach { (accountId, endsAt) ->
+            if (accountId == skipAccountId) return@forEach
             if (repository.getAccounts().none { it.id == accountId }) {
                 cancelTowerCycle(accountId, clearPersisted = true)
             } else {
