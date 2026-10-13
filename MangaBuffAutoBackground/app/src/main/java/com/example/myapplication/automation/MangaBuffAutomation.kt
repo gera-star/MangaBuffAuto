@@ -1765,11 +1765,28 @@ class MangaBuffAutomation(
                                             var normalized = label.toLowerCase();
 
                                             if (normalized.indexOf('глав') !== -1 || normalized.indexOf('чита') !== -1) {
-                                                if (value) chaptersVal = value;
+                                                var chapterMatch = fullText.match(/(\d+)\s*\/\s*(\d+)/);
+                                                if (chapterMatch) {
+                                                    chaptersVal = chapterMatch[1] + '/' + chapterMatch[2];
+                                                } else if (value) {
+                                                    chaptersVal = value;
+                                                }
                                             }
 
                                             if (normalized.indexOf('комментар') !== -1) {
-                                                if (value) commentsVal = value;
+                                                // Prefer the fraction in the complete visible row text. Some
+                                                // layouts put a quota/badge in <b> that is not current progress.
+                                                var commentMatch = fullText.match(/(\d+)\s*\/\s*(\d+)/);
+                                                if (commentMatch) {
+                                                    commentsVal = commentMatch[1] + '/' + commentMatch[2];
+                                                } else if (value) {
+                                                    commentsVal = value;
+                                                }
+                                                AndroidBalanceBridge.onBalanceDiag(
+                                                    'STAT: COMMENT_STAT_SOURCE label=' + label +
+                                                    ' selected=' + commentsVal +
+                                                    ' row=' + fullText.slice(0, 160)
+                                                );
                                             }
                                         });
 
@@ -2097,7 +2114,8 @@ class MangaBuffAutomation(
         account: MangaBuffAccount,
         settings: GlobalSettings,
         taskType: TaskType = TaskType.ALL,
-        webView: WebView
+        webView: WebView,
+        promoCode: String = ""
     ) {
         coroutineContext.ensureActive()
 
@@ -2235,9 +2253,237 @@ class MangaBuffAutomation(
             }
         }
 
+        if (taskType == TaskType.PROMO) {
+            coroutineContext.ensureActive()
+            runPromoCodeTask(account, webView, promoCode)
+        }
+
         val finalSummary = fetchAndLogBalanceInfo(account, webView)
         updateStatus(account, finalSummary, false, "", 1.0f)
         log(account.username, "TASK: ACCOUNT_FINISHED type=${taskType.title}")
+    }
+
+    // =========================================================
+    // PROMO CODE
+    // =========================================================
+
+    private suspend fun runPromoCodeTask(
+        account: MangaBuffAccount,
+        webView: WebView,
+        promoCode: String
+    ) {
+        val code = promoCode.trim()
+        if (code.isBlank()) {
+            log(account.username, "PROMO: SKIPPED_EMPTY_CODE", true)
+            return
+        }
+
+        suspendCancellableCoroutine<Unit> { continuation ->
+            val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+            var watchdog: Runnable? = null
+
+            fun finish(success: Boolean, detail: String) {
+                if (!completed.compareAndSet(false, true)) return
+                mainHandler.post {
+                    watchdog?.let { mainHandler.removeCallbacks(it) }
+                    watchdog = null
+                    try { webView.removeJavascriptInterface("AndroidPromoBridge") } catch (_: Exception) {}
+                    log(account.username, "PROMO: TASK_RESULT success=$success detail=$detail", !success)
+                    if (continuation.isActive) continuation.resume(Unit)
+                }
+            }
+
+            continuation.invokeOnCancellation {
+                mainHandler.post {
+                    watchdog?.let { mainHandler.removeCallbacks(it) }
+                    try { webView.removeJavascriptInterface("AndroidPromoBridge") } catch (_: Exception) {}
+                    try { webView.stopLoading() } catch (_: Exception) {}
+                }
+            }
+
+            mainHandler.post {
+                if (!continuation.isActive) {
+                    finish(false, "continuation_cancelled")
+                    return@post
+                }
+
+                class PromoBridge {
+                    @JavascriptInterface
+                    fun onPromoLog(state: String, detail: String) {
+                        val error = state.contains("ERROR", true) ||
+                            state.contains("FAIL", true) ||
+                            state.contains("REJECTED", true)
+                        log(account.username, "PROMO: $state $detail", error)
+                    }
+
+                    @JavascriptInterface
+                    fun onPromoFinished(success: Boolean, detail: String) {
+                        finish(success, detail)
+                    }
+                }
+
+                try {
+                    webView.removeJavascriptInterface("AndroidPromoBridge")
+                    webView.addJavascriptInterface(PromoBridge(), "AndroidPromoBridge")
+                    webView.settings.javaScriptEnabled = true
+                    webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            if (url.isNullOrBlank()) return
+                            val uri = try { Uri.parse(url) } catch (_: Exception) { null }
+                            if (uri?.host != "mangabuff.ru") return
+
+                            if (uri.path.orEmpty().startsWith("/login")) {
+                                finish(false, "login_required")
+                                return
+                            }
+                            if (uri.path.orEmpty().trimEnd('/') != "/promo-code") return
+
+                            log(account.username, "PROMO: PAGE_READY url=$url")
+                            val codeLiteral = org.json.JSONObject.quote(code)
+                            val script = """
+                                (function() {
+                                    var runKey = 'mb_promo_run_' + Date.now() + '_' + Math.random();
+                                    if (window.__mbPromoRunKey === runKey) return;
+                                    window.__mbPromoRunKey = runKey;
+                                    var promoCode = $codeLiteral;
+                                    var startedAt = Date.now();
+                                    var clickedAt = 0;
+                                    var finished = false;
+
+                                    function send(state, detail) {
+                                        try {
+                                            AndroidPromoBridge.onPromoLog(
+                                                state,
+                                                String(detail || '').replace(/\s+/g, ' ').slice(0, 220)
+                                            );
+                                        } catch (e) {}
+                                    }
+
+                                    function finish(success, detail) {
+                                        if (finished) return;
+                                        finished = true;
+                                        try {
+                                            AndroidPromoBridge.onPromoFinished(!!success, String(detail || '').slice(0, 500));
+                                        } catch (e) {}
+                                    }
+
+                                    function textOf(el) {
+                                        return el ? String(el.innerText || el.textContent || '')
+                                            .replace(/\s+/g, ' ').trim() : '';
+                                    }
+
+                                    function findResultMessage() {
+                                        var nodes = Array.from(document.querySelectorAll(
+                                            '.promo-page__message,.promo-page__error,.promo-page__success,' +
+                                            '.promo-code-message,.promo-code-result,[role="alert"],.alert,.toast,.notification'
+                                        ));
+                                        return nodes.map(textOf).filter(function(text) { return text.length > 0; })
+                                            .slice(-3).join(' | ');
+                                    }
+
+                                    function pollResult() {
+                                        if (finished) return;
+                                        var message = findResultMessage();
+                                        if (message) {
+                                            var lower = message.toLowerCase();
+                                            if (/невер|ист[её]к|уже использ|уже активир|не существует|ошиб|недоступ|не найден|лимит|отказ/i.test(lower)) {
+                                                send('ACTIVATION_REJECTED', message);
+                                                finish(false, 'site_rejected: ' + message);
+                                                return;
+                                            }
+                                            if (/успеш|активирован|примен[её]н|получен|начислен|бонус|промокод принят/i.test(lower)) {
+                                                send('ACTIVATION_CONFIRMED', message);
+                                                finish(true, 'site_confirmed: ' + message);
+                                                return;
+                                            }
+                                        }
+
+                                        if (Date.now() - clickedAt >= 10000) {
+                                            send('ACTIVATION_RESULT_UNCONFIRMED',
+                                                message || 'The site did not expose a recognizable result message');
+                                            finish(false, 'activation_result_unconfirmed');
+                                            return;
+                                        }
+                                        setTimeout(pollResult, 400);
+                                    }
+
+                                    function locateAndActivate() {
+                                        if (finished) return;
+                                        var input = document.querySelector(
+                                            'input.promo-page__input.promo-code-use-input,' +
+                                            'input[name^="promo_code_fake_"]'
+                                        );
+                                        var button = document.querySelector(
+                                            'button.promo-page__button.promo-code-use-btn'
+                                        );
+
+                                        if (!input || !button) {
+                                            if (Date.now() - startedAt >= 12000) {
+                                                send('FORM_NOT_FOUND',
+                                                    'inputFound=' + !!input + ' buttonFound=' + !!button);
+                                                finish(false, 'promo_form_not_found');
+                                                return;
+                                            }
+                                            setTimeout(locateAndActivate, 300);
+                                            return;
+                                        }
+
+                                        if (button.disabled || button.getAttribute('aria-disabled') === 'true') {
+                                            send('ACTIVATE_BUTTON_DISABLED', 'The site currently disables the Activate button');
+                                            finish(false, 'activate_button_disabled');
+                                            return;
+                                        }
+
+                                        try {
+                                            var descriptor = Object.getOwnPropertyDescriptor(
+                                                HTMLInputElement.prototype, 'value'
+                                            );
+                                            if (descriptor && descriptor.set) descriptor.set.call(input, promoCode);
+                                            else input.value = promoCode;
+                                            input.dispatchEvent(new Event('input', {bubbles: true}));
+                                            input.dispatchEvent(new Event('change', {bubbles: true}));
+                                            send('CODE_ENTERED', 'length=' + promoCode.length);
+
+                                            setTimeout(function() {
+                                                if (finished) return;
+                                                if (!document.contains(button)) {
+                                                    button = document.querySelector(
+                                                        'button.promo-page__button.promo-code-use-btn'
+                                                    );
+                                                }
+                                                if (!button || button.disabled) {
+                                                    send('ACTIVATE_BUTTON_UNAVAILABLE', 'Button missing or disabled after input');
+                                                    finish(false, 'activate_button_unavailable_after_input');
+                                                    return;
+                                                }
+                                                clickedAt = Date.now();
+                                                button.click();
+                                                send('ACTIVATE_CLICKED', 'Clicked the real site Activate button');
+                                                setTimeout(pollResult, 400);
+                                            }, 250);
+                                        } catch (e) {
+                                            send('FORM_ERROR', e && e.message ? e.message : String(e));
+                                            finish(false, 'form_interaction_error');
+                                        }
+                                    }
+
+                                    locateAndActivate();
+                                })();
+                            """.trimIndent()
+                            view?.evaluateJavascript(script, null)
+                        }
+                    }
+
+                    watchdog = Runnable { finish(false, "promo_page_timeout") }
+                    mainHandler.postDelayed(watchdog!!, 30_000L)
+                    log(account.username, "PROMO: OPEN url=https://mangabuff.ru/promo-code")
+                    updateStatus(account, "🎟️ Промокод: активация…", true, "Промокод", 0.1f)
+                    webView.loadUrl("https://mangabuff.ru/promo-code")
+                } catch (e: Exception) {
+                    finish(false, "startup_error=" + e.message)
+                }
+            }
+        }
     }
 
     // =========================================================
