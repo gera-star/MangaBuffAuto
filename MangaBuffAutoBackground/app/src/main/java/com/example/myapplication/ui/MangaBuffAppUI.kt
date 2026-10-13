@@ -1344,12 +1344,54 @@ fun TasksTab(
                             }
                         }
 
-                        TaskActionButton(
-                            "📖 Чтение",
-                            { onRunAll(TaskType.READER) },
-                            actionEnabled,
-                            Modifier.weight(1f)
-                        )
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TaskActionButton(
+                                "📖 Чтение",
+                                { onRunAll(TaskType.READER) },
+                                actionEnabled,
+                                Modifier.weight(1f)
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (settings.readerSiteAutoscroll) {
+                                            Color(0xFF4CAF50)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        }
+                                    )
+                                    .clickable(enabled = actionEnabled) {
+                                        onSaveSettings(
+                                            settings.copy(
+                                                readerSiteAutoscroll = !settings.readerSiteAutoscroll
+                                            )
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = if (settings.readerSiteAutoscroll) {
+                                        "Автоскролл сайта включен"
+                                    } else {
+                                        "Автоскролл сайта выключен"
+                                    },
+                                    tint = if (settings.readerSiteAutoscroll) {
+                                        Color.White
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.size(21.dp)
+                                )
+                            }
+                        }
                         TaskActionButton(
                             "🎟️ Промокод",
                             onOpenPromoDialog,
