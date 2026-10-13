@@ -2582,9 +2582,12 @@ class MangaBuffAutomation(
                                         sessionStorage.getItem(runKey + ':startRequested') === '1';
                                     send('STATE_CHECK', 'expeditionActive=' + active +
                                         ' claimButton=' + !!claimButton + ' startButton=' + !!startButton);
-                                    finish(didAction, didAction
+                                    var completedOrActive = didAction || active;
+                                    finish(completedOrActive, didAction
                                         ? 'requests_or_actions_processed; expeditionActive=' + active
-                                        : 'nothing_to_do; choose four awakened cards and save preparation');
+                                        : (active
+                                            ? 'expedition_already_active'
+                                            : 'nothing_to_do; choose four awakened cards and save preparation'));
                                 }
                                 run(document.querySelector('[data-tower-root]'), 0).catch(function(e) {
                                     send('TASK_ERROR', e && e.message ? e.message : String(e));
