@@ -321,6 +321,39 @@ class MangaBuffAutomation(
                     val backgroundMode = screenOff || !target.hasWindowFocus() || !target.isShown
                     if (backgroundMode) {
                         val tickNow = SystemClock.elapsedRealtime()
+
+                        // Hidden WebViews may throttle requestAnimationFrame. Nudge only after
+                        // observed progress has stopped, and throttle the nudge to avoid double scroll.
+                        val fallbackIdleMs = tickNow - backgroundLastProgressAt
+                        val fallbackRemainingThreshold = maxOf(120L, backgroundViewportHeight / 4L)
+                        if (
+                            !screenOff &&
+                            backgroundFastScrollRunning &&
+                            backgroundRemaining > fallbackRemainingThreshold &&
+                            fallbackIdleMs >= 1_000L &&
+                            tickNow - backgroundLastFallbackStepAt >= 650L
+                        ) {
+                            backgroundLastFallbackStepAt = tickNow
+                            try {
+                                target.evaluateJavascript(
+                                    "window.__mbBackgroundStep && window.__mbBackgroundStep();",
+                                    null
+                                )
+                                if (
+                                    backgroundLastFallbackLogAt == 0L ||
+                                    tickNow - backgroundLastFallbackLogAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS
+                                ) {
+                                    backgroundLastFallbackLogAt = tickNow
+                                    log(
+                                        accountUsername,
+                                        "READER: BACKGROUND_SCROLL_FALLBACK_STEP source=HIDDEN_WEBVIEW idleMs=$fallbackIdleMs remaining=$backgroundRemaining"
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                log(accountUsername, "READER: BACKGROUND_SCROLL_FALLBACK_ERROR error=${e.message}", true)
+                            }
+                        }
+
                         if (
                             backgroundConfirmationTickInFlight &&
                             tickNow - backgroundConfirmationTickAt >= BACKGROUND_CONFIRMATION_TICK_TIMEOUT_MS
