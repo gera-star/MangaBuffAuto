@@ -4874,12 +4874,12 @@ class MangaBuffAutomation(
 
                     // MangaBuff's reading quest uses batched/CCL accounting: the
                     // visible "Главы X/75" value may advance only after several
-                    // chapters. Refresh it every 5 completed chapters for UI/
-                    // diagnostics, but NEVER make this refresh a reader gate.
-                    if (chaptersReadCount % 5 == 0) {
+                    // chapters. Refresh the server balance after every 2 completed
+                    // chapters for UI/diagnostics, but NEVER make this refresh a reader gate.
+                    if (chaptersReadCount % 2 == 0) {
                         log(account.username,
                             "READER: PERIODIC_BALANCE_REFRESH chaptersRead=" + chaptersReadCount +
-                                " reason=5_CHAPTERS")
+                                " reason=2_CHAPTERS")
                         try {
                             val refreshed = withTimeoutOrNull(12_000L) {
                                 fetchAndLogBalanceInfo(account, webView)
