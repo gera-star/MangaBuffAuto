@@ -3938,11 +3938,6 @@ class MangaBuffAutomation(
             return true
         }
 
-        if (target == 0) {
-            updateStatus(account, "📺 Реклама: отключена", false, "Реклама", 1f)
-            return true
-        }
-
         updateStatus(account, "📺 Реклама (0/$target): подготовка", true, "Реклама", 0f)
 
         /*
