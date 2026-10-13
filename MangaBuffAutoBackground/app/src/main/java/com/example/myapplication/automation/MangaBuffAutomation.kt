@@ -8771,6 +8771,21 @@ class MangaBuffAutomation(
             return 0
         }
 
+        // Persist per-account/per-day deck attempts so rerunning the task cannot
+        // post multiple comments to the same deck. Reserve before clicking Send:
+        // an uncertain network response must not trigger a duplicate comment.
+        val deckCommentPrefs = context.getSharedPreferences(
+            "mangabuff_deck_comment_guard",
+            Context.MODE_PRIVATE
+        )
+        val deckCommentDay = java.time.LocalDate.now().toString()
+        val deckAccountKey = account.username
+            .lowercase()
+            .replace(Regex("[^a-z0-9._-]"), "_")
+        val deckAttemptPrefix = "attempted_${deckCommentDay}_${deckAccountKey}_"
+        val lastDeckCommentKey = "last_comment_at_${deckCommentDay}_${deckAccountKey}"
+        val deckCommentGapMs = 40_000L
+
         suspend fun evalJs(script: String): String? =
             suspendCancellableCoroutine { continuation ->
                 mainHandler.post {
@@ -8943,7 +8958,17 @@ class MangaBuffAutomation(
             )
         }
 
-        val targetDecks = decks.take(remainingDaily)
+        val unattemptedDecks = decks.filter { deck ->
+            val deckUrl = deck["url"].orEmpty()
+            val deckId = deckUrl.substringBefore('?').trimEnd('/')
+            deckId.isNotBlank() &&
+                !deckCommentPrefs.getBoolean(deckAttemptPrefix + deckId.hashCode(), false)
+        }
+        val targetDecks = unattemptedDecks.take(remainingDaily)
+        log(
+            account.username,
+            "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} gapSec=40"
+        )
         var sentCount = 0
 
         for ((index, deck) in targetDecks.withIndex()) {
@@ -8961,6 +8986,19 @@ class MangaBuffAutomation(
             val deckUrl = deck["url"].orEmpty()
             val deckName = deck["name"].orEmpty()
             if (deckUrl.isBlank()) continue
+
+            // Enforce a fixed 40-second gap even if the deck task is started
+            // again; the timestamp is shared through persistent preferences.
+            val lastCommentAt = deckCommentPrefs.getLong(lastDeckCommentKey, 0L)
+            val waitForGap = (deckCommentGapMs - (System.currentTimeMillis() - lastCommentAt))
+                .coerceAtLeast(0L)
+            if (waitForGap > 0L) {
+                log(
+                    account.username,
+                    "COMMENT: DECK_RATE_LIMIT_WAIT seconds=" + ((waitForGap + 999L) / 1000L)
+                )
+                delay(waitForGap)
+            }
 
             val commentText = deckCommentPhrases.random()
             val commentJs = com.google.gson.Gson().toJson(commentText)
@@ -9057,6 +9095,16 @@ class MangaBuffAutomation(
                     state == "WAIT_BUTTON" -> delay(300L)
                     state == "CLICKED" -> {
                         actionClicked = true
+                        val deckId = deckUrl.substringBefore('?').trimEnd('/')
+                        // Mark before confirmation so an uncertain response is never
+                        // retried as a second comment on this deck.
+                        deckCommentPrefs.edit()
+                            .putBoolean(
+                                deckAttemptPrefix + deckId.hashCode(),
+                                true
+                            )
+                            .putLong(lastDeckCommentKey, System.currentTimeMillis())
+                            .apply()
 
                         log(
                             account.username,
@@ -9172,19 +9220,13 @@ class MangaBuffAutomation(
                 )
             }
 
+            // No random short delay here: the next iteration's persistent
+            // rate-limit gate enforces exactly 40 seconds between Send clicks.
             if (
                 index + 1 < targetDecks.size &&
                 dailyStats.comments < COMMENT_DAILY_LIMIT
             ) {
-                val nextCommentDelayMs = Random.nextLong(10_000L, 40_001L)
-
-                log(
-                    account.username,
-                    "COMMENT: DECK_NEXT_DELAY delayMs=" + nextCommentDelayMs +
-                        " delaySec=" + (nextCommentDelayMs / 1000)
-                )
-
-                delay(nextCommentDelayMs)
+                log(account.username, "COMMENT: DECK_NEXT_DELAY gapSec=40")
             }
         }
 
