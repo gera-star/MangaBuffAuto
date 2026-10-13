@@ -2278,7 +2278,7 @@ class MangaBuffAutomation(
             if (account.advEnabled || taskType == TaskType.ADS) {
                 log(account.username, "TASK: ADS_START")
                 val start = SystemClock.elapsedRealtime()
-                val adsSuccess = runAdsTask(account, settings, webView)
+                val adsSuccess = runAdsTask(account, webView)
                 log(account.username, "TASK: ADS_END elapsed=" + (SystemClock.elapsedRealtime() - start) + "ms success=" + adsSuccess)
                 fetchAndLogBalanceInfo(account, webView)
                 if (!adsSuccess) {
@@ -3902,7 +3902,6 @@ class MangaBuffAutomation(
 
     private suspend fun runAdsTask(
         account: MangaBuffAccount,
-        settings: GlobalSettings,
         webView: WebView
     ): Boolean {
         /*
@@ -3920,16 +3919,17 @@ class MangaBuffAutomation(
         }
         val dailyLimit = ADS_DAILY_LIMIT
         val remainingAds = (dailyLimit - dailyAdsToday).coerceAtLeast(0)
-        val target = settings.adsCount.coerceAtLeast(0).coerceAtMost(remainingAds)
+        // The setting is intentionally not user-editable: attempt all remaining ads up to 3/day.
+        val target = remainingAds
         var adsDone = 0
 
         log(
             account.username,
-            "TASK: ADS_START requested=${settings.adsCount} localToday=$dailyAdsToday " +
+            "TASK: ADS_START localToday=$dailyAdsToday " +
                 "remaining=$remainingAds target=$target dailyLimit=$dailyLimit"
         )
 
-        if (settings.adsCount > 0 && remainingAds == 0) {
+        if (remainingAds == 0) {
             log(
                 account.username,
                 "ADS: DAILY_LIMIT_REACHED source=LOCAL_COUNTER today=$dailyAdsToday limit=$dailyLimit"
