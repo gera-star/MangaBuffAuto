@@ -63,6 +63,7 @@ class MangaBuffForegroundService : Service() {
         const val EXTRA_STATUS = "EXTRA_STATUS_TEXT"
         const val EXTRA_ACCOUNT_ID = "EXTRA_ACCOUNT_ID"
         const val EXTRA_TASK_TYPE = "EXTRA_TASK_TYPE"
+        const val EXTRA_PROMO_CODE = "EXTRA_PROMO_CODE"
 
         const val ACTION_RUNTIME_EVENT =
             "com.example.myapplication.action.MANGABUFF_RUNTIME_EVENT"
@@ -149,6 +150,18 @@ class MangaBuffForegroundService : Service() {
             )
         }
 
+        fun startAllWithPromoCode(context: Context, promoCode: String): Boolean {
+            val code = promoCode.trim()
+            if (code.isEmpty()) return false
+            return startCommand(
+                context,
+                ACTION_START_ALL,
+                taskType = TaskType.PROMO,
+                startAsForeground = true,
+                promoCode = code
+            )
+        }
+
         fun stopAccount(context: Context, accountId: String) {
             startCommand(context, ACTION_STOP_ACCOUNT, accountId = accountId)
         }
@@ -194,13 +207,15 @@ class MangaBuffForegroundService : Service() {
             action: String,
             accountId: String? = null,
             taskType: TaskType? = null,
-            startAsForeground: Boolean = false
+            startAsForeground: Boolean = false,
+            promoCode: String? = null
         ): Boolean {
             try {
                 val intent = Intent(context, MangaBuffForegroundService::class.java).apply {
                     this.action = action
                     if (accountId != null) putExtra(EXTRA_ACCOUNT_ID, accountId)
                     if (taskType != null) putExtra(EXTRA_TASK_TYPE, taskType.name)
+                    if (promoCode != null) putExtra(EXTRA_PROMO_CODE, promoCode)
                 }
                 if (startAsForeground && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -337,8 +352,9 @@ class MangaBuffForegroundService : Service() {
                 val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
                 val taskTypeName = intent?.getStringExtra(EXTRA_TASK_TYPE).orEmpty()
                 val taskType = taskTypeName.toTaskTypeOrNull()
+                val promoCode = intent?.getStringExtra(EXTRA_PROMO_CODE)
                 if (accountId.isNotBlank() && taskType != null) {
-                    startAccountInternal(accountId, taskType)
+                    startAccountInternal(accountId, taskType, promoCode)
                 }
             }
 
@@ -346,7 +362,8 @@ class MangaBuffForegroundService : Service() {
                 val taskType = intent?.getStringExtra(EXTRA_TASK_TYPE)
                     ?.toTaskTypeOrNull()
                     ?: TaskType.ALL
-                startAllInternal(taskType)
+                val promoCode = intent?.getStringExtra(EXTRA_PROMO_CODE)
+                startAllInternal(taskType, promoCode)
             }
 
             ACTION_STOP_ACCOUNT -> {
@@ -406,7 +423,11 @@ class MangaBuffForegroundService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification(status))
     }
 
-    private fun startAccountInternal(accountId: String, taskType: TaskType) {
+    private fun startAccountInternal(
+        accountId: String,
+        taskType: TaskType,
+        promoCode: String? = null
+    ) {
         // A new user/background start opens a fresh recovery window.
         // A previous explicit "Stop all" must not permanently disable renderer recovery.
         stoppingExplicitly = false
@@ -424,6 +445,35 @@ class MangaBuffForegroundService : Service() {
             )
             removePersistedRun(accountId)
             return
+        }
+
+        val promoCodeKey = promoCodePreferenceKey(accountId)
+        val effectivePromoCode = if (taskType == TaskType.PROMO) {
+            promoCode?.trim()?.takeIf { it.isNotEmpty() }
+                ?: runtimePrefs.getString(promoCodeKey, "").orEmpty().trim()
+        } else {
+            ""
+        }
+
+        if (taskType == TaskType.PROMO && effectivePromoCode.isBlank()) {
+            publishLog(
+                LogEntry(
+                    username = account.username,
+                    component = "PROMO",
+                    message = "PROMO_START_REJECTED missing_code",
+                    isError = true
+                )
+            )
+            publishStatus(accountId, "Промокод не задан", false, "Промокод", 0f)
+            removePersistedRun(accountId)
+            runtimePrefs.edit().remove(promoCodeKey).apply()
+            return
+        }
+
+        if (taskType == TaskType.PROMO) {
+            runtimePrefs.edit().putString(promoCodeKey, effectivePromoCode).apply()
+        } else {
+            runtimePrefs.edit().remove(promoCodeKey).apply()
         }
 
         accountJobs[accountId]?.cancel()
@@ -445,7 +495,12 @@ class MangaBuffForegroundService : Service() {
         // skipping finally cleanup and leaving a persisted run/WakeLock behind.
         val job = serviceScope.launch(start = CoroutineStart.LAZY) {
             try {
-                automationRunner.runForAccount(account, repository.getSettings(), taskType)
+                automationRunner.runForAccount(
+                    account = account,
+                    settings = repository.getSettings(),
+                    taskType = taskType,
+                    promoCode = effectivePromoCode
+                )
             } catch (e: CancellationException) {
                 publishLog(
                     LogEntry(
@@ -502,6 +557,9 @@ class MangaBuffForegroundService : Service() {
                         }
                     } else {
                         removePersistedRun(accountId)
+                        if (taskType == TaskType.PROMO) {
+                            runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
+                        }
                         publishStatus(accountId, "Готово", false, "", 0f)
                         releaseWakeLockIfIdle()
                         stopSelfIfIdle()
@@ -562,7 +620,7 @@ class MangaBuffForegroundService : Service() {
         publishLog(LogEntry(message = "BG: WATCHDOG_STARTED interval=${WATCHDOG_INTERVAL_MS}ms"))
     }
 
-    private fun startAllInternal(taskType: TaskType) {
+    private fun startAllInternal(taskType: TaskType, promoCode: String? = null) {
         val accounts = repository.getAccounts()
         if (accounts.isEmpty()) {
             stopSelfIfIdle()
@@ -577,7 +635,7 @@ class MangaBuffForegroundService : Service() {
         )
 
         accounts.forEach { account ->
-            startAccountInternal(account.id, taskType)
+            startAccountInternal(account.id, taskType, promoCode)
         }
     }
 
@@ -586,6 +644,7 @@ class MangaBuffForegroundService : Service() {
         recoveryRequests.remove(accountId)
         missingWebViewSince.remove(accountId)
         removePersistedRun(accountId)
+        runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
         accountJobs.remove(accountId)?.cancel()
         automationRunner.stopAccount(accountId)
         publishStatus(accountId, "Остановлено пользователем", false, "", 0f)
@@ -608,6 +667,12 @@ class MangaBuffForegroundService : Service() {
         ids.forEach { accountId ->
             removePersistedRun(accountId)
             accountJobs.remove(accountId)?.cancel()
+        }
+        val promoKeys = runtimePrefs.all.keys.filter { it.startsWith("promo_code_") }
+        if (promoKeys.isNotEmpty()) {
+            val editor = runtimePrefs.edit()
+            promoKeys.forEach(editor::remove)
+            editor.apply()
         }
         recoveryRequests.clear()
         missingWebViewSince.clear()
@@ -708,6 +773,8 @@ class MangaBuffForegroundService : Service() {
             id to type
         }.toMap()
     }
+
+    private fun promoCodePreferenceKey(accountId: String): String = "promo_code_" + accountId
 
     private val runtimePrefs
         get() = getSharedPreferences(PREFS_RUNTIME, MODE_PRIVATE)
