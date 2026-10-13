@@ -1211,7 +1211,6 @@ fun TasksTab(
     onOpenPromoDialog: () -> Unit
 ) {
 
-    var adsCount by remember { mutableStateOf(settings.adsCount.toString()) }
     var readerChapters by remember { mutableStateOf(settings.readerChapters.toString()) }
     var battleTarget by remember { mutableStateOf(settings.battleTargetCount.toString()) }
 
@@ -1536,12 +1535,6 @@ fun TasksTab(
                             Modifier.weight(1f)
                         )
                         CompactNumberField(
-                            adsCount,
-                            { adsCount = it },
-                            "📺 Реклама",
-                            Modifier.weight(1f)
-                        )
-                        CompactNumberField(
                             readerChapters,
                             { readerChapters = it },
                             "📖 Главы",
@@ -1556,7 +1549,6 @@ fun TasksTab(
                             onSaveSettings(
                                 settings.copy(
                                     battleTargetCount = battleTarget.toIntOrNull() ?: settings.battleTargetCount,
-                                    adsCount = adsCount.toIntOrNull() ?: settings.adsCount,
                                     readerChapters = readerChapters.toIntOrNull() ?: settings.readerChapters
                                 )
                             )
@@ -1624,7 +1616,7 @@ private fun CompactNumberField(
         },
         label = { Text(label, maxLines = 1) },
         singleLine = true,
-        modifier = modifier.height(46.dp),
+        modifier = modifier.height(60.dp),
         textStyle = MaterialTheme.typography.bodyMedium,
         shape = RoundedCornerShape(10.dp)
     )
