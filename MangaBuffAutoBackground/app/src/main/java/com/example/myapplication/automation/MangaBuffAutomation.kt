@@ -4436,6 +4436,11 @@ class MangaBuffAutomation(
         mainHandler.post {
             class MineBridge {
                 @JavascriptInterface
+                fun onMineBalance(oreBalance: Int) {
+                    if (oreBalance >= 0) onMineBalanceUpdate(account.id, oreBalance)
+                }
+
+                @JavascriptInterface
                 fun onMineProgress(clicks: Int, total: Int, ore: Int) {
                     if (ore >= 0) onMineBalanceUpdate(account.id, ore)
                     updateStatus(account, "⛏️ Шахта ($clicks/$total) • 🪨 $ore", true, "Шахта",
@@ -4535,6 +4540,7 @@ class MangaBuffAutomation(
                                 }
 
                                 initialOre = currentOre();
+                                AndroidMine.onMineBalance(initialOre);
                                 AndroidMine.onMineLog(
                                     'DOM_READY hits=' + initialHits +
                                     ' ore=' + initialOre +
