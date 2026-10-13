@@ -3219,49 +3219,34 @@ class MangaBuffAutomation(
                                         return isNaN(level) ? -1 : level;
                                     }
 
-                                    for (var i = 0; i < order.length; i++) {
-                                        var item = order[i];
+                                    function findUpgradeButton(item, useAll) {
                                         var card = document.querySelector(
                                             '[data-hq-upgrade-card="' + item.key + '"]'
                                         );
-                                        var button = card
-                                            ? card.querySelector(
-                                                'button[data-upgrade-mode="max"][data-upgrade-key="' +
-                                                item.key + '"]'
-                                            )
-                                            : null;
+                                        var selector = useAll
+                                            ? 'button[data-upgrade-mode="max"][data-upgrade-key="' + item.key + '"]'
+                                            : 'button[data-hq-upgrade][data-upgrade-key="' + item.key + '"]:not([data-upgrade-mode="max"])';
+                                        return {card: card, button: card ? card.querySelector(selector) : null};
+                                    }
 
-                                        if (!card || !button) {
-                                            skipped++;
-                                            send('HQ_UPGRADE_SKIPPED',
-                                                'key=' + item.key + ' name=' + item.name + ' reason=button_not_found');
-                                            continue;
-                                        }
-
-                                        if (button.disabled || button.getAttribute('aria-disabled') === 'true') {
-                                            skipped++;
-                                            send('HQ_UPGRADE_SKIPPED',
-                                                'key=' + item.key + ' name=' + item.name + ' reason=disabled_or_insufficient_essence');
-                                            continue;
-                                        }
-
-                                        if (!visible(button)) {
-                                            skipped++;
-                                            send('HQ_UPGRADE_SKIPPED',
-                                                'key=' + item.key + ' name=' + item.name + ' reason=not_visible');
-                                            continue;
-                                        }
-
+                                    async function clickUpgradeAndConfirm(item, button, mode) {
                                         var beforeLevel = readUpgradeLevel(item.key);
+                                        if (beforeLevel < 0) {
+                                            send('HQ_UPGRADE_SKIPPED',
+                                                'key=' + item.key + ' name=' + item.name + ' reason=level_not_readable');
+                                            return {ok: false, reason: 'level_not_readable'};
+                                        }
+
                                         try {
                                             button.click();
                                             send('HQ_UPGRADE_CLICKED',
-                                                'key=' + item.key + ' name=' + item.name + ' beforeLevel=' + beforeLevel);
+                                                'key=' + item.key + ' name=' + item.name +
+                                                ' mode=' + mode + ' beforeLevel=' + beforeLevel);
                                         } catch (e) {
-                                            skipped++;
                                             send('HQ_UPGRADE_CLICK_ERROR',
-                                                'key=' + item.key + ' error=' + (e && e.message ? e.message : String(e)));
-                                            continue;
+                                                'key=' + item.key + ' mode=' + mode +
+                                                ' error=' + (e && e.message ? e.message : String(e)));
+                                            return {ok: false, reason: 'click_error'};
                                         }
 
                                         var afterLevel = beforeLevel;
@@ -3272,19 +3257,114 @@ class MangaBuffAutomation(
                                         }
 
                                         if (afterLevel > beforeLevel) {
-                                            upgraded++;
+                                            var gained = afterLevel - beforeLevel;
+                                            upgraded += gained;
                                             send('HQ_UPGRADE_CONFIRMED',
-                                                'key=' + item.key + ' levels=' + beforeLevel + '->' + afterLevel);
-                                        } else {
-                                            skipped++;
-                                            send('HQ_UPGRADE_NOT_CONFIRMED',
-                                                'key=' + item.key + ' beforeLevel=' + beforeLevel +
-                                                ' afterLevel=' + afterLevel);
+                                                'key=' + item.key + ' levels=' + beforeLevel + '->' + afterLevel +
+                                                ' gained=' + gained + ' mode=' + mode);
+                                            await hqWait(250);
+                                            return {ok: true, gained: gained};
                                         }
+
+                                        send('HQ_UPGRADE_NOT_CONFIRMED',
+                                            'key=' + item.key + ' beforeLevel=' + beforeLevel +
+                                            ' afterLevel=' + afterLevel + ' mode=' + mode);
+                                        return {ok: false, reason: 'level_not_changed'};
+                                    }
+
+                                    if (order.length === 1) {
+                                        // With one skill selected, "На все" intentionally spends all available
+                                        // Dark Crystals on that one skill.
+                                        var onlyItem = order[0];
+                                        var onlyControls = findUpgradeButton(onlyItem, true);
+                                        if (!onlyControls.card || !onlyControls.button) {
+                                            skipped++;
+                                            send('HQ_UPGRADE_SKIPPED',
+                                                'key=' + onlyItem.key + ' name=' + onlyItem.name +
+                                                ' reason=max_button_not_found');
+                                        } else if (onlyControls.button.disabled ||
+                                                   onlyControls.button.getAttribute('aria-disabled') === 'true' ||
+                                                   !visible(onlyControls.button)) {
+                                            skipped++;
+                                            send('HQ_UPGRADE_SKIPPED',
+                                                'key=' + onlyItem.key + ' name=' + onlyItem.name +
+                                                ' reason=disabled_or_insufficient_essence');
+                                        } else {
+                                            var maxResult = await clickUpgradeAndConfirm(
+                                                onlyItem, onlyControls.button, 'all'
+                                            );
+                                            if (!maxResult.ok) skipped++;
+                                        }
+                                    } else if (order.length > 1) {
+                                        // "На все" empties the entire resource balance into one skill.
+                                        // For multiple selections, buy one level at a time in round-robin order
+                                        // so every enabled skill gets a chance before resources run out.
+                                        send('HQ_UPGRADE_ALLOCATION',
+                                            'mode=round_robin_plus_one selected=' +
+                                            order.map(function(item) { return item.key; }).join(','));
+                                        var blockedKeys = {};
+                                        var purchases = 0;
+                                        var maxPurchases = 120;
+                                        var anyProgress = true;
+
+                                        while (anyProgress && purchases < maxPurchases) {
+                                            anyProgress = false;
+
+                                            for (var i = 0; i < order.length; i++) {
+                                                if (purchases >= maxPurchases) break;
+                                                var item = order[i];
+                                                if (blockedKeys[item.key]) continue;
+
+                                                var controls = findUpgradeButton(item, false);
+                                                if (!controls.card || !controls.button) {
+                                                    blockedKeys[item.key] = true;
+                                                    skipped++;
+                                                    send('HQ_UPGRADE_SKIPPED',
+                                                        'key=' + item.key + ' name=' + item.name +
+                                                        ' reason=plus_one_button_not_found');
+                                                    continue;
+                                                }
+
+                                                if (controls.button.disabled ||
+                                                    controls.button.getAttribute('aria-disabled') === 'true' ||
+                                                    !visible(controls.button)) {
+                                                    blockedKeys[item.key] = true;
+                                                    skipped++;
+                                                    send('HQ_UPGRADE_SKIPPED',
+                                                        'key=' + item.key + ' name=' + item.name +
+                                                        ' reason=disabled_or_insufficient_essence mode=plus_one');
+                                                    continue;
+                                                }
+
+                                                var result = await clickUpgradeAndConfirm(
+                                                    item, controls.button, 'plus_one'
+                                                );
+                                                if (result.ok) {
+                                                    purchases += result.gained;
+                                                    anyProgress = true;
+                                                } else {
+                                                    // Do not hammer the same control if the site did not confirm
+                                                    // the change; continue distributing resources to other skills.
+                                                    blockedKeys[item.key] = true;
+                                                    skipped++;
+                                                }
+                                            }
+                                        }
+
+                                        if (purchases >= maxPurchases) {
+                                            send('HQ_UPGRADE_SAFETY_STOP',
+                                                'Reached maxPurchases=' + maxPurchases +
+                                                '; stopping safely instead of unbounded clicking');
+                                        }
+                                    } else {
+                                        skipped++;
+                                        send('HQ_UPGRADE_SKIPPED', 'reason=no_skills_selected');
+                                    }
+
                                         await hqWait(300);
                                     }
 
-                                    try { sessionStorage.setItem(sequenceKey, '1'); } catch (e) {}
+                                    try { sessionStorage.setItem(sequenceKey, '1'); } catch (e) {}                                    try { sessionStorage.setItem(sequenceKey, '1'); } catch (e) {}
 
                                     // Close the HQ panel before the normal expedition controls run.
                                     var closeButton = document.querySelector(
