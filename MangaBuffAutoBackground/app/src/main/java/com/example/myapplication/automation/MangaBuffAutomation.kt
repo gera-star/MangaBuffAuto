@@ -1159,6 +1159,67 @@ class MangaBuffAutomation(
 
     private var dailyStats = DailyStats(day = currentStatsDay())
 
+    private val dailyCalendarPrefs by lazy {
+        context.getSharedPreferences("mangabuff_daily_calendar_guard", Context.MODE_PRIVATE)
+    }
+    private val dailyCalendarAttemptsInFlight =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    // MangaBuff's daily reward rollover follows Moscow time rather than the device's timezone.
+    private fun dailyCalendarDate(): String =
+        java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("Europe/Moscow")
+        }.format(java.util.Date())
+
+    /**
+     * The calendar is only opened after all three ad rewards have been recorded for today.
+     * A per-account/day preference prevents repeated modal openings, and an in-flight set
+     * prevents overlapping balance refreshes from clicking the same reward twice.
+     */
+    private fun reserveDailyCalendarAttempt(account: MangaBuffAccount): Pair<Boolean, String> {
+        val statsDay = currentStatsDay()
+        val adsToday = when {
+            dailyStats.day == statsDay -> dailyStats.ads.coerceAtLeast(0)
+            account.dailyStatsDay == statsDay -> account.dailyAds.coerceAtLeast(0)
+            else -> 0
+        }
+        if (adsToday < ADS_DAILY_LIMIT) {
+            return false to "SKIPPED_WAITING_FOR_ADS ads=$adsToday/$ADS_DAILY_LIMIT"
+        }
+
+        val calendarDay = dailyCalendarDate()
+        val key = "claimed_day_${account.id}"
+        if (dailyCalendarPrefs.getString(key, "") == calendarDay) {
+            return false to "SKIPPED_ALREADY_CLAIMED day=$calendarDay"
+        }
+        if (!dailyCalendarAttemptsInFlight.add(account.id)) {
+            return false to "SKIPPED_ALREADY_IN_FLIGHT"
+        }
+        return true to "RUN day=$calendarDay ads=$adsToday/$ADS_DAILY_LIMIT"
+    }
+
+    private fun completeDailyCalendarAttempt(account: MangaBuffAccount, result: String) {
+        if (!dailyCalendarAttemptsInFlight.remove(account.id)) return
+
+        val confirmedOrAlreadyCollected =
+            result.startsWith("CLAIM_STATE_CHANGED") || result == "NO_CLAIMABLE_REWARD"
+        if (confirmedOrAlreadyCollected) {
+            dailyCalendarPrefs.edit()
+                .putString("claimed_day_${account.id}", dailyCalendarDate())
+                .apply()
+        }
+        log(
+            account.username,
+            "DAILY_REWARD: DAILY_GUARD saved=$confirmedOrAlreadyCollected result=$result day=${dailyCalendarDate()}"
+        )
+    }
+
+    private fun releaseDailyCalendarAttempt(account: MangaBuffAccount, reason: String) {
+        if (dailyCalendarAttemptsInFlight.remove(account.id)) {
+            log(account.username, "DAILY_REWARD: DAILY_GUARD released reason=$reason")
+        }
+    }
+
     private fun initDailyStats(account: MangaBuffAccount) {
         dailyStats = if (account.dailyStatsDay == currentStatsDay()) {
             DailyStats(
@@ -1542,6 +1603,8 @@ class MangaBuffAutomation(
         mainHandler.post {
 
             var resumed = false
+            var dailyRewardScriptInjected = false
+            val dailyRewardAttemptReserved = java.util.concurrent.atomic.AtomicBoolean(false)
 
             fun removeWatchdog() {
                 watchdog?.let {
@@ -1640,6 +1703,9 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onDailyRewardFlowDone(result: String) {
+                    if (dailyRewardAttemptReserved.compareAndSet(true, false)) {
+                        completeDailyCalendarAttempt(account, result)
+                    }
                     if (resumed) return
                     dailyRewardFlowResult = result
                     log(account.username, "DAILY_REWARD: FLOW_DONE result=$result")
@@ -1962,7 +2028,26 @@ class MangaBuffAutomation(
                     """.trimIndent()
 
                     view?.evaluateJavascript(script, null)
-                    view?.evaluateJavascript(dailyRewardScript, null)
+                    if (!dailyRewardScriptInjected) {
+                        dailyRewardScriptInjected = true
+                        val (shouldRunCalendar, calendarDecision) = reserveDailyCalendarAttempt(account)
+                        if (shouldRunCalendar) {
+                            dailyRewardAttemptReserved.set(true)
+                            log(account.username, "DAILY_REWARD: DAILY_GUARD state=RUN detail=$calendarDecision")
+                            if (view != null) {
+                                view.evaluateJavascript(dailyRewardScript, null)
+                            } else {
+                                dailyRewardAttemptReserved.set(false)
+                                releaseDailyCalendarAttempt(account, "BALANCE_VIEW_NULL")
+                                dailyRewardFlowResult = "SKIPPED_BALANCE_VIEW_NULL"
+                            }
+                        } else {
+                            dailyRewardFlowResult = calendarDecision
+                            log(account.username, "DAILY_REWARD: DAILY_GUARD state=$calendarDecision")
+                        }
+                        val summary = pendingBalanceSummary
+                        if (summary != null && dailyRewardFlowResult != null) safeResume(summary)
+                    }
                     view?.evaluateJavascript("""
                         (function() {
                             try {
@@ -2047,6 +2132,9 @@ class MangaBuffAutomation(
 
             watchdog = Runnable {
                 if (!resumed && continuation.isActive) {
+                    if (dailyRewardAttemptReserved.compareAndSet(true, false)) {
+                        releaseDailyCalendarAttempt(account, "BALANCE_TIMEOUT")
+                    }
                     log(account.username, "STAT: BALANCE_TIMEOUT after=15000ms; stats remain unknown", true)
                     safeResume("⚠️ Статистика не обновлена: тайм-аут")
                 }
@@ -2173,7 +2261,7 @@ class MangaBuffAutomation(
             if (account.towerEnabled || taskType == TaskType.TOWER) {
                 log(account.username, "TASK: TOWER_START")
                 val start = SystemClock.elapsedRealtime()
-                runTowerTask(account, webView)
+                runTowerTask(account, webView, settings)
                 log(account.username, "TASK: TOWER_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
                 // Balance is refreshed once at the end of the account run, not between tasks.
             } else {
@@ -2855,8 +2943,16 @@ class MangaBuffAutomation(
      */
     private suspend fun runTowerTask(
         account: MangaBuffAccount,
-        webView: WebView
+        webView: WebView,
+        settings: GlobalSettings
     ) = suspendCancellableCoroutine<Unit> { continuation ->
+        val selectedTowerUpgradeKeysJs = buildList {
+            if (settings.towerUpgradeAssault) add("assault")
+            if (settings.towerUpgradeFortitude) add("fortitude")
+            if (settings.towerUpgradeHunt) add("hunt")
+            if (settings.towerUpgradeMentorship) add("mentorship")
+            if (settings.towerUpgradeSupply) add("supply")
+        }.joinToString(",") { "'$it'" }
         val runToken = UUID.randomUUID().toString().replace("-", "")
         val completed = java.util.concurrent.atomic.AtomicBoolean(false)
         var watchdog: Runnable? = null
@@ -3052,6 +3148,11 @@ class MangaBuffAutomation(
                                     }
                                 }
                                 async function upgradeTowerHeadquarters() {
+                                    var selectedKeys = [$selectedTowerUpgradeKeysJs];
+                                    if (!selectedKeys.length) {
+                                        send('HQ_UPGRADE_SKIPPED', 'reason=no_skills_selected');
+                                        return 'no_skills_selected';
+                                    }
                                     var sequenceKey = runKey + ':hqUpgradeSequenceDone';
                                     try {
                                         if (sessionStorage.getItem(sequenceKey) === '1') {
@@ -3099,7 +3200,10 @@ class MangaBuffAutomation(
                                         {key: 'hunt', name: 'Знание Хранителей'},
                                         {key: 'mentorship', name: 'Наставление'},
                                         {key: 'supply', name: 'Снабжение'}
-                                    ];
+                                    ].filter(function(item) {
+                                        return selectedKeys.indexOf(item.key) !== -1;
+                                    });
+                                    send('HQ_UPGRADE_SELECTION', 'selected=' + selectedKeys.join(','));
                                     var upgraded = 0;
                                     var skipped = 0;
 
@@ -3205,6 +3309,18 @@ class MangaBuffAutomation(
                                         ' order=assault,fortitude,hunt,mentorship,supply';
                                 }
 
+                                async function finishAfterExpeditionStarted(detail) {
+                                    var hqSummary = 'not_run';
+                                    try {
+                                        hqSummary = await upgradeTowerHeadquarters();
+                                        send('HQ_UPGRADE_SEQUENCE_DONE', hqSummary);
+                                    } catch (e) {
+                                        hqSummary = 'error=' + (e && e.message ? e.message : String(e));
+                                        send('HQ_UPGRADE_ERROR', hqSummary);
+                                    }
+                                    finish(true, detail + '; hq=' + hqSummary);
+                                }
+
                                 async function run(root, attempt) {
                                     function wait(ms) {
                                         return new Promise(function(resolve) { setTimeout(resolve, ms); });
@@ -3305,8 +3421,8 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
-                                    var hqUpgradeSummary = await upgradeTowerHeadquarters();
-                                    send('HQ_UPGRADE_SEQUENCE_DONE', hqUpgradeSummary);
+                                    // Collect the completed expedition and send the next squad first.
+                                    // Headquarters upgrades run only after this run confirms the new timer.
 
                                     var currentRoot = liveRoot();
                                     var state = readAndPublishTimer(currentRoot);
@@ -3443,7 +3559,9 @@ class MangaBuffAutomation(
                                         }
                                         if (state.active && !state.complete && state.remainingSeconds > 0) {
                                             send('START_CONFIRMED', 'Timer became visible after Send squad');
-                                            finish(true, 'expedition_started; remainingSeconds=' + state.remainingSeconds);
+                                            await finishAfterExpeditionStarted(
+                                                'expedition_started; remainingSeconds=' + state.remainingSeconds
+                                            );
                                             return;
                                         }
                                         acceptButton = findAcceptButton(currentRoot);
@@ -3492,7 +3610,9 @@ class MangaBuffAutomation(
                                         }
                                         if (state.active && !state.complete && state.remainingSeconds > 0) {
                                             send('START_CONFIRMED', 'Live Tower DOM exposes the active timer');
-                                            finish(true, 'expedition_started; remainingSeconds=' + state.remainingSeconds);
+                                            await finishAfterExpeditionStarted(
+                                                'expedition_started; remainingSeconds=' + state.remainingSeconds
+                                            );
                                             return;
                                         }
                                         if (findClaimButton() && !(state.active && state.remainingSeconds > 0)) {
@@ -3514,9 +3634,13 @@ class MangaBuffAutomation(
                                     if (!startButton) {
                                         send('START_BUTTON_ABSENT_ASSUME_SENT',
                                             'Send squad button disappeared after confirmation; no duplicate click will be attempted');
-                                        finish(true, state.remainingSeconds > 0
-                                            ? 'expedition_started; remainingSeconds=' + state.remainingSeconds
-                                            : 'send_and_accept_processed; waiting_for_tower_timer_render');
+                                        if (state.remainingSeconds > 0) {
+                                            await finishAfterExpeditionStarted(
+                                                'expedition_started; remainingSeconds=' + state.remainingSeconds
+                                            );
+                                        } else {
+                                            finish(true, 'send_and_accept_processed; waiting_for_tower_timer_render');
+                                        }
                                         return;
                                     }
 
