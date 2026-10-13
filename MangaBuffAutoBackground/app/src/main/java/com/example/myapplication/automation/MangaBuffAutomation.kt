@@ -169,10 +169,12 @@ class MangaBuffAutomation(
                     }
                 } catch (e) {}
                 var s = document.scrollingElement || document.documentElement || document.body;
-                var v = m && m.viewport ? m.viewport : Math.max(
+                var v = Math.max(
+                    m && m.viewport ? m.viewport : 0,
                     window.visualViewport ? window.visualViewport.height : 0,
                     window.innerHeight || 0,
                     s ? (s.clientHeight || 0) : 0,
+                    Number(window.__mbNativeViewportHeight) || 0,
                     1
                 );
                 var h = m && m.height ? m.height : Math.max(
@@ -309,10 +311,21 @@ class MangaBuffAutomation(
                     }
 
                     if (screenOff) {
-                        // Keep the established native scroll tick for a locked screen.
+                        // A detached WebView can report a 0px/1px DOM viewport even while
+                        // its native view has a valid measured size. Pass the native CSS
+                        // viewport to the reader before every locked-screen JS scroll tick.
                         try {
+                            val density = target.resources.displayMetrics.density.coerceAtLeast(0.1f)
+                            val metrics = target.resources.displayMetrics
+                            val nativeWidthPx = target.width.takeIf { it > 0 } ?: metrics.widthPixels
+                            val nativeHeightPx = target.height.takeIf { it > 0 } ?: metrics.heightPixels
+                            val nativeWidthCss = (nativeWidthPx / density).toInt().coerceAtLeast(1)
+                            val nativeHeightCss = (nativeHeightPx / density).toInt().coerceAtLeast(1)
+                            val viewportBootstrap =
+                                "window.__mbNativeViewportWidth=$nativeWidthCss;" +
+                                    "window.__mbNativeViewportHeight=$nativeHeightCss;"
                             target.evaluateJavascript(
-                                "window.__mbBackgroundStep && window.__mbBackgroundStep();",
+                                viewportBootstrap + "window.__mbBackgroundStep && window.__mbBackgroundStep();",
                                 null
                             )
                         } catch (e: Exception) {
@@ -7779,10 +7792,18 @@ class MangaBuffAutomation(
                                                 }
 
                                                 var scrollMetrics = window.__mbGetReaderScrollMetrics(false);
-                                                var viewport = scrollMetrics.viewport;
-                                                var height = scrollMetrics.height;
-                                                var y = scrollMetrics.y;
-                                                var remaining = scrollMetrics.remaining;
+                                                // Prefer actual DOM measurements, but fall back to the
+                                                // Android-measured viewport when a locked/detached WebView
+                                                // reports clientHeight/innerHeight as zero or one pixel.
+                                                var nativeViewport = Number(window.__mbNativeViewportHeight) || 0;
+                                                var viewport = Math.max(
+                                                    Number(scrollMetrics.viewport) || 0,
+                                                    nativeViewport,
+                                                    1
+                                                );
+                                                var height = Number(scrollMetrics.height) || 0;
+                                                var y = Number(scrollMetrics.y) || 0;
+                                                var remaining = Math.max(0, height - viewport - y);
                                                 if (remaining <= 2) {
                                                     // The native Android pump keeps calling this function while the screen
                                                     // is locked, so it must also drive end detection when JS timers are throttled.
