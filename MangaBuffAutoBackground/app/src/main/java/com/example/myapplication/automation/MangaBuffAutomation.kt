@@ -126,6 +126,7 @@ class MangaBuffAutomation(
         comments: String
     ) -> Unit = { _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
+    private val onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
 
@@ -2388,6 +2389,20 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun onTowerTimerState(remainingSeconds: Long, active: Boolean, complete: Boolean) {
+                    val endsAtMillis = if (active && !complete && remainingSeconds > 0L) {
+                        System.currentTimeMillis() + remainingSeconds * 1000L
+                    } else {
+                        0L
+                    }
+                    onTowerExpeditionEndsAtUpdate(account.id, endsAtMillis)
+                    log(
+                        account.username,
+                        "TOWER: TIMER_STATE active=$active complete=$complete remainingSeconds=$remainingSeconds"
+                    )
+                }
+
+                @JavascriptInterface
                 fun onTowerFinished(success: Boolean, detail: String) {
                     finish(success, detail)
                 }
@@ -2502,6 +2517,15 @@ class MangaBuffAutomation(
                                     var squadButton = action(root, /сохранить\s+отряд|save\s+squad/i);
                                     var preparationButton = action(root, /сохранить\s+подготовку|сохранить\s+приказ|save\s+preparation/i);
                                     var stateAtStart = expeditionState(root);
+                                    try {
+                                        AndroidTowerBridge.onTowerTimerState(
+                                            stateAtStart.remainingSeconds,
+                                            stateAtStart.active,
+                                            stateAtStart.complete
+                                        );
+                                    } catch (timerError) {
+                                        send('TIMER_BRIDGE_ERROR', timerError && timerError.message ? timerError.message : String(timerError));
+                                    }
                                     var didAction = false;
                                     send('EXPEDITION_STATE',
                                         'active=' + stateAtStart.active +
