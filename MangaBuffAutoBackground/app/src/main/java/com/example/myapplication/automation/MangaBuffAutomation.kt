@@ -4375,7 +4375,10 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onMineMined(oreMined: Int) {
-                    if (oreMined > 0) addDaily(account) { it.copy(mineOre = it.mineOre + oreMined) }
+                    log(account.username, "MINE: ORE_STAT_CALLBACK mined=$oreMined")
+                    if (oreMined > 0) {
+                        addDaily(account) { it.copy(mineOre = it.mineOre + oreMined) }
+                    }
                 }
 
                 @JavascriptInterface
@@ -4416,35 +4419,71 @@ class MangaBuffAutomation(
                                 var maxRuntime = 180000;
                                 var clicks = 0;
                                 var root = document.querySelector('.main-mine');
-                                var initialOre = root ? (parseInt(root.getAttribute('data-ore') || '0', 10) || 0) : 0;
+                                var initialOre = 0;
                                 var hits = document.querySelector('.main-mine__game-hits-left');
                                 var initialHits = hits ? parseInt((hits.innerText || '').trim(), 10) || 0 : 0;
                                 var autoUpgrade = ${settings.mineAutoUpgrade};
 
+                                function numText(el) {
+                                    if (!el) return 0;
+                                    var raw = (el.innerText || el.textContent || '').trim();
+                                    var normalized = raw.replace(/[^\d]/g, '');
+                                    var n = normalized ? parseInt(normalized, 10) : 0;
+                                    return isFinite(n) ? n : 0;
+                                }
+
+                                function currentOre() {
+                                    // While the shop is open its counter is the live balance.
+                                    // Do not trust a hidden shop counter while the mining page is active.
+                                    var modal = document.querySelector('#modal-mine-shop');
+                                    var modalStyle = modal ? window.getComputedStyle(modal) : null;
+                                    var modalVisible = !!modal &&
+                                        modal.getClientRects().length > 0 &&
+                                        modalStyle.display !== 'none' &&
+                                        modalStyle.visibility !== 'hidden';
+
+                                    if (modalVisible) {
+                                        var visibleShopOre = modal.querySelector('.mine-shop__ore-count') ||
+                                            document.querySelector('.mine-shop__ore-count');
+                                        if (visibleShopOre) return numText(visibleShopOre);
+                                    }
+
+                                    var mine = document.querySelector('.main-mine');
+                                    if (mine) {
+                                        var raw = mine.getAttribute('data-ore');
+                                        var value = raw !== null && raw.trim() !== ''
+                                            ? parseInt(raw, 10)
+                                            : NaN;
+                                        if (isFinite(value) && value >= 0) return value;
+                                    }
+
+                                    // Some site layouts expose only the shop counter and do not
+                                    // attach the ore value to .main-mine[data-ore].
+                                    var shopOre = document.querySelector('.mine-shop__ore-count');
+                                    if (shopOre) return numText(shopOre);
+                                    return 0;
+                                }
+
+                                initialOre = currentOre();
                                 AndroidMine.onMineLog(
                                     'DOM_READY hits=' + initialHits +
                                     ' ore=' + initialOre +
                                     ' autoUpgrade=' + autoUpgrade
                                 );
 
-                                function numText(el) {
-                                    if (!el) return 0;
-                                    var n = parseInt((el.innerText || el.textContent || '').replace(/\s/g, ''), 10);
-                                    return isFinite(n) ? n : 0;
+                                function reportMinedOre(finalOre, source) {
+                                    var minedOre = Math.max(0, finalOre - initialOre);
+                                    AndroidMine.onMineLog(
+                                        'ORE_STAT_COMPLETED source=' + source +
+                                        ' baseline=' + initialOre +
+                                        ' final=' + finalOre +
+                                        ' mined=' + minedOre
+                                    );
+                                    AndroidMine.onMineMined(minedOre);
+                                    return minedOre;
                                 }
 
-                                function currentOre() {
-                                    var shopOre = document.querySelector('#modal-mine-shop .mine-shop__ore-count');
-                                    if (shopOre) return numText(shopOre);
-                                    var mine = document.querySelector('.main-mine');
-                                    if (mine) {
-                                        var value = parseInt(mine.getAttribute('data-ore') || '', 10);
-                                        if (isFinite(value)) return value;
-                                    }
-                                    return 0;
-                                }
-
-                                function waitForShop(done) {
+                                function waitForShop(done, failed) {
                                     var started = Date.now();
                                     function poll() {
                                         var modal = document.querySelector('#modal-mine-shop');
@@ -4452,7 +4491,7 @@ class MangaBuffAutomation(
                                         if (modal && exchange) { done(); return; }
                                         if (Date.now() - started >= 10000) {
                                             AndroidMine.onMineLog('SHOP_NOT_OPEN');
-                                            AndroidMine.onMineComplete();
+                                            if (failed) failed(); else AndroidMine.onMineComplete();
                                             return;
                                         }
                                         setTimeout(poll, 200);
@@ -4477,11 +4516,10 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
-                                    var minedOre = Math.max(0, currentOre() - initialOre);
-                                    AndroidMine.onMineMined(minedOre);
-
                                     if (!${settings.mineAutoExchange}) {
-                                        AndroidMine.onMineLog('AUTO_EXCHANGE_DISABLED_MANUAL_REQUIRED minedOre=' + minedOre);
+                                        var finalOreManual = currentOre();
+                                        var minedOreManual = reportMinedOre(finalOreManual, 'mine-page');
+                                        AndroidMine.onMineLog('AUTO_EXCHANGE_DISABLED_MANUAL_REQUIRED minedOre=' + minedOreManual);
                                         AndroidMine.onMineComplete();
                                         return;
                                     }
@@ -4489,12 +4527,23 @@ class MangaBuffAutomation(
                                     var header = document.querySelector('.main-mine__header_score');
                                     if (!header) {
                                         AndroidMine.onMineLog('CRYSTAL_HEADER_NOT_FOUND');
+                                        reportMinedOre(currentOre(), 'mine-page-no-shop');
                                         AndroidMine.onMineComplete();
                                         return;
                                     }
 
+                                    // The authoritative .mine-shop__ore-count is only reliable
+                                    // after the shop is open. Compute the mined delta after that,
+                                    // not before the click that reveals the counter.
                                     header.click();
-                                    waitForShop(function() { runShop(minedOre); });
+                                    waitForShop(function() {
+                                        var finalOre = currentOre();
+                                        var minedOre = reportMinedOre(finalOre, 'shop');
+                                        runShop(minedOre);
+                                    }, function() {
+                                        reportMinedOre(currentOre(), 'mine-page-shop-timeout');
+                                        AndroidMine.onMineComplete();
+                                    });
                                 }
 
                                 function runShop(minedOre) {
