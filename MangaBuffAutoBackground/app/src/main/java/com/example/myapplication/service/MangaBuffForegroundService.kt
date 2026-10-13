@@ -72,6 +72,7 @@ class MangaBuffForegroundService : Service() {
         const val EVENT_STATS = "STATS"
         const val EVENT_DAILY_STATS = "DAILY_STATS"
         const val EVENT_MANGA = "MANGA"
+        const val EVENT_TOWER_TIMER = "TOWER_TIMER"
 
         const val EXTRA_USERNAME = "EXTRA_USERNAME"
         const val EXTRA_MESSAGE = "EXTRA_MESSAGE"
@@ -95,6 +96,7 @@ class MangaBuffForegroundService : Service() {
         const val EXTRA_DAILY_COMMENTS = "EXTRA_DAILY_COMMENTS"
         const val EXTRA_URL = "EXTRA_URL"
         const val EXTRA_TITLE = "EXTRA_TITLE"
+        const val EXTRA_TOWER_ENDS_AT_MS = "EXTRA_TOWER_ENDS_AT_MS"
 
         private const val PREFS_RUNTIME = "mangabuff_runtime"
         private const val KEY_ACTIVE_RUNS = "active_runs"
@@ -255,6 +257,7 @@ class MangaBuffForegroundService : Service() {
             onMangaActiveUrlUpdate = ::publishManga,
             onAccountStatsUpdate = ::publishStats,
             onDailyStatsUpdate = ::publishDailyStats,
+            onTowerExpeditionEndsAtUpdate = ::publishTowerExpeditionEndsAt,
             onWebViewAssigned = { accountId, webView ->
                 AutomationWebViewRegistry.assigned(accountId, webView)
                 publishLog(
@@ -748,6 +751,14 @@ class MangaBuffForegroundService : Service() {
                 putExtra(EXTRA_URL, url)
                 putExtra(EXTRA_TITLE, title)
             }
+        )
+    }
+
+    private fun publishTowerExpeditionEndsAt(accountId: String, endsAtMillis: Long) {
+        sendRuntimeEvent(
+            EVENT_TOWER_TIMER,
+            accountId = accountId,
+            extras = { putExtra(EXTRA_TOWER_ENDS_AT_MS, endsAtMillis) }
         )
     }
 
