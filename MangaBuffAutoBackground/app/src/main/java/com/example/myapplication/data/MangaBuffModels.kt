@@ -114,7 +114,8 @@ data class LogEntry(
 
 data class GlobalSettings(
     val quizMaxClicks: Int = 15,
-    val adsCount: Int = 5,
+    // Kept for compatibility with previously saved settings; runtime enforces 3 ads/day.
+    val adsCount: Int = 3,
     val mineClicks: Int = 100,
     val mineAutoUpgrade: Boolean = true,
     val mineAutoExchange: Boolean = false,
