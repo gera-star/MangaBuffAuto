@@ -2340,8 +2340,9 @@ class MangaBuffAutomation(
     // =========================================================
 
     /**
-     * Uses live metadata from the account's own Tower WebView. Only reward claim is
-     * sent directly; squad/preparation/start retain the site's own request handlers.
+     * Drives Tower through visible live-page controls: claim rewards, send the squad,
+     * accept the send confirmation, and wait for the actual expedition timer.
+     * Never repeats a send when its button is absent and never auto-accepts Resonance offers.
      */
     private suspend fun runTowerTask(
         account: MangaBuffAccount,
