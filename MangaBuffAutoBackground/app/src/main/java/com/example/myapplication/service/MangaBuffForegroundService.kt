@@ -755,6 +755,39 @@ class MangaBuffForegroundService : Service() {
         )
     }
 
+    private fun persistAndPublishManga(accountId: String, url: String, title: String) {
+        val updated = repository.updateAccount(accountId) { account ->
+            account.copy(
+                activeMangaUrl = url,
+                activeMangaTitle = title
+            )
+        }
+
+        if (updated == null) {
+            publishLog(
+                LogEntry(
+                    username = accountId,
+                    component = "READER",
+                    message = "READER_STATE_PERSIST_FAILED accountId=" + accountId + " url=" + url,
+                    isError = true
+                )
+            )
+        } else {
+            publishLog(
+                LogEntry(
+                    username = updated.username,
+                    component = "READER",
+                    message = "READER_STATE_PERSISTED url=" +
+                        updated.getSafeActiveMangaUrl() +
+                        " title='" + updated.getSafeActiveMangaTitle() + "'"
+                )
+            )
+        }
+
+        // Keep UI state in sync, but never rely on the Activity being alive to persist resume state.
+        publishManga(accountId, url, title)
+    }
+
     private fun publishManga(accountId: String, url: String, title: String) {
         sendRuntimeEvent(
             EVENT_MANGA,
