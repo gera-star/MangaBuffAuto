@@ -32,8 +32,8 @@ fun KeenySplash(modifier: Modifier = Modifier) {
                 center = Offset(size.width * .5f, size.height * .38f),
                 radius = size.maxDimension * .78f
             ))
-            val unit = (size.width / 360f).coerceAtMost(size.height * .56f / 420f)
-            translate((size.width - 360f * unit) / 2f, size.height * .105f) {
+            val unit = (size.width / 360f).coerceAtMost(size.height * .46f / 420f)
+            translate((size.width - 360f * unit) / 2f, size.height * .06f) {
                 scale(unit, unit, pivot = Offset.Zero) {
                     drawCircle(
                         Brush.radialGradient(listOf(Color(0xFF6D2630), Color(0xFF24131B), Color.Transparent),
