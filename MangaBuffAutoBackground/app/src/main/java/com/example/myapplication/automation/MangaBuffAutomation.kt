@@ -161,19 +161,25 @@ class MangaBuffAutomation(
         private const val BACKGROUND_CONFIRMATION_TICK_TIMEOUT_MS = 4_500L
         private const val BACKGROUND_SCROLL_METRICS_JS = """
             (function() {
+                var m = null;
+                try {
+                    if (typeof window.__mbGetReaderScrollMetrics === 'function') {
+                        m = window.__mbGetReaderScrollMetrics(false);
+                    }
+                } catch (e) {}
                 var s = document.scrollingElement || document.documentElement || document.body;
-                var v = Math.max(
+                var v = m && m.viewport ? m.viewport : Math.max(
                     window.visualViewport ? window.visualViewport.height : 0,
                     window.innerHeight || 0,
                     s ? (s.clientHeight || 0) : 0,
                     1
                 );
-                var h = Math.max(
+                var h = m && m.height ? m.height : Math.max(
                     s ? (s.scrollHeight || 0) : 0,
                     document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
                     document.body ? (document.body.scrollHeight || 0) : 0
                 );
-                var y = Math.max(
+                var y = m && typeof m.y === 'number' ? m.y : Math.max(
                     window.scrollY || 0,
                     window.pageYOffset || 0,
                     s ? (s.scrollTop || 0) : 0,
@@ -6112,6 +6118,238 @@ class MangaBuffAutomation(
                                         }
                                     }
 
+
+                                    // Keep animation, background recovery and end detection on the
+                                    // same scroll target. Some reader layouts lock the document and
+                                    // put the long chapter content in an overflow container.
+                                    window.__mbReaderScrollTarget = null;
+                                    window.__mbReaderScrollTargetLabel = '';
+                                    window.__mbReaderLastInnerScanAt = 0;
+
+                                    function mbScrollCapacity(el) {
+                                        if (!el) return 0;
+                                        return Math.max(0, (el.scrollHeight || 0) - (el.clientHeight || 0));
+                                    }
+
+                                    function mbDocumentScrollLocked() {
+                                        try {
+                                            var htmlStyle = getComputedStyle(document.documentElement);
+                                            var bodyStyle = document.body ? getComputedStyle(document.body) : null;
+                                            var hidden = function(value) {
+                                                return value === 'hidden' || value === 'clip';
+                                            };
+                                            return hidden(htmlStyle.overflowY) ||
+                                                (bodyStyle && hidden(bodyStyle.overflowY));
+                                        } catch (e) {
+                                            return false;
+                                        }
+                                    }
+
+                                    function mbSetReaderScrollTarget(target, label) {
+                                        if (!target) return null;
+                                        var previous = window.__mbReaderScrollTarget;
+                                        var previousLabel = window.__mbReaderScrollTargetLabel || '';
+                                        window.__mbReaderScrollTarget = target;
+                                        window.__mbReaderScrollTargetLabel = label;
+                                        if (previous !== target || previousLabel !== label) {
+                                            try {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: SCROLL_TARGET_SELECTED kind=' + label +
+                                                    ' tag=' + (target.tagName || 'UNKNOWN') +
+                                                    ' id=' + (target.id || '') +
+                                                    ' class=' + String(target.className || '').slice(0, 100) +
+                                                    ' scrollHeight=' + (target.scrollHeight || 0) +
+                                                    ' clientHeight=' + (target.clientHeight || 0)
+                                                );
+                                            } catch (ignoreLog) {}
+                                        }
+                                        return target;
+                                    }
+
+                                    function mbFindInnerReaderScroller() {
+                                        var now = Date.now();
+                                        if (now - (window.__mbReaderLastInnerScanAt || 0) < 1200) {
+                                            var cached = window.__mbReaderScrollTarget;
+                                            if (cached && cached !== document.scrollingElement &&
+                                                document.documentElement.contains(cached) &&
+                                                mbScrollCapacity(cached) > 80) {
+                                                return cached;
+                                            }
+                                            return null;
+                                        }
+                                        window.__mbReaderLastInnerScanAt = now;
+
+                                        var viewport = Math.max(window.innerHeight || 0, 1);
+                                        var minClientHeight = Math.max(240, viewport * 0.40);
+                                        var minWidth = Math.max(180, (window.innerWidth || 0) * 0.55);
+                                        var nodes;
+                                        try {
+                                            nodes = document.querySelectorAll('body *');
+                                        } catch (e) {
+                                            return null;
+                                        }
+
+                                        var best = null;
+                                        var bestScore = -1;
+                                        for (var i = 0; i < nodes.length; i++) {
+                                            var el = nodes[i];
+                                            if (!el || el === document.body || el === document.documentElement) continue;
+
+                                            var capacity = mbScrollCapacity(el);
+                                            if (capacity < Math.max(160, viewport * 0.20)) continue;
+                                            if ((el.clientHeight || 0) < minClientHeight) continue;
+
+                                            var style;
+                                            try { style = getComputedStyle(el); } catch (e) { continue; }
+                                            var overflowY = style.overflowY || '';
+                                            var scrollOverflow = overflowY === 'auto' ||
+                                                overflowY === 'scroll' ||
+                                                overflowY === 'overlay';
+                                            var name = String(el.id || '') + ' ' +
+                                                (typeof el.className === 'string' ? el.className : '');
+                                            var readerLike = /reader|chapter|page|manga|content|scroll/i.test(name);
+                                            var hiddenOverflow = overflowY === 'hidden' || overflowY === 'clip';
+                                            if (!scrollOverflow && !(hiddenOverflow && readerLike)) continue;
+
+                                            var rect;
+                                            try { rect = el.getBoundingClientRect(); } catch (e) { continue; }
+                                            if (!rect || rect.width < minWidth || rect.height < minClientHeight) continue;
+                                            if (rect.bottom <= 0 || rect.top >= viewport) continue;
+
+                                            var imageCount = 0;
+                                            try { imageCount = Math.min(40, el.querySelectorAll('img').length); } catch (e) {}
+                                            if (!readerLike && imageCount === 0) continue;
+
+                                            var score = (readerLike ? 120 : 0) +
+                                                (scrollOverflow ? 25 : 0) +
+                                                Math.min(60, imageCount * 3) +
+                                                Math.min(30, Math.round((rect.width / Math.max(window.innerWidth || 1, 1)) * 30)) +
+                                                Math.min(25, Math.round((el.clientHeight / viewport) * 25)) +
+                                                Math.min(25, Math.round(capacity / 1000));
+                                            if (score > bestScore) {
+                                                best = el;
+                                                bestScore = score;
+                                            }
+                                        }
+                                        return best;
+                                    }
+
+                                    window.__mbGetReaderScrollMetrics = function(forceInnerScan) {
+                                        var root = document.scrollingElement ||
+                                            document.documentElement ||
+                                            document.body;
+                                        var rootCapacity = mbScrollCapacity(root);
+                                        var locked = mbDocumentScrollLocked();
+                                        var target = window.__mbReaderScrollTarget;
+                                        var targetIsDocument = target === root ||
+                                            target === document.documentElement ||
+                                            target === document.body;
+
+                                        if (target && targetIsDocument && (locked || forceInnerScan)) {
+                                            target = null;
+                                        } else if (target && !targetIsDocument) {
+                                            var stillAttached = false;
+                                            try {
+                                                stillAttached = document.documentElement.contains(target);
+                                            } catch (e) {}
+                                            if (!stillAttached || mbScrollCapacity(target) <= 80) target = null;
+                                        }
+
+                                        if (!target && !forceInnerScan && !locked && rootCapacity > 80) {
+                                            target = mbSetReaderScrollTarget(root, 'document');
+                                        }
+
+                                        if (!target && (locked || forceInnerScan)) {
+                                            var inner = mbFindInnerReaderScroller();
+                                            if (inner) target = mbSetReaderScrollTarget(inner, 'inner');
+                                        }
+
+                                        if (!target && !locked && rootCapacity > 0) {
+                                            target = mbSetReaderScrollTarget(root, 'document');
+                                        }
+                                        if (!target) {
+                                            target = mbSetReaderScrollTarget(root || document.documentElement,
+                                                locked ? 'document_locked_no_inner_found' : 'document_fallback');
+                                        }
+
+                                        targetIsDocument = target === root ||
+                                            target === document.documentElement ||
+                                            target === document.body;
+
+                                        var y, height, viewport;
+                                        if (targetIsDocument) {
+                                            y = Math.max(
+                                                window.scrollY || 0,
+                                                window.pageYOffset || 0,
+                                                root ? (root.scrollTop || 0) : 0,
+                                                document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
+                                                document.body ? (document.body.scrollTop || 0) : 0
+                                            );
+                                            height = Math.max(
+                                                root ? (root.scrollHeight || 0) : 0,
+                                                document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                                                document.body ? (document.body.scrollHeight || 0) : 0
+                                            );
+                                            viewport = Math.max(
+                                                window.visualViewport ? (window.visualViewport.height || 0) : 0,
+                                                window.innerHeight || 0,
+                                                root ? (root.clientHeight || 0) : 0,
+                                                1
+                                            );
+                                        } else {
+                                            y = Math.max(0, target.scrollTop || 0);
+                                            height = Math.max(0, target.scrollHeight || 0);
+                                            viewport = Math.max(1, target.clientHeight || window.innerHeight || 1);
+                                        }
+
+                                        return {
+                                            target: target,
+                                            isDocument: targetIsDocument,
+                                            y: y,
+                                            height: height,
+                                            viewport: viewport,
+                                            remaining: Math.max(0, height - viewport - y)
+                                        };
+                                    };
+
+                                    function mbScrollReaderBy(delta) {
+                                        if (!(delta > 0)) return false;
+                                        var metrics = window.__mbGetReaderScrollMetrics(false);
+                                        var target = metrics.target;
+                                        var before = metrics.y;
+                                        var nextY = Math.min(
+                                            Math.max(0, metrics.height - metrics.viewport),
+                                            before + delta
+                                        );
+                                        if (nextY <= before) return false;
+
+                                        try {
+                                            target.scrollTop = nextY;
+                                            if (metrics.isDocument && (window.scrollY || 0) <= before + 1) {
+                                                window.scrollTo(0, nextY);
+                                            }
+                                        } catch (e) {}
+
+                                        var after = metrics.isDocument
+                                            ? Math.max(window.scrollY || 0, window.pageYOffset || 0, target.scrollTop || 0)
+                                            : (target.scrollTop || 0);
+
+                                        if (after <= before + 1 && metrics.remaining > 2) {
+                                            var alternate = window.__mbGetReaderScrollMetrics(true);
+                                            if (alternate.target && alternate.target !== target &&
+                                                alternate.remaining > 2) {
+                                                try {
+                                                    alternate.target.scrollTop = Math.min(
+                                                        Math.max(0, alternate.height - alternate.viewport),
+                                                        alternate.y + delta
+                                                    );
+                                                } catch (e) {}
+                                                return (alternate.target.scrollTop || 0) > alternate.y + 1;
+                                            }
+                                        }
+                                        return after > before + 1;
+                                    };
+
                                     function logChapterIdResolve(source) {
                                         try {
                                             var chapter = window.current_chapter || null;
@@ -6992,12 +7230,10 @@ class MangaBuffAutomation(
                                         var postStarted = (window.__mbHistoryPostStarted === true);
                                         var postStatus = (typeof window.__mbHistoryPostStatus === 'number') ? window.__mbHistoryPostStatus : null;
 
-                                        var scrollTop = window.scrollY || window.pageYOffset || 0;
-                                        var docHeight = Math.max(
-                                            document.body ? document.body.scrollHeight : 0,
-                                            document.documentElement ? document.documentElement.scrollHeight : 0
-                                        );
-                                        var viewHeight = window.innerHeight || 0;
+                                        var scrollMetrics = window.__mbGetReaderScrollMetrics(false);
+                                        var scrollTop = scrollMetrics.y;
+                                        var docHeight = scrollMetrics.height;
+                                        var viewHeight = scrollMetrics.viewport;
                                         var threshold = Math.max(0, (docHeight - viewHeight) / 2);
 
                                         var confirmed = false;
@@ -7290,32 +7526,7 @@ class MangaBuffAutomation(
                                         if (chapterDone) return;
                                         if (window.__mbNativeFingerBusy) return;
 
-                                        var scrollingElement = document.scrollingElement || document.documentElement || document.body;
-                                        var rawY = Math.max(
-                                            window.scrollY || 0,
-                                            window.pageYOffset || 0,
-                                            scrollingElement ? (scrollingElement.scrollTop || 0) : 0,
-                                            document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
-                                            document.body ? (document.body.scrollTop || 0) : 0
-                                        );
-                                        var rawViewport = Math.max(
-                                            window.visualViewport && window.visualViewport.height
-                                                ? window.visualViewport.height
-                                                : 0,
-                                            window.innerHeight || 0,
-                                            1
-                                        );
-                                        var rawHeight = Math.max(
-                                            scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
-                                            document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
-                                            document.body ? (document.body.scrollHeight || 0) : 0
-                                        );
-
-                                        var metrics = {
-                                            y: rawY,
-                                            viewport: rawViewport,
-                                            height: rawHeight
-                                        };
+                                        var metrics = window.__mbGetReaderScrollMetrics(false);
 
                                         if (lastObservedScrollY >= 0) {
                                             if (Math.abs(metrics.y - lastObservedScrollY) < 2) {
@@ -7407,28 +7618,10 @@ class MangaBuffAutomation(
                                          * chapter just because the scroll position stopped changing:
                                          * the position must still be at/near the real document bottom.
                                          */
-                                        var finalScrollTop = Math.max(
-                                            window.scrollY || 0,
-                                            window.pageYOffset || 0,
-                                            scrollingElement ? (scrollingElement.scrollTop || 0) : 0,
-                                            document.documentElement ? (document.documentElement.scrollTop || 0) : 0,
-                                            document.body ? (document.body.scrollTop || 0) : 0
-                                        );
-                                        var finalHeight = Math.max(
-                                            scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
-                                            document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
-                                            document.body ? (document.body.scrollHeight || 0) : 0
-                                        );
-                                        var finalViewport = Math.max(
-                                            window.visualViewport && window.visualViewport.height
-                                                ? window.visualViewport.height
-                                                : 0,
-                                            window.innerHeight || 0,
-                                            1
-                                        );
+                                        var finalMetrics = window.__mbGetReaderScrollMetrics(false);
                                         var finalRemaining = Math.max(
                                             0,
-                                            finalHeight - finalViewport - finalScrollTop
+                                            finalMetrics.height - finalMetrics.viewport - finalMetrics.y
                                         );
 
                                         if (finalRemaining > 120) {
@@ -7575,26 +7768,11 @@ class MangaBuffAutomation(
                                                     return;
                                                 }
 
-                                                var scrollingElement =
-                                                    document.scrollingElement ||
-                                                    document.documentElement ||
-                                                    document.body;
-
-                                                var viewport = Math.max(
-                                                    window.innerHeight || 0,
-                                                    scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                                    1
-                                                );
-                                                var height = Math.max(
-                                                    scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
-                                                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
-                                                    document.body ? (document.body.scrollHeight || 0) : 0
-                                                );
-                                                var y = Math.max(
-                                                    window.scrollY || 0,
-                                                    scrollingElement ? (scrollingElement.scrollTop || 0) : 0
-                                                );
-                                                var remaining = Math.max(0, height - viewport - y);
+                                                var scrollMetrics = window.__mbGetReaderScrollMetrics(false);
+                                                var viewport = scrollMetrics.viewport;
+                                                var height = scrollMetrics.height;
+                                                var y = scrollMetrics.y;
+                                                var remaining = scrollMetrics.remaining;
                                                 if (remaining <= 2) {
                                                     // The native Android pump keeps calling this function while the screen
                                                     // is locked, so it must also drive end detection when JS timers are throttled.
@@ -7607,7 +7785,7 @@ class MangaBuffAutomation(
                                                     Math.max(140, Math.floor(viewport * 0.20))
                                                 );
                                                 step = Math.min(step, remaining);
-                                                window.scrollBy(0, step);
+                                                mbScrollReaderBy(step);
                                                 try { checkEnd(); } catch(ignoreEnd) {}
                                             } catch(e) {
                                                 try {
@@ -7660,31 +7838,16 @@ class MangaBuffAutomation(
                                                 );
                                             }
 
-                                            var scrollingElement =
-                                                document.scrollingElement ||
-                                                document.documentElement ||
-                                                document.body;
-
-                                            var y = Math.max(
-                                                window.scrollY || 0,
-                                                scrollingElement ? (scrollingElement.scrollTop || 0) : 0
-                                            );
+                                            var scrollMetrics = window.__mbGetReaderScrollMetrics(false);
+                                            var y = scrollMetrics.y;
 
                                             if (
                                                 cachedViewport <= 0 ||
                                                 cachedHeight <= 0 ||
                                                 now - lastLayoutSampleAt >= 250
                                             ) {
-                                                cachedViewport = Math.max(
-                                                    window.innerHeight || 0,
-                                                    scrollingElement ? (scrollingElement.clientHeight || 0) : 0,
-                                                    1
-                                                );
-                                                cachedHeight = Math.max(
-                                                    scrollingElement ? (scrollingElement.scrollHeight || 0) : 0,
-                                                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
-                                                    document.body ? (document.body.scrollHeight || 0) : 0
-                                                );
+                                                cachedViewport = scrollMetrics.viewport;
+                                                cachedHeight = scrollMetrics.height;
                                                 lastLayoutSampleAt = now;
                                             }
 
@@ -7699,7 +7862,7 @@ class MangaBuffAutomation(
                                                 : speedPxPerSecond;
 
                                             if (remaining > 2) {
-                                                window.scrollBy(0, currentSpeed * dt);
+                                                mbScrollReaderBy(currentSpeed * dt);
                                             }
 
                                             window.__mbFastScrollFrame = requestAnimationFrame(tick);
