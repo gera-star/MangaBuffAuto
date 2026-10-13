@@ -2514,7 +2514,9 @@ class MangaBuffAutomation(
                                     var csrfMeta = document.querySelector('meta[name="csrf-token"]');
                                     var csrf = attr(root, ['data-csrf-token']) || (csrfMeta ? (csrfMeta.content || '') : '');
                                     // Reward modal is outside [data-tower-root] in the live page.
-                                    var claimButton = document.querySelector("[data-tower-claim]") ||
+                                    var claimButton = document.querySelector("[data-tower-claim]");
+                                    if (claimButton && !visible(claimButton)) claimButton = null;
+                                    claimButton = claimButton ||
                                         action(document, /забрать\s+(награды|награду)|получить\s+награды|claim\s+reward/i);
                                     var startButton = action(root, /отправить\s+отряд|начать\s+экспедицию|отправить\s+в\s+экспедицию|запустить\s+экспедицию|start\s+expedition|send\s+squad/i);
                                     var squadButton = action(root, /сохранить\s+отряд|save\s+squad/i);
@@ -2615,7 +2617,7 @@ class MangaBuffAutomation(
 
                                     if (resonanceOpen(root)) {
                                         send('RESONANCE_DECISION_REQUIRED', 'No cost-bearing offer selected automatically');
-                                        finish(didAction, 'resonance_decision_required');
+                                        finish(false, 'resonance_decision_required');
                                         return;
                                     }
 
