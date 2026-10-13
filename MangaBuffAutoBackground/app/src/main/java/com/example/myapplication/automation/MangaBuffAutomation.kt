@@ -1593,7 +1593,8 @@ class MangaBuffAutomation(
 
     suspend fun fetchAndLogBalanceInfo(
         account: MangaBuffAccount,
-        webView: WebView
+        webView: WebView,
+        allowDailyCalendar: Boolean = false
     ): String = suspendCancellableCoroutine { continuation ->
 
         var watchdog: Runnable? = null
@@ -2031,20 +2032,27 @@ class MangaBuffAutomation(
                     view?.evaluateJavascript(script, null)
                     if (!dailyRewardScriptInjected) {
                         dailyRewardScriptInjected = true
-                        val (shouldRunCalendar, calendarDecision) = reserveDailyCalendarAttempt(account)
-                        if (shouldRunCalendar) {
-                            dailyRewardAttemptReserved.set(true)
-                            log(account.username, "DAILY_REWARD: DAILY_GUARD state=RUN detail=$calendarDecision")
-                            if (view != null) {
-                                view.evaluateJavascript(dailyRewardScript, null)
-                            } else {
-                                dailyRewardAttemptReserved.set(false)
-                                releaseDailyCalendarAttempt(account, "BALANCE_VIEW_NULL")
-                                dailyRewardFlowResult = "SKIPPED_BALANCE_VIEW_NULL"
-                            }
+                        if (!allowDailyCalendar) {
+                            // Statistics refreshes (especially the reader's periodic refresh)
+                            // must never open or click the daily calendar modal.
+                            dailyRewardFlowResult = "SKIPPED_STATS_ONLY"
+                            log(account.username, "DAILY_REWARD: SKIPPED reason=STATS_REFRESH_ONLY")
                         } else {
-                            dailyRewardFlowResult = calendarDecision
-                            log(account.username, "DAILY_REWARD: DAILY_GUARD state=$calendarDecision")
+                            val (shouldRunCalendar, calendarDecision) = reserveDailyCalendarAttempt(account)
+                            if (shouldRunCalendar) {
+                                dailyRewardAttemptReserved.set(true)
+                                log(account.username, "DAILY_REWARD: DAILY_GUARD state=RUN detail=$calendarDecision")
+                                if (view != null) {
+                                    view.evaluateJavascript(dailyRewardScript, null)
+                                } else {
+                                    dailyRewardAttemptReserved.set(false)
+                                    releaseDailyCalendarAttempt(account, "BALANCE_VIEW_NULL")
+                                    dailyRewardFlowResult = "SKIPPED_BALANCE_VIEW_NULL"
+                                }
+                            } else {
+                                dailyRewardFlowResult = calendarDecision
+                                log(account.username, "DAILY_REWARD: DAILY_GUARD state=$calendarDecision")
+                            }
                         }
                         val summary = pendingBalanceSummary
                         if (summary != null && dailyRewardFlowResult != null) safeResume(summary)
@@ -2280,7 +2288,7 @@ class MangaBuffAutomation(
                 val start = SystemClock.elapsedRealtime()
                 val adsSuccess = runAdsTask(account, webView)
                 log(account.username, "TASK: ADS_END elapsed=" + (SystemClock.elapsedRealtime() - start) + "ms success=" + adsSuccess)
-                fetchAndLogBalanceInfo(account, webView)
+                fetchAndLogBalanceInfo(account, webView, allowDailyCalendar = true)
                 if (!adsSuccess) {
                     updateStatus(
                         account,
@@ -7364,12 +7372,15 @@ class MangaBuffAutomation(
                                             var n = next.pathname.split('/').filter(Boolean);
 
                                             if (n.length !== 4 || n[0] !== 'manga') return false;
-                                            if (!/^\d+$/.test(n[2]) || !/^\d+$/.test(n[3])) return false;
+                                            if (!/^\d+$/.test(n[2]) || !/^\d+(?:\.\d+)?$/.test(n[3])) return false;
 
                                             if (c.length < 4 || c[0] !== 'manga' || c[1] !== n[1]) return false;
+                                            if (!/^\d+(?:\.\d+)?$/.test(c[3])) return false;
 
-                                            var currentNum = parseInt(c[3], 10);
-                                            var nextNum = parseInt(n[3], 10);
+                                            // MangaBuff has fractional chapters such as 51.5.
+                                            // parseInt() treats 51.5 as 51 and incorrectly rejects 52.
+                                            var currentNum = parseFloat(c[3]);
+                                            var nextNum = parseFloat(n[3]);
                                             if (isNaN(currentNum) || isNaN(nextNum) || nextNum <= currentNum) return false;
 
                                             return true;
@@ -7441,8 +7452,9 @@ class MangaBuffAutomation(
                                             // This never invents /N+1: every candidate must come from the DOM.
                                             var currentParts = window.location.pathname.split('/').filter(Boolean);
                                             var currentChapterNumber = currentParts.length >= 4 &&
-                                                currentParts[0] === 'manga'
-                                                ? parseInt(currentParts[3], 10) : NaN;
+                                                currentParts[0] === 'manga' &&
+                                                /^\d+(?:\.\d+)?$/.test(currentParts[3])
+                                                ? parseFloat(currentParts[3]) : NaN;
                                             if (!isNaN(currentChapterNumber)) {
                                                 var realNextCandidates = [];
                                                 for (var fi = 0; fi < chapterItems.length; fi++) {
@@ -7455,7 +7467,8 @@ class MangaBuffAutomation(
                                                     try {
                                                         var fallbackUrl = new URL(fallbackHref, window.location.href);
                                                         var fallbackParts = fallbackUrl.pathname.split('/').filter(Boolean);
-                                                        var fallbackChapterNumber = parseInt(fallbackParts[3], 10);
+                                                        var fallbackChapterNumber = /^\d+(?:\.\d+)?$/.test(fallbackParts[3])
+                                                            ? parseFloat(fallbackParts[3]) : NaN;
                                                         if (fallbackParts[1] !== currentParts[1] ||
                                                             isNaN(fallbackChapterNumber) ||
                                                             fallbackChapterNumber <= currentChapterNumber) continue;
