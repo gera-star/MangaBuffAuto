@@ -273,6 +273,8 @@ class MangaBuffAutomation(
             backgroundLastDiagnosticAt = 0L
             backgroundObservedUrl = webView.url.orEmpty()
             backgroundFastScrollRunning = false
+            backgroundLastFallbackStepAt = 0L
+            backgroundLastFallbackLogAt = 0L
             backgroundScrollHeight = 0L
             backgroundViewportHeight = 0L
             backgroundRemaining = Long.MAX_VALUE
@@ -625,6 +627,8 @@ class MangaBuffAutomation(
         backgroundLastDiagnosticAt = 0L
         backgroundObservedUrl = null
         backgroundFastScrollRunning = false
+        backgroundLastFallbackStepAt = 0L
+        backgroundLastFallbackLogAt = 0L
         backgroundScrollHeight = 0L
         backgroundViewportHeight = 0L
         backgroundRemaining = Long.MAX_VALUE
