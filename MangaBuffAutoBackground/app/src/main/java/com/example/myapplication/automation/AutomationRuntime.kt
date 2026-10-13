@@ -28,6 +28,7 @@ class AutomationRuntime(
     private val onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
+    private val onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     private val onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     private val onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     private val onAccountRecoveryNeeded: (accountId: String) -> Unit = {}
@@ -75,6 +76,7 @@ class AutomationRuntime(
                 onMangaActiveUrlUpdate = onMangaActiveUrlUpdate,
                 onAccountStatsUpdate = onAccountStatsUpdate,
                 onDailyStatsUpdate = onDailyStatsUpdate,
+                onTowerExpeditionEndsAtUpdate = onTowerExpeditionEndsAtUpdate,
                 onRendererGone = { failedAccountId, failedWebView ->
                     val currentRuntime = runtimes[failedAccountId]
                     if (currentRuntime?.webView === failedWebView) {
