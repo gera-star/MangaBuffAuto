@@ -3455,6 +3455,9 @@ class MangaBuffAutomation(
                                         var state = readAndPublishTimer(currentRoot);
                                         // The visible claim button is authoritative. Timer attributes can be stale
                                         // for a moment after expiry, so never let them suppress this click.
+                                        send('CLAIM_BUTTON_FOUND',
+                                            'selector=' + (button.matches('[data-tower-claim]') ? '[data-tower-claim]' : 'text_fallback') +
+                                            ' text=' + textOf(button));
                                         var claimKey = runKey + ':claimClicked';
                                         if (sessionStorage.getItem(claimKey) !== '1') {
                                             sessionStorage.setItem(claimKey, '1');
@@ -3473,8 +3476,8 @@ class MangaBuffAutomation(
                                             currentRoot = liveRoot();
                                             state = readAndPublishTimer(currentRoot);
                                             var currentButton = findClaimButton();
-                                            if (!currentButton || (state.active && !state.complete && state.remainingSeconds > 0)) {
-                                                send('CLAIM_CONFIRMED', 'Reward button disappeared or Tower moved to an active expedition state');
+                                            if (!currentButton) {
+                                                send('CLAIM_CONFIRMED', 'Visible reward button disappeared after click');
                                                 return 'claimed';
                                             }
                                         }
@@ -3483,15 +3486,24 @@ class MangaBuffAutomation(
                                     }
 
                                     if (!root) {
-                                        if (attempt < 20) {
+                                        // The live site's reward button may exist even if its wrapper selector
+                                        // changes. Never ignore a visible reward just because the root attribute
+                                        // is missing; use the document element as a safe query root.
+                                        var globalClaimButton = findClaimButton();
+                                        if (globalClaimButton) {
+                                            root = document.documentElement;
+                                            send('TOWER_ROOT_FALLBACK_CLAIM_BUTTON',
+                                                'Using document root because visible [data-tower-claim] exists');
+                                        } else if (attempt < 20) {
                                             setTimeout(function() {
                                                 run(document.querySelector('[data-tower-root]'), attempt + 1);
                                             }, 500);
                                             return;
+                                        } else {
+                                            send('ROOT_NOT_FOUND', 'No [data-tower-root] or visible reward button after 10 seconds');
+                                            finish(false, 'tower_root_not_found');
+                                            return;
                                         }
-                                        send('ROOT_NOT_FOUND', 'No [data-tower-root] after 10 seconds');
-                                        finish(false, 'tower_root_not_found');
-                                        return;
                                     }
 
                                     // Collect the completed expedition and send the next squad first.
