@@ -31,7 +31,8 @@ class AutomationRuntime(
     private val onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     private val onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     private val onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
-    private val onAccountRecoveryNeeded: (accountId: String) -> Unit = {}
+    private val onAccountRecoveryNeeded: (accountId: String) -> Unit = {},
+    private val onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> }
 ) {
     private val runtimes = mutableMapOf<String, AccountRuntime>()
     private val automationEngines = mutableMapOf<String, MangaBuffAutomation>()
@@ -91,7 +92,8 @@ class AutomationRuntime(
                             )
                         )
                     }
-                }
+                },
+                onMineBalanceUpdate = onMineBalanceUpdate
             )
             onLog(LogEntry(username = accountId, component = "ENGINE", message = "CREATE engineId=${engine.hashCode()}"))
             engine
