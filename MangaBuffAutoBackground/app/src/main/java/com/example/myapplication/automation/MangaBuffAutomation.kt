@@ -6300,6 +6300,8 @@ class MangaBuffAutomation(
                                             target === document.body;
 
                                         var y, height, viewport;
+                                        var nativeViewport = Number(window.__mbNativeViewportHeight) || 0;
+                                        var usedNativeViewportFallback = false;
                                         if (targetIsDocument) {
                                             y = Math.max(
                                                 window.scrollY || 0,
@@ -6323,6 +6325,28 @@ class MangaBuffAutomation(
                                             y = Math.max(0, target.scrollTop || 0);
                                             height = Math.max(0, target.scrollHeight || 0);
                                             viewport = Math.max(1, target.clientHeight || window.innerHeight || 1);
+                                        }
+
+                                        // Detached WebViews can report a one-pixel viewport. Use the
+                                        // measured native viewport only for that invalid case; otherwise
+                                        // preserve the reader's real inner-scroller dimensions.
+                                        if (viewport <= 1 && nativeViewport > 1) {
+                                            viewport = nativeViewport;
+                                            usedNativeViewportFallback = true;
+                                        }
+
+                                        // A one-pixel viewport may already have scrolled to height-1.
+                                        // Clamp that stale position to the real viewport's bottom so
+                                        // the next background tick can keep reading instead of stalling.
+                                        if (usedNativeViewportFallback && height > 0) {
+                                            var maxScrollY = Math.max(0, height - viewport);
+                                            if (y > maxScrollY + 2) {
+                                                try {
+                                                    target.scrollTop = maxScrollY;
+                                                    if (targetIsDocument) window.scrollTo(0, maxScrollY);
+                                                } catch (e) {}
+                                                y = maxScrollY;
+                                            }
                                         }
 
                                         return {
