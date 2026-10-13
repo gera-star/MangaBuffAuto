@@ -72,6 +72,7 @@ class MangaBuffForegroundService : Service() {
         const val EVENT_LOG = "LOG"
         const val EVENT_STATS = "STATS"
         const val EVENT_DAILY_STATS = "DAILY_STATS"
+        const val EVENT_MINE_BALANCE = "MINE_BALANCE"
         const val EVENT_MANGA = "MANGA"
         const val EVENT_TOWER_TIMER = "TOWER_TIMER"
 
@@ -91,6 +92,7 @@ class MangaBuffForegroundService : Service() {
         const val EXTRA_QUIZ = "EXTRA_QUIZ"
         const val EXTRA_ADS = "EXTRA_ADS"
         const val EXTRA_MINE_ORE = "EXTRA_MINE_ORE"
+        const val EXTRA_MINE_BALANCE = "EXTRA_MINE_BALANCE"
         const val EXTRA_MINE_EXCHANGE_ORE = "EXTRA_MINE_EXCHANGE_ORE"
         const val EXTRA_MINE_DIAMONDS = "EXTRA_MINE_DIAMONDS"
         const val EXTRA_READER_CHAPTERS = "EXTRA_READER_CHAPTERS"
@@ -284,7 +286,8 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
             },
-            onAccountRecoveryNeeded = ::requestAccountRecovery
+            onAccountRecoveryNeeded = ::requestAccountRecovery,
+            onMineBalanceUpdate = ::publishMineBalance
         )
 
         ContextCompat.registerReceiver(
@@ -777,6 +780,14 @@ class MangaBuffForegroundService : Service() {
                 putExtra(EXTRA_READER_CHAPTERS, stats.readerChapters)
                 putExtra(EXTRA_DAILY_COMMENTS, stats.comments)
             }
+        )
+    }
+
+    private fun publishMineBalance(accountId: String, oreBalance: Int) {
+        sendRuntimeEvent(
+            EVENT_MINE_BALANCE,
+            accountId = accountId,
+            extras = { putExtra(EXTRA_MINE_BALANCE, oreBalance) }
         )
     }
 
