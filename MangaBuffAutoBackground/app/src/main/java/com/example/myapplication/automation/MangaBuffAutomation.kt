@@ -3770,16 +3770,16 @@ class MangaBuffAutomation(
                                     log(account.username, "TOWER: SCRIPT_RECOVERY_NOT_NEEDED attempt=$attempt")
                                     return@evaluateJavascript
                                 }
-                                log(account.username, "TOWER: SCRIPT_RECOVERY_INJECT attempt=$attempt url=\${currentUrl.take(140)}", true)
+                                log(account.username, "TOWER: SCRIPT_RECOVERY_INJECT attempt=$attempt url=${currentUrl.take(140)}", true)
                                 try {
                                     webView.evaluateJavascript(towerScript, null)
                                 } catch (e: Exception) {
-                                    log(account.username, "TOWER: SCRIPT_RECOVERY_ERROR error=\${e.message}", true)
+                                    log(account.username, "TOWER: SCRIPT_RECOVERY_ERROR error=${e.message}", true)
                                 }
                                 if (attempt < 12 && !completed.get()) mainHandler.postDelayed(this, 2500L)
                             }
                         } catch (e: Exception) {
-                            log(account.username, "TOWER: SCRIPT_RECOVERY_CHECK_ERROR error=\${e.message}", true)
+                            log(account.username, "TOWER: SCRIPT_RECOVERY_CHECK_ERROR error=${e.message}", true)
                             if (attempt < 12 && !completed.get()) mainHandler.postDelayed(this, 2500L)
                         }
                     }
