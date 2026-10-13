@@ -1,16 +1,25 @@
 package com.example.myapplication
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
@@ -22,9 +31,29 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.URL
 
 @Composable
 fun KeenySplash(modifier: Modifier = Modifier) {
+    var demonImage by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(Unit) {
+        demonImage = withContext(Dispatchers.IO) {
+            runCatching {
+                URL("https://skins19.wincustomize.com/4/29/429077/8/53609/preview-8-53609.jpg")
+                    .openConnection()
+                    .apply {
+                        connectTimeout = 3500
+                        readTimeout = 3500
+                        useCaches = true
+                    }
+                    .getInputStream()
+                    .use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
+            }.getOrNull()
+        }
+    }
     Box(modifier.background(Color(0xFF050609)), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             drawRect(Brush.radialGradient(
@@ -78,6 +107,16 @@ fun KeenySplash(modifier: Modifier = Modifier) {
                     drawLine(Color(0xFFCE4B53), Offset(288f,203f), Offset(249f,216f), 3f)
                 }
             }
+        }
+        demonImage?.let { image ->
+            Image(
+                bitmap = image,
+                contentDescription = "Demon artwork from WinCustomize",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                alpha = 0.88f
+            )
+            Box(Modifier.fillMaxSize().background(Color(0x55000000)))
         }
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.weight(1f))
