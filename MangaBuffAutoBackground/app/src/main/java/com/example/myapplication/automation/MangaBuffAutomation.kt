@@ -187,8 +187,6 @@ class MangaBuffAutomation(
             })()
         """
 
-        private const val QUIZ_QUESTION_RESULT_DELAY_MS = 1500L
-        private const val QUIZ_NEXT_QUESTION_DELAY_MS = 3500L
 
         private const val ADS_NEXT_DELAY_MS = 4000L
         private const val ADS_DAILY_LIMIT = 3
@@ -1308,7 +1306,7 @@ class MangaBuffAutomation(
             upper.startsWith("AUTH:") -> "AUTH"
             upper.startsWith("TASK:") -> "TASK"
             upper.startsWith("BATTLE:") -> "BATTLE"
-            upper.startsWith("QUIZ:") -> "QUIZ"
+            upper.startsWith("TOWER:") -> "TOWER"
             upper.startsWith("ADS:") -> "ADS"
             upper.startsWith("MINE:") -> "MINE"
             upper.startsWith("COMMENT:") -> "COMMENT"
@@ -1933,13 +1931,16 @@ class MangaBuffAutomation(
             }
         }
 
-        if (taskType == TaskType.ALL || taskType == TaskType.QUIZ) {
+        if (taskType == TaskType.ALL || taskType == TaskType.TOWER) {
             coroutineContext.ensureActive()
-            if (account.quizEnabled || taskType == TaskType.QUIZ) {
-                log(account.username, "TASK: QUIZ_START")
+            if (account.towerEnabled || taskType == TaskType.TOWER) {
+                log(account.username, "TASK: TOWER_START")
                 val start = SystemClock.elapsedRealtime()
-                runQuizTask(account, settings, webView)
-                log(account.username, "TASK: QUIZ_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
+                runTowerTask(account, webView)
+                log(account.username, "TASK: TOWER_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
+                fetchAndLogBalanceInfo(account, webView)
+            } else {
+                log(account.username, "TOWER: SKIPPED_DISABLED")
             }
         }
 
@@ -2333,87 +2334,267 @@ class MangaBuffAutomation(
     }
 
     // =========================================================
-    // QUIZ
+    // TOWER OF THE RIFT
     // =========================================================
 
-    private suspend fun runQuizTask(
+    /**
+     * Uses live metadata from the account's own Tower WebView. Only reward claim is
+     * sent directly; squad/preparation/start retain the site's own request handlers.
+     */
+    private suspend fun runTowerTask(
         account: MangaBuffAccount,
-        settings: GlobalSettings,
         webView: WebView
-    ) {
-        var clicksDone = 0
-        log(account.username, "QUIZ: START max_questions=${settings.quizMaxClicks}")
+    ) = suspendCancellableCoroutine<Unit> { continuation ->
+        val runToken = UUID.randomUUID().toString().replace("-", "")
+        val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+        var watchdog: Runnable? = null
 
-        while (clicksDone < settings.quizMaxClicks) {
-            coroutineContext.ensureActive()
-
-            updateStatus(
-                account,
-                "Квиз ($clicksDone/${settings.quizMaxClicks})",
-                true,
-                "Квиз",
-                if (settings.quizMaxClicks > 0) clicksDone.toFloat() / settings.quizMaxClicks else 1f
-            )
-
-            val success = runQuizSingleQuestion(account, webView)
-            if (!success) break
-
-            clicksDone++
-            addDaily(account) { it.copy(quiz = it.quiz + 1) }
-            log(account.username, "QUIZ: ANSWERED question=$clicksDone/${settings.quizMaxClicks}")
-            delay(QUIZ_NEXT_QUESTION_DELAY_MS)
+        fun finish(success: Boolean, detail: String) {
+            if (!completed.compareAndSet(false, true)) return
+            mainHandler.post {
+                watchdog?.let { mainHandler.removeCallbacks(it) }
+                log(account.username, "TOWER: TASK_RESULT success=$success detail=$detail", !success)
+                updateStatus(
+                    account,
+                    if (success) "🗼 Башня: действия обработаны" else "🗼 Башня: настройка требуется",
+                    false,
+                    "Башня Разлома",
+                    if (success) 1f else 0f
+                )
+                try { webView.removeJavascriptInterface("AndroidTowerBridge") } catch (_: Exception) {}
+                if (continuation.isActive) continuation.resume(Unit)
+            }
         }
-    }
 
-    private suspend fun runQuizSingleQuestion(
-        account: MangaBuffAccount,
-        webView: WebView
-    ): Boolean = suspendCancellableCoroutine { continuation ->
-        var resumed = false
-
-        fun safeResume(result: Boolean) {
-            if (!resumed && continuation.isActive) {
-                resumed = true
-                continuation.resume(result)
+        continuation.invokeOnCancellation {
+            mainHandler.post {
+                watchdog?.let { mainHandler.removeCallbacks(it) }
+                try { webView.removeJavascriptInterface("AndroidTowerBridge") } catch (_: Exception) {}
             }
         }
 
         mainHandler.post {
-            class QuizBridge {
+            if (!continuation.isActive || webView.isDestroyed) {
+                finish(false, "webview_unavailable")
+                return@post
+            }
+
+            class TowerBridge {
                 @JavascriptInterface
-                fun onQuestionAnswered(success: Boolean) {
-                    safeResume(success)
+                fun onTowerLog(state: String, detail: String) {
+                    val error = state.contains("FAIL", true) || state.contains("ERROR", true) ||
+                        state.contains("NOT_FOUND", true) || state.contains("SKIPPED", true)
+                    log(account.username, "TOWER: $state $detail", error)
+                }
+
+                @JavascriptInterface
+                fun onTowerFinished(success: Boolean, detail: String) {
+                    finish(success, detail)
                 }
             }
 
-            try { webView.removeJavascriptInterface("AndroidQuiz") } catch (_: Exception) {}
-            webView.addJavascriptInterface(QuizBridge(), "AndroidQuiz")
+            try {
+                webView.removeJavascriptInterface("AndroidTowerBridge")
+                webView.addJavascriptInterface(TowerBridge(), "AndroidTowerBridge")
+                webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        if (url == null) return
+                        val uri = try { Uri.parse(url) } catch (_: Exception) { null }
+                        if (uri?.host == "mangabuff.ru" && uri.path.orEmpty().startsWith("/login")) {
+                            finish(false, "login_required")
+                            return
+                        }
+                        if (uri?.host != "mangabuff.ru" || !uri.path.orEmpty().startsWith("/tower")) return
 
-            webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    val script = """
-                        (function() {
-                            try {
-                                var answers = document.querySelectorAll('.quiz__answer-item.button');
-                                if (answers && answers.length > 0) {
-                                    var index = Math.floor(Math.random() * answers.length);
-                                    answers[index].click();
-                                    setTimeout(function() {
-                                        AndroidQuiz.onQuestionAnswered(true);
-                                    }, $QUIZ_QUESTION_RESULT_DELAY_MS);
-                                } else {
-                                    AndroidQuiz.onQuestionAnswered(false);
+                        val script = """
+                            (function() {
+                                var runKey = 'mb_tower_$runToken';
+                                if (window.__mbTowerPassActive === runKey) return;
+                                window.__mbTowerPassActive = runKey;
+                                function send(state, detail) {
+                                    try { AndroidTowerBridge.onTowerLog(state, String(detail || '').slice(0, 220)); } catch (e) {}
                                 }
-                            } catch(e) {
-                                AndroidQuiz.onQuestionAnswered(false);
-                            }
-                        })();
-                    """.trimIndent()
-                    view?.evaluateJavascript(script, null)
-                }
-            }
+                                function finish(success, detail) {
+                                    try { AndroidTowerBridge.onTowerFinished(!!success, String(detail || '').slice(0, 500)); } catch (e) {}
+                                }
+                                function attr(root, names) {
+                                    for (var i = 0; i < names.length; i++) {
+                                        var value = root.getAttribute(names[i]);
+                                        if (value && value.trim()) return value.trim();
+                                    }
+                                    return '';
+                                }
+                                function sameOriginUrl(raw) {
+                                    try {
+                                        if (!raw) return '';
+                                        var u = new URL(raw, location.origin);
+                                        return u.origin === location.origin ? u.href : '';
+                                    } catch (e) { return ''; }
+                                }
+                                function visible(el) {
+                                    if (!el || el.disabled) return false;
+                                    var s = getComputedStyle(el), r = el.getBoundingClientRect();
+                                    return s.display !== 'none' && s.visibility !== 'hidden' &&
+                                        parseFloat(s.opacity || '1') > 0 && r.width > 0 && r.height > 0;
+                                }
+                                function textOf(el) {
+                                    return (el && (el.innerText || el.textContent || el.value) || '').replace(/\s+/g, ' ').trim();
+                                }
+                                function action(root, re) {
+                                    return Array.from(root.querySelectorAll('button,a,[role="button"],input[type="submit"]'))
+                                        .find(function(el) {
+                                            return visible(el) && re.test(textOf(el) || el.getAttribute('aria-label') || el.title || '');
+                                        }) || null;
+                                }
+                                function selectedCards(root) {
+                                    return new Set(Array.from(root.querySelectorAll(
+                                        '[data-card-id][aria-selected="true"],[data-card-id][aria-pressed="true"],' +
+                                        '[data-card-id][data-selected="true"],[data-card-id].selected,' +
+                                        '[data-card-id].is-selected,[data-tower-card][aria-pressed="true"]'
+                                    ))).size;
+                                }
+                                function resonanceOpen(root) {
+                                    return Array.from(root.querySelectorAll('[role="dialog"],.modal,.modal-dialog,[aria-modal="true"]'))
+                                        .some(function(el) { return visible(el) && /резонанс|resonance/i.test(textOf(el)); });
+                                }
+                                async function run(root, attempt) {
+                                    if (!root) {
+                                        if (attempt < 20) {
+                                            setTimeout(function() { run(document.querySelector('[data-tower-root]'), attempt + 1); }, 500);
+                                            return;
+                                        }
+                                        send('ROOT_NOT_FOUND', 'No [data-tower-root] after 10 seconds');
+                                        finish(false, 'tower_root_not_found');
+                                        return;
+                                    }
 
-            webView.loadUrl("https://mangabuff.ru/quiz")
+                                    var claimUrl = sameOriginUrl(attr(root, ['data-claim-url']));
+                                    var startUrl = sameOriginUrl(attr(root, ['data-start-url']));
+                                    var squadUrl = sameOriginUrl(attr(root, ['data-save-squad-url']));
+                                    var preparationUrl = sameOriginUrl(attr(root, ['data-save-preparation-url','data-preparation-save-url']));
+                                    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                                    var csrf = attr(root, ['data-csrf-token']) || (csrfMeta ? (csrfMeta.content || '') : '');
+                                    var claimButton = action(root, /забрать\s+(награды|награду)|получить\s+награды|claim\s+reward/i);
+                                    var startButton = action(root, /отправить\s+отряд|начать\s+экспедицию|отправить\s+в\s+экспедицию|запустить\s+экспедицию|start\s+expedition|send\s+squad/i);
+                                    var squadButton = action(root, /сохранить\s+отряд|save\s+squad/i);
+                                    var preparationButton = action(root, /сохранить\s+подготовку|сохранить\s+приказ|save\s+preparation/i);
+                                    var didAction = false;
+                                    send('ROOT_READY', 'claim=' + !!claimUrl + ' start=' + !!startUrl +
+                                        ' squad=' + !!squadUrl + ' preparation=' + !!preparationUrl +
+                                        ' csrfAvailable=' + !!csrf + ' selectedCards=' + selectedCards(root));
+
+                                    if (claimButton && sessionStorage.getItem(runKey + ':claimDone') !== '1' &&
+                                        sessionStorage.getItem(runKey + ':claimAttempted') !== '1') {
+                                        if (claimUrl && csrf) {
+                                            sessionStorage.setItem(runKey + ':claimAttempted', '1');
+                                            try {
+                                                var response = await fetch(claimUrl, {
+                                                    method: 'POST',
+                                                    credentials: 'same-origin',
+                                                    headers: {
+                                                        'Accept': 'application/json',
+                                                        'Content-Type': 'application/json',
+                                                        'X-CSRF-TOKEN': csrf,
+                                                        'X-Requested-With': 'XMLHttpRequest'
+                                                    },
+                                                    body: JSON.stringify({})
+                                                });
+                                                var body = await response.text();
+                                                var accepted = response.ok;
+                                                try {
+                                                    var data = JSON.parse(body);
+                                                    if (data && (data.success === false || data.ok === false || data.status === 'error')) accepted = false;
+                                                } catch (ignored) {}
+                                                if (accepted) {
+                                                    sessionStorage.setItem(runKey + ':claimDone', '1');
+                                                    send('CLAIM_ACCEPTED', 'HTTP=' + response.status + '; reloading Tower state');
+                                                    location.reload();
+                                                    return;
+                                                }
+                                                send('CLAIM_FAILED', 'HTTP=' + response.status + '; ' + body.slice(0, 100));
+                                            } catch (e) {
+                                                send('CLAIM_ERROR', e && e.message ? e.message : String(e));
+                                            }
+                                        } else {
+                                            send('CLAIM_METADATA_MISSING', 'No live claim URL or CSRF metadata');
+                                        }
+                                    }
+
+                                    var selectedCount = selectedCards(root);
+                                    if (squadButton && squadUrl && sessionStorage.getItem(runKey + ':squadSaved') !== '1') {
+                                        if (selectedCount >= 4) {
+                                            squadButton.click();
+                                            sessionStorage.setItem(runKey + ':squadSaved', '1');
+                                            send('SQUAD_SAVE_REQUESTED', 'selectedCards=' + selectedCount);
+                                            didAction = true;
+                                        } else {
+                                            send('SQUAD_SAVE_SKIPPED', 'Select four awakened cards before saving');
+                                        }
+                                    }
+
+                                    if (preparationButton && preparationUrl &&
+                                        sessionStorage.getItem(runKey + ':preparationSaved') !== '1') {
+                                        preparationButton.click();
+                                        sessionStorage.setItem(runKey + ':preparationSaved', '1');
+                                        send('PREPARATION_SAVE_REQUESTED', 'site request handler invoked');
+                                        didAction = true;
+                                    }
+
+                                    if (resonanceOpen(root)) {
+                                        send('RESONANCE_DECISION_REQUIRED', 'No cost-bearing offer selected automatically');
+                                        finish(didAction, 'resonance_decision_required');
+                                        return;
+                                    }
+
+                                    if (startButton && sessionStorage.getItem(runKey + ':startRequested') !== '1') {
+                                        if (selectedCount < 4) {
+                                            send('START_SKIPPED', 'Fewer than four selected cards detected');
+                                        } else {
+                                            startButton.click();
+                                            sessionStorage.setItem(runKey + ':startRequested', '1');
+                                            send('START_REQUESTED', 'site request handler invoked');
+                                            didAction = true;
+                                            await new Promise(function(resolve) { setTimeout(resolve, 1200); });
+                                            if (resonanceOpen(document.querySelector('[data-tower-root]') || root)) {
+                                                send('RESONANCE_DECISION_REQUIRED', 'Review the offer manually');
+                                                finish(true, 'start_requested_resonance_needs_user_choice');
+                                                return;
+                                            }
+                                        }
+                                    } else if (!startButton) {
+                                        send('START_NOT_AVAILABLE', 'Configure a squad/preparation on /tower');
+                                    }
+
+                                    var active = root.getAttribute('data-expedition-active') === 'true' ||
+                                        /отряд\s+(уже\s+)?в\s+пути|экспедиция\s+отправлена|верн[её]тся\s+через|экспедиция\s+завершена/i.test(textOf(document.body));
+                                    didAction = didAction ||
+                                        sessionStorage.getItem(runKey + ':claimDone') === '1' ||
+                                        sessionStorage.getItem(runKey + ':squadSaved') === '1' ||
+                                        sessionStorage.getItem(runKey + ':preparationSaved') === '1' ||
+                                        sessionStorage.getItem(runKey + ':startRequested') === '1';
+                                    send('STATE_CHECK', 'expeditionActive=' + active +
+                                        ' claimButton=' + !!claimButton + ' startButton=' + !!startButton);
+                                    finish(didAction, didAction
+                                        ? 'requests_or_actions_processed; expeditionActive=' + active
+                                        : 'nothing_to_do; choose four awakened cards and save preparation');
+                                }
+                                run(document.querySelector('[data-tower-root]'), 0).catch(function(e) {
+                                    send('TASK_ERROR', e && e.message ? e.message : String(e));
+                                    finish(false, 'tower_script_error');
+                                });
+                            })();
+                        """.trimIndent()
+                        view?.evaluateJavascript(script, null)
+                    }
+                }
+                watchdog = Runnable { finish(false, "tower_page_timeout") }
+                mainHandler.postDelayed(watchdog!!, 75_000L)
+                log(account.username, "TOWER: OPEN url=https://mangabuff.ru/tower")
+                updateStatus(account, "🗼 Башня Разлома: проверка состояния…", true, "Башня Разлома", 0.05f)
+                webView.loadUrl("https://mangabuff.ru/tower")
+            } catch (e: Exception) {
+                finish(false, "startup_error=" + (e.message ?: "unknown"))
+            }
         }
     }
 
