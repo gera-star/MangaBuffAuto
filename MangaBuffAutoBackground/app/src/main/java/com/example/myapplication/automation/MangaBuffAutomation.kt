@@ -1,6 +1,7 @@
 package com.example.myapplication.automation
 
 import android.content.Context
+import android.net.Uri
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
@@ -2375,7 +2376,7 @@ class MangaBuffAutomation(
         }
 
         mainHandler.post {
-            if (!continuation.isActive || webView.isDestroyed) {
+            if (!continuation.isActive) {
                 finish(false, "webview_unavailable")
                 return@post
             }
