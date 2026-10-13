@@ -671,7 +671,7 @@ class MangaBuffForegroundService : Service() {
         val promoKeys = runtimePrefs.all.keys.filter { it.startsWith("promo_code_") }
         if (promoKeys.isNotEmpty()) {
             val editor = runtimePrefs.edit()
-            promoKeys.forEach(editor::remove)
+            promoKeys.forEach { key -> editor.remove(key) }
             editor.apply()
         }
         recoveryRequests.clear()
