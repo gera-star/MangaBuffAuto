@@ -1425,6 +1425,94 @@ fun TasksTab(
             }
         }
 
+        // A dedicated, compact card keeps Tower options separated from the general task controls.
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Shield,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(19.dp)
+                        )
+                        Spacer(Modifier.width(7.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Башня Разлома · усиления",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Прокачивать выбранные навыки кнопкой «На все» после отправки отряда",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        FilterChip(
+                            selected = settings.towerUpgradeAssault,
+                            onClick = { onSaveSettings(settings.copy(towerUpgradeAssault = !settings.towerUpgradeAssault)) },
+                            enabled = !isRunning,
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Натиск", maxLines = 1) }
+                        )
+                        FilterChip(
+                            selected = settings.towerUpgradeFortitude,
+                            onClick = { onSaveSettings(settings.copy(towerUpgradeFortitude = !settings.towerUpgradeFortitude)) },
+                            enabled = !isRunning,
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Оплот", maxLines = 1) }
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        FilterChip(
+                            selected = settings.towerUpgradeHunt,
+                            onClick = { onSaveSettings(settings.copy(towerUpgradeHunt = !settings.towerUpgradeHunt)) },
+                            enabled = !isRunning,
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Знание Хранителей", maxLines = 1) }
+                        )
+                        FilterChip(
+                            selected = settings.towerUpgradeMentorship,
+                            onClick = { onSaveSettings(settings.copy(towerUpgradeMentorship = !settings.towerUpgradeMentorship)) },
+                            enabled = !isRunning,
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Наставление", maxLines = 1) }
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        FilterChip(
+                            selected = settings.towerUpgradeSupply,
+                            onClick = { onSaveSettings(settings.copy(towerUpgradeSupply = !settings.towerUpgradeSupply)) },
+                            enabled = !isRunning,
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Снабжение", maxLines = 1) }
+                        )
+                        Spacer(Modifier.weight(1f))
+                    }
+
+                    Text(
+                        "Порядок: Натиск → Оплот → Знание Хранителей → Наставление → Снабжение. " +
+                            "Отключённые навыки пропускаются.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+        }
+
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
