@@ -229,6 +229,7 @@ class MainActivity : ComponentActivity() {
                         }
 
                         if (showKeenySplash) {
+                            // fillMaxSize works across Compose versions; avoid matchParentSize here.
                             KeenySplash(
                                 modifier = Modifier.fillMaxSize()
                             )
