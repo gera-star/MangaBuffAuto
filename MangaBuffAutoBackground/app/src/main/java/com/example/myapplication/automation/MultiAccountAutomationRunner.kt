@@ -15,6 +15,7 @@ class MultiAccountAutomationRunner(
     onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
     onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
     onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
+    onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     onAccountRecoveryNeeded: (accountId: String) -> Unit = {}
@@ -26,6 +27,7 @@ class MultiAccountAutomationRunner(
         onMangaActiveUrlUpdate,
         onAccountStatsUpdate,
         onDailyStatsUpdate,
+        onTowerExpeditionEndsAtUpdate,
         onWebViewAssigned,
         onWebViewCleared,
         onAccountRecoveryNeeded
