@@ -171,12 +171,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         addLog(LogEntry(username = username, message = "Аккаунт успешно добавлен"))
     }
 
-    fun addAccountWithId(id: String, username: String, cookiesJson: String, csrfToken: String) {
+    fun addAccountWithId(
+        id: String,
+        username: String,
+        cookiesJson: String,
+        csrfToken: String,
+        userAgent: String? = null
+    ) {
         val newAccount = MangaBuffAccount(
             id = id,
             username = username,
             cookiesJson = cookiesJson,
-            csrfToken = csrfToken
+            csrfToken = csrfToken,
+            userAgent = userAgent?.takeIf { it.isNotBlank() }
+                ?: MangaBuffAccount().getSafeUserAgent()
         )
         repository.saveAccount(newAccount)
         loadData()

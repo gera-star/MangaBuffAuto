@@ -433,9 +433,27 @@ fun MangaBuffAppUI(
         }
     }
 
-    // ДИАЛОГ ДОБАВЛЕНИЯ НОВОГО АККАУНТА ЧЕРЕЗ WEBVIEW ВХОД
+    // Add-account flow: observe login state, but only persist the account after the user taps "Готово".
     if (showAddAccountDialog) {
         val newAccountId = remember { UUID.randomUUID().toString() }
+        val tempProfileName = remember(newAccountId) { "mb_temp_login_" + newAccountId }
+        val loginWebViewState = remember(newAccountId) { mutableStateOf<WebView?>(null) }
+        var loginDetectedUsername by remember(newAccountId) { mutableStateOf<String?>(null) }
+        var loginStatusText by remember(newAccountId) {
+            mutableStateOf("Войдите в MangaBuff. После успешного входа нажмите «Готово».")
+        }
+        var loginSaveInProgress by remember(newAccountId) { mutableStateOf(false) }
+
+        DisposableEffect(newAccountId) {
+            onDispose {
+                loginWebViewState.value?.let { wv ->
+                    try { wv.removeJavascriptInterface("AndroidAddAccountBridge") } catch (_: Exception) {}
+                    try { wv.stopLoading() } catch (_: Exception) {}
+                    try { wv.destroy() } catch (_: Exception) {}
+                }
+                loginWebViewState.value = null
+            }
+        }
 
         Dialog(
             onDismissRequest = { viewModel.setShowAddAccountDialog(false) },
@@ -464,47 +482,227 @@ fun MangaBuffAppUI(
 
                     AndroidView(
                         factory = { ctx ->
-                            val tempProfileName = "mb_temp_login_$newAccountId"
-                            println("PROFILE: CREATE tempAccountId=$newAccountId profile=$tempProfileName")
                             val wv = WebView(ctx)
+                            loginWebViewState.value = wv
                             wv.settings.javaScriptEnabled = true
                             wv.settings.domStorageEnabled = true
+                            wv.settings.databaseEnabled = true
+
                             if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
                                 try {
                                     WebViewCompat.setProfile(wv, tempProfileName)
-                                } catch (e: Exception) {}
+                                    println("PROFILE: CREATE tempAccountId=$newAccountId profile=$tempProfileName")
+                                } catch (e: Exception) {
+                                    loginStatusText = "Не удалось создать изолированный профиль входа: " + (e.message ?: "ошибка WebView")
+                                }
+                            } else {
+                                loginStatusText = "Этот WebView не поддерживает изолированные профили. Обновите Android System WebView."
                             }
+
                             wv.webViewClient = object : WebViewClient() {
                                 override fun onPageFinished(view: WebView?, url: String?) {
+                                    super.onPageFinished(view, url)
+                                    val host = try { Uri.parse(url.orEmpty()).host.orEmpty() } catch (_: Exception) { "" }
+                                    if (host != "mangabuff.ru" && !host.endsWith(".mangabuff.ru")) return
+
+                                    if (loginDetectedUsername == null && !loginSaveInProgress) {
+                                        loginStatusText = "Страница загружена. Проверяю состояние входа…"
+                                    }
+
                                     val script = """
                                         (function() {
-                                            if ((window.isAuth === 1 || window.isAuth === true) && window.user && window.user.name) {
-                                                var username = window.user.name;
-                                                var cookies = document.cookie;
-                                                var csrfMeta = document.querySelector('meta[name="csrf-token"]');
-                                                var csrf = csrfMeta ? csrfMeta.content : '';
-                                                AndroidAddAccountBridge.onAccountCaptured(username, cookies, csrf);
+                                            try {
+                                                if (window.__mbAddAccountPoll) {
+                                                    clearInterval(window.__mbAddAccountPoll);
+                                                    window.__mbAddAccountPoll = null;
+                                                }
+                                                var lastSignature = '';
+                                                function pollLoginState() {
+                                                    var authenticated =
+                                                        (window.isAuth === 1 || window.isAuth === true) &&
+                                                        window.user && typeof window.user.name === 'string' &&
+                                                        window.user.name.trim().length > 0;
+                                                    var username = authenticated ? window.user.name.trim() : '';
+                                                    var signature = authenticated ? ('AUTH:' + username) : ('WAIT:' + location.pathname);
+                                                    if (signature !== lastSignature) {
+                                                        lastSignature = signature;
+                                                        AndroidAddAccountBridge.onLoginStatus(username, authenticated, location.href);
+                                                    }
+                                                }
+                                                pollLoginState();
+                                                window.__mbAddAccountPoll = setInterval(pollLoginState, 750);
+                                            } catch (e) {
+                                                try { AndroidAddAccountBridge.onLoginStatus('', false, 'POLL_ERROR'); } catch (ignored) {}
                                             }
                                         })();
                                     """.trimIndent()
                                     view?.evaluateJavascript(script, null)
                                 }
                             }
+
                             wv.addJavascriptInterface(object {
                                 @JavascriptInterface
-                                fun onAccountCaptured(username: String, cookies: String, csrf: String) {
+                                fun onLoginStatus(username: String, authenticated: Boolean, url: String) {
                                     mainHandler.post {
-                                        viewModel.addAccountWithId(newAccountId, username, cookies, csrf)
+                                        if (loginSaveInProgress) return@post
+                                        if (authenticated && username.isNotBlank()) {
+                                            loginDetectedUsername = username
+                                            loginStatusText = "Вход распознан: " + username + ". Нажмите «Готово», чтобы сохранить аккаунт."
+                                        } else if (url == "POLL_ERROR") {
+                                            loginStatusText = "Не удалось проверить вход. Оставьте страницу открытой и нажмите «Готово» ещё раз."
+                                        } else if (loginDetectedUsername == null) {
+                                            loginStatusText = "Ожидаю успешный вход. После возврата на MangaBuff нажмите «Готово»."
+                                        }
+                                    }
+                                }
+
+                                @JavascriptInterface
+                                fun onAccountReady(username: String, jsCookies: String, csrf: String) {
+                                    mainHandler.post {
+                                        if (username.isBlank()) {
+                                            loginSaveInProgress = false
+                                            loginStatusText = "Вход ещё не распознан. Завершите авторизацию и попробуйте «Готово» снова."
+                                            return@post
+                                        }
+
+                                        val profileCookieManager = try {
+                                            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                                                ProfileStore.getInstance().getProfile(tempProfileName)?.cookieManager
+                                            } else {
+                                                null
+                                            }
+                                        } catch (_: Exception) {
+                                            null
+                                        }
+
+                                        if (profileCookieManager == null) {
+                                            loginSaveInProgress = false
+                                            loginStatusText = "Не удалось получить cookies из изолированного профиля. Закройте вход и попробуйте снова."
+                                            return@post
+                                        }
+
+                                        val profileCookies = try {
+                                            profileCookieManager.setAcceptCookie(true)
+                                            profileCookieManager.flush()
+                                            profileCookieManager.getCookie("https://mangabuff.ru").orEmpty()
+                                        } catch (_: Exception) {
+                                            ""
+                                        }
+
+                                        // Profile CookieManager includes HttpOnly session cookies; merge any
+                                        // JS-visible cookies by name without logging their values.
+                                        val mergedCookies = linkedMapOf<String, String>()
+                                        listOf(profileCookies, jsCookies).forEach { raw ->
+                                            raw.split(";").forEach { item ->
+                                                val pair = item.trim()
+                                                val separator = pair.indexOf('=')
+                                                if (separator > 0) {
+                                                    val name = pair.substring(0, separator).trim()
+                                                    if (name.isNotEmpty()) mergedCookies[name] = pair
+                                                }
+                                            }
+                                        }
+                                        val cookies = mergedCookies.values.joinToString("; ")
+                                        if (cookies.isBlank()) {
+                                            loginSaveInProgress = false
+                                            loginStatusText = "Сессия вошла, но cookies не получены. Не закрывайте страницу; нажмите «Готово» ещё раз."
+                                            return@post
+                                        }
+
+                                        val userAgent = loginWebViewState.value?.settings?.userAgentString.orEmpty()
+                                        viewModel.addAccountWithId(
+                                            newAccountId,
+                                            username,
+                                            cookies,
+                                            csrf,
+                                            userAgent
+                                        )
                                         viewModel.setShowAddAccountDialog(false)
-                                        Toast.makeText(ctx, "Аккаунт $username успешно добавлен!", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(ctx, "Аккаунт " + username + " успешно добавлен!", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }, "AndroidAddAccountBridge")
+
                             wv.loadUrl("https://mangabuff.ru/login")
                             wv
                         },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.weight(1f).fillMaxWidth()
                     )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        loginStatusText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (loginDetectedUsername != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val wv = loginWebViewState.value
+                                if (wv != null) {
+                                    loginDetectedUsername = null
+                                    loginSaveInProgress = false
+                                    loginStatusText = "Повторно проверяю страницу входа…"
+                                    wv.evaluateJavascript(
+                                        "(function(){try{if(window.__mbAddAccountPoll)clearInterval(window.__mbAddAccountPoll);window.__mbAddAccountPoll=null;}catch(e){} return true;})();",
+                                        null
+                                    )
+                                    wv.reload()
+                                }
+                            },
+                            enabled = loginWebViewState.value != null && !loginSaveInProgress
+                        ) {
+                            Text("Проверить снова")
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Button(
+                            onClick = {
+                                val wv = loginWebViewState.value
+                                if (wv == null) {
+                                    loginStatusText = "Страница входа ещё загружается."
+                                    return@Button
+                                }
+                                loginSaveInProgress = true
+                                loginStatusText = "Проверяю авторизацию и сохраняю сессию…"
+                                wv.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        try {
+                                            var authenticated =
+                                                (window.isAuth === 1 || window.isAuth === true) &&
+                                                window.user && typeof window.user.name === 'string' &&
+                                                window.user.name.trim().length > 0;
+                                            if (!authenticated) {
+                                                AndroidAddAccountBridge.onAccountReady('', document.cookie || '', '');
+                                                return false;
+                                            }
+                                            var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                                            AndroidAddAccountBridge.onAccountReady(
+                                                window.user.name.trim(),
+                                                document.cookie || '',
+                                                csrfMeta ? (csrfMeta.content || '') : ''
+                                            );
+                                            return true;
+                                        } catch (e) {
+                                            AndroidAddAccountBridge.onAccountReady('', '', '');
+                                            return false;
+                                        }
+                                    })();
+                                    """.trimIndent(),
+                                    null
+                                )
+                            },
+                            enabled = loginWebViewState.value != null && !loginSaveInProgress
+                        ) {
+                            Text("Готово")
+                        }
+                    }
                 }
             }
         }
