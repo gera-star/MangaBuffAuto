@@ -6480,7 +6480,7 @@ class MangaBuffAutomation(
                                         return true;
                                     }
 
-                                    function stopScroll() {
+                                    function stopScroll(preserveMangaBuffAutoscroll) {
                                         try {
                                             AndroidReaderBridge.cancelBackgroundScroll();
                                         } catch(e) {}
@@ -6512,36 +6512,39 @@ class MangaBuffAutomation(
                                             }
                                         } catch(e) {}
 
-                                        // Stop MangaBuff's own autoscroll if it is running.
-                                        try {
-                                            var pause = document.querySelector('.reader-autoscroll-icon-pause');
-                                            if (pause && visible(pause)) {
-                                                pause.click();
-                                                AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_STOP_CLICK');
-                                                return;
-                                            }
-
-                                            var play = document.querySelector('.reader-autoscroll-icon-play');
-                                            if (play && visible(play) && play.closest('.reader-autoscroll')) {
-                                                // Already stopped.
-                                                return;
-                                            }
-
-                                            var autoIcon = document.querySelector(
-                                                '.reader-autoscroll-icon-pause, .reader-autoscroll-icon-play'
-                                            );
-                                            if (autoIcon && autoIcon.parentElement) {
-                                                var cls = String(autoIcon.className || '');
-                                                if (cls.indexOf('icon-pause') !== -1) {
-                                                    autoIcon.parentElement.click();
-                                                    AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_STOP_PARENT_CLICK');
+                                        // Stop MangaBuff's own autoscroll unless this chapter startup
+                                        // explicitly asks to keep it running alongside background scrolling.
+                                        if (!preserveMangaBuffAutoscroll) {
+                                            try {
+                                                var pause = document.querySelector('.reader-autoscroll-icon-pause');
+                                                if (pause && visible(pause)) {
+                                                    pause.click();
+                                                    AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_STOP_CLICK');
+                                                    return;
                                                 }
+    
+                                                var play = document.querySelector('.reader-autoscroll-icon-play');
+                                                if (play && visible(play) && play.closest('.reader-autoscroll')) {
+                                                    // Already stopped.
+                                                    return;
+                                                }
+    
+                                                var autoIcon = document.querySelector(
+                                                    '.reader-autoscroll-icon-pause, .reader-autoscroll-icon-play'
+                                                );
+                                                if (autoIcon && autoIcon.parentElement) {
+                                                    var cls = String(autoIcon.className || '');
+                                                    if (cls.indexOf('icon-pause') !== -1) {
+                                                        autoIcon.parentElement.click();
+                                                        AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_STOP_PARENT_CLICK');
+                                                    }
+                                                }
+                                            } catch(e) {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: MANGABUFF_AUTOSCROLL_STOP_ERROR ' +
+                                                    (e.message || String(e))
+                                                );
                                             }
-                                        } catch(e) {
-                                            AndroidReaderBridge.onLogStep(
-                                                'READER: MANGABUFF_AUTOSCROLL_STOP_ERROR ' +
-                                                (e.message || String(e))
-                                            );
                                         }
                                     }
 
@@ -7395,7 +7398,9 @@ class MangaBuffAutomation(
                                         // Keep the existing smooth visible-screen rAF path, but add a
                                         // native Android tick path for screen-off periods. Chromium can
                                         // throttle rAF heavily when the display is locked.
-                                        try { stopScroll(); } catch(e) {}
+                                        // Keep the site's own autoscroll running alongside the
+                                        // native/custom background scroll; normal stop paths still pause it.
+                                        try { stopScroll(true); } catch(e) {}
 
                                         window.__mbBackgroundStep = function() {
                                             try {
@@ -7595,7 +7600,20 @@ class MangaBuffAutomation(
                                     function startReaderScrollOnce() {
                                         if (readerScrollStarted) return;
                                         readerScrollStarted = true;
-                                        humanScroll();
+
+                                        // Enable MangaBuff's own autoscroll in addition to our custom
+                                        // scroll and native recovery. This path is useful when Chromium
+                                        // throttles requestAnimationFrame for a hidden WebView.
+                                        AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_SETUP_BEGIN');
+                                        configureMangaBuffAutoscroll(function(ok) {
+                                            if (chapterDone) return;
+                                            AndroidReaderBridge.onLogStep(
+                                                ok
+                                                    ? 'READER: MANGABUFF_AUTOSCROLL_ACTIVE_WITH_BACKGROUND_SCROLL'
+                                                    : 'READER: MANGABUFF_AUTOSCROLL_UNAVAILABLE_CUSTOM_SCROLL_ONLY'
+                                            );
+                                            humanScroll();
+                                        });
                                     }
 
                                     (function scanReaderChapterTotal() {
