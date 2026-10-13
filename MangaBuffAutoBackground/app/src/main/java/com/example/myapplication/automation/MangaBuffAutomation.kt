@@ -4711,6 +4711,12 @@ class MangaBuffAutomation(
         log(account.username, "READER: OPEN")
 
         currentMangaUrl = ensureCanonicalMangaUrl(account.getSafeActiveMangaUrl())
+        log(
+            account.username,
+            "READER: RESUME_STATE activeMangaUrl=" +
+                (currentMangaUrl.ifBlank { "NONE_CATALOG_FALLBACK" }) +
+                " title='" + account.getSafeActiveMangaTitle() + "'"
+        )
 
         skippedMangaUrls.clear()
         completedMangaIds.clear()
