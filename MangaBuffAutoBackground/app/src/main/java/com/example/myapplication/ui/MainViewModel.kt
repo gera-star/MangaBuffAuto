@@ -100,6 +100,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         intent?.getStringExtra(MangaBuffForegroundService.EXTRA_TITLE).orEmpty()
                     )
                 }
+                MangaBuffForegroundService.EVENT_TOWER_TIMER -> {
+                    updateTowerExpeditionEndsAt(
+                        accountId,
+                        intent?.getLongExtra(MangaBuffForegroundService.EXTRA_TOWER_ENDS_AT_MS, 0L) ?: 0L
+                    )
+                }
             }
         }
     }
@@ -365,6 +371,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     updated
                 } else acc
             }
+        }
+    }
+
+    private fun updateTowerExpeditionEndsAt(accountId: String, endsAtMillis: Long) {
+        val updated = repository.updateAccount(accountId) {
+            it.copy(
+                towerExpeditionEndsAtMillis = endsAtMillis,
+                towerExpeditionStateKnown = true
+            )
+        } ?: return
+
+        _accounts.update { list ->
+            list.map { acc -> if (acc.id == updated.id) updated else acc }
         }
     }
 
