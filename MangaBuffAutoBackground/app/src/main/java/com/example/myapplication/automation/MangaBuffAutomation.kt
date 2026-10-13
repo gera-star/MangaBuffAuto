@@ -3746,8 +3746,10 @@ class MangaBuffAutomation(
                         view?.evaluateJavascript(towerScript, null)
                     }
                 }
+                // The HQ sequence may confirm upgrades one at a time after the expedition starts.
+                // Allow that bounded sequence to finish instead of failing at the old 75-second limit.
                 watchdog = Runnable { finish(false, "tower_page_timeout") }
-                mainHandler.postDelayed(watchdog!!, 75_000L)
+                mainHandler.postDelayed(watchdog!!, 120_000L)
                 log(account.username, "TOWER: OPEN url=https://mangabuff.ru/tower")
                 updateStatus(account, "🗼 Башня Разлома: проверка состояния…", true, "Башня Разлома", 0.05f)
                 webView.loadUrl("https://mangabuff.ru/tower")
@@ -3770,7 +3772,7 @@ class MangaBuffAutomation(
                                     log(account.username, "TOWER: SCRIPT_RECOVERY_NOT_NEEDED attempt=$attempt")
                                     return@evaluateJavascript
                                 }
-                                log(account.username, "TOWER: SCRIPT_RECOVERY_INJECT attempt=$attempt url=${currentUrl.take(140)}", true)
+                                log(account.username, "TOWER: SCRIPT_RECOVERY_INJECT attempt=$attempt url=${currentUrl.take(140)}")
                                 try {
                                     webView.evaluateJavascript(towerScript, null)
                                 } catch (e: Exception) {
