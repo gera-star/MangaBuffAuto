@@ -1829,7 +1829,7 @@ class MangaBuffAutomation(
                         (function() {
                             var finished = false;
                             var startedAt = Date.now();
-                            var maxWaitMs = 8000;
+                            var maxWaitMs = 6500;
 
                             function textOf(el) {
                                 return el ? String(el.innerText || el.textContent || '')
@@ -1863,7 +1863,7 @@ class MangaBuffAutomation(
                                     return;
                                 }
 
-                                if (Date.now() - clickedAt < 4500) {
+                                if (Date.now() - clickedAt < 3500) {
                                     setTimeout(function() { verifyClaim(day, clickedAt); }, 350);
                                     return;
                                 }
@@ -1910,7 +1910,7 @@ class MangaBuffAutomation(
                                     }
                                 }
 
-                                if (list && Date.now() - startedAt >= 700) {
+                                if (list && Date.now() - startedAt >= 1200) {
                                     finish('NO_CLAIMABLE_REWARD');
                                     return;
                                 }
