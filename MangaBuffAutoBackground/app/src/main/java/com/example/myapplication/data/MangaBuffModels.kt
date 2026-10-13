@@ -121,6 +121,12 @@ data class GlobalSettings(
     val readerChapters: Int = 10,
     val commentCount: Int = 3,
     val battleTargetCount: Int = 20,
+    // Tower headquarters skills that should be upgraded with the site's "На все" action.
+    val towerUpgradeAssault: Boolean = true,
+    val towerUpgradeFortitude: Boolean = true,
+    val towerUpgradeHunt: Boolean = true,
+    val towerUpgradeMentorship: Boolean = true,
+    val towerUpgradeSupply: Boolean = true,
     val keepScreenOn: Boolean = false,
     val readerSiteAutoscroll: Boolean = true
 )
