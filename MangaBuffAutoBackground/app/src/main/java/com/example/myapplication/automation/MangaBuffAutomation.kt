@@ -7434,6 +7434,57 @@ class MangaBuffAutomation(
                                                     }
                                                 }
                                             }
+
+                                            // Some page versions do not mark the current item as active, or
+                                            // render the chapter list in a different order. In that case,
+                                            // select the nearest *real link* with a larger chapter number.
+                                            // This never invents /N+1: every candidate must come from the DOM.
+                                            var currentParts = window.location.pathname.split('/').filter(Boolean);
+                                            var currentChapterNumber = currentParts.length >= 4 &&
+                                                currentParts[0] === 'manga'
+                                                ? parseInt(currentParts[3], 10) : NaN;
+                                            if (!isNaN(currentChapterNumber)) {
+                                                var realNextCandidates = [];
+                                                for (var fi = 0; fi < chapterItems.length; fi++) {
+                                                    var fallbackItem = chapterItems[fi];
+                                                    var fallbackLink = fallbackItem.querySelector(
+                                                        'a[href], button[href], [role="link"][href]'
+                                                    ) || (fallbackItem.tagName === 'A' ? fallbackItem : null);
+                                                    var fallbackHref = findRealHref(fallbackLink);
+                                                    if (!fallbackHref) continue;
+                                                    try {
+                                                        var fallbackUrl = new URL(fallbackHref, window.location.href);
+                                                        var fallbackParts = fallbackUrl.pathname.split('/').filter(Boolean);
+                                                        var fallbackChapterNumber = parseInt(fallbackParts[3], 10);
+                                                        if (fallbackParts[1] !== currentParts[1] ||
+                                                            isNaN(fallbackChapterNumber) ||
+                                                            fallbackChapterNumber <= currentChapterNumber) continue;
+                                                        realNextCandidates.push({
+                                                            item: fallbackItem,
+                                                            link: fallbackLink,
+                                                            url: fallbackHref,
+                                                            number: fallbackChapterNumber
+                                                        });
+                                                    } catch (e) {}
+                                                }
+                                                realNextCandidates.sort(function(a, b) {
+                                                    return a.number - b.number;
+                                                });
+                                                if (realNextCandidates.length > 0) {
+                                                    var selectedNext = realNextCandidates[0];
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'NEXT_CHAPTER_FOUND_LIST_FALLBACK current=' + currentChapterNumber +
+                                                        ' next=' + selectedNext.number +
+                                                        ' candidates=' + realNextCandidates.length +
+                                                        ' url=' + selectedNext.url
+                                                    );
+                                                    return selectedNext.link;
+                                                }
+                                                AndroidReaderBridge.onLogStep(
+                                                    'NEXT_CHAPTER_LIST_FALLBACK_EMPTY current=' + currentChapterNumber +
+                                                    ' items=' + chapterItems.length
+                                                );
+                                            }
                                         }
 
                                         // 2) Real MangaBuff next-navigation controls.
