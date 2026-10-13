@@ -5632,6 +5632,12 @@ class MangaBuffAutomation(
 
             webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
 
+                // Some MangaBuff reader pages keep a resource request pending indefinitely.
+                // WebView then never calls onPageFinished, leaving the reader at chapterId=PENDING.
+                // Keep a per-navigation watchdog so the same DOM setup can run once after timeout.
+                private var pageLoadGeneration: Int = 0
+                private var handledPageGeneration: Int = -1
+
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest?
@@ -5653,12 +5659,45 @@ class MangaBuffAutomation(
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
-                    log(account.username, "PAGE: PAGE_STARTED url=$url")
+                    pageLoadGeneration += 1
+                    val generation = pageLoadGeneration
+                    log(account.username, "PAGE: PAGE_STARTED url=$url generation=$generation")
+
+                    // Do not wait forever for image/analytics requests. If the main document
+                    // is still current and WebView has not finished it after 12 seconds, run
+                    // the normal page-finished handler against the already-rendered DOM.
+                    if (!url.isNullOrBlank()) {
+                        mainHandler.postDelayed({
+                            val samePage = view?.url?.substringBefore('#') == url.substringBefore('#')
+                            if (generation == pageLoadGeneration &&
+                                handledPageGeneration != generation &&
+                                samePage
+                            ) {
+                                log(
+                                    account.username,
+                                    "PAGE: PAGE_FINISHED_WATCHDOG_FALLBACK url=$url generation=$generation",
+                                    true
+                                )
+                                onPageFinished(view, url)
+                            }
+                        }, 12_000L)
+                    }
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     val currentUrl = url ?: ""
-                    log(account.username, "PAGE: PAGE_FINISHED url=$currentUrl")
+                    // Ignore stale callbacks and duplicate callbacks after the watchdog fallback.
+                    if (view != null && currentUrl.substringBefore('#') != view.url?.substringBefore('#')) {
+                        log(account.username, "PAGE: STALE_PAGE_FINISHED_IGNORED callback=$currentUrl current=\${view.url}")
+                        return
+                    }
+                    if (handledPageGeneration == pageLoadGeneration) {
+                        log(account.username, "PAGE: DUPLICATE_PAGE_FINISHED_IGNORED url=$currentUrl generation=$pageLoadGeneration")
+                        return
+                    }
+                    handledPageGeneration = pageLoadGeneration
+                    super.onPageFinished(view, url)
+                    log(account.username, "PAGE: PAGE_FINISHED url=$currentUrl generation=$pageLoadGeneration")
 
                     val chapterInfo = isReaderChapterUrl(currentUrl)
 
