@@ -2155,6 +2155,9 @@ class MangaBuffAutomation(
             mainHandler.post {
                 watchdog?.let { mainHandler.removeCallbacks(it) }
                 watchdog = null
+                if (dailyRewardAttemptReserved.compareAndSet(true, false)) {
+                    releaseDailyCalendarAttempt(account, "BALANCE_CANCELLED")
+                }
             }
         }
     }
@@ -3306,7 +3309,7 @@ class MangaBuffAutomation(
                                     }
                                     await hqWait(300);
                                     return 'upgraded=' + upgraded + ' skipped=' + skipped +
-                                        ' order=assault,fortitude,hunt,mentorship,supply';
+                                        ' order=' + selectedKeys.join(',');
                                 }
 
                                 async function finishAfterExpeditionStarted(detail) {
