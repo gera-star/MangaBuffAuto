@@ -259,7 +259,7 @@ class MangaBuffForegroundService : Service() {
             context = applicationContext,
             onLog = ::publishLog,
             onAccountStatusUpdate = ::publishStatus,
-            onMangaActiveUrlUpdate = ::publishManga,
+            onMangaActiveUrlUpdate = ::persistAndPublishManga,
             onAccountStatsUpdate = ::publishStats,
             onDailyStatsUpdate = ::publishDailyStats,
             onTowerExpeditionEndsAtUpdate = ::publishTowerExpeditionEndsAt,
