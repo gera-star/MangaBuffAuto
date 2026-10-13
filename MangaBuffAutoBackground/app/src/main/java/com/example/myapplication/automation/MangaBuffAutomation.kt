@@ -6566,6 +6566,7 @@ class MangaBuffAutomation(
                                     var pendingReaderContinuationScheduledAt = 0;
                                     var pendingReaderContinuationGeneration = 0;
                                     var lastNativeReaderContinuationAt = 0;
+                                    var lastNativeEndCheckAt = 0;
                                     var readerContinuationRunning = false;
 
                                     function cancelReaderContinuation() {
@@ -6639,12 +6640,22 @@ class MangaBuffAutomation(
 
                                     window.__mbNativeConfirmationTick = function() {
                                         try {
-                                            runPendingReaderContinuation('NATIVE');
+                                            var now = Date.now();
+                                            // Keep checking end-of-document even if Chromium stopped the
+                                            // requestAnimationFrame scroll loop while the screen is locked.
+                                            // checkEnd still requires a stable real bottom plus MangaBuff
+                                            // read/history confirmation before it can advance chapters.
+                                            if (!chapterDone && now - lastNativeEndCheckAt >= 350) {
+                                                lastNativeEndCheckAt = now;
+                                                checkEnd();
+                                            }
+                                            return runPendingReaderContinuation('NATIVE');
                                         } catch (e) {
                                             AndroidReaderBridge.onLogStep(
                                                 'READER: NATIVE_CONTINUATION_ERROR error=' +
                                                 (e && e.message ? e.message : e)
                                             );
+                                            return false;
                                         }
                                     };
 
