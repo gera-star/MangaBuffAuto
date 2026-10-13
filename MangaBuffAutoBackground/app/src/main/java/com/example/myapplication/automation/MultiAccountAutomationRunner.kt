@@ -37,7 +37,8 @@ class MultiAccountAutomationRunner(
     suspend fun runForAccount(
         account: MangaBuffAccount,
         settings: GlobalSettings,
-        taskType: TaskType
+        taskType: TaskType,
+        promoCode: String = ""
     ) {
         onLog(LogEntry(username = account.username, component = "RUNNER", message = "START accountId=${account.id}"))
         onLog(LogEntry(username = account.username, component = "RUNNER", message = "PREPARE accountId=${account.id}"))
@@ -51,7 +52,8 @@ class MultiAccountAutomationRunner(
             account = account,
             settings = settings,
             taskType = taskType,
-            expectedProfileName = accountRuntime.profileName
+            expectedProfileName = accountRuntime.profileName,
+            promoCode = promoCode
         )
     }
 
