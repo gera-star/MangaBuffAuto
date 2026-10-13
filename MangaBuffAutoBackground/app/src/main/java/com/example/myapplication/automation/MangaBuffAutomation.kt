@@ -4452,7 +4452,7 @@ class MangaBuffAutomation(
                 fun onMineExchange(oreMined: Int, oreExchanged: Int, diamondsReceived: Int, oreRemaining: Int) {
                     addDaily(account) { it.copy(mineExchangeOre = it.mineExchangeOre + oreExchanged, mineDiamonds = it.mineDiamonds + diamondsReceived) }
                     log(account.username, "MINE: EXCHANGE_SUCCESS mined=$oreMined exchanged=$oreExchanged diamonds=+$diamondsReceived remainingOre=$oreRemaining")
-                    updateStatus(account, "⛏️ Шахта • 🪨 $oreMined → 💎+$diamondsReceived", true, "Шахта", 1f)
+                    updateStatus(account, "⛏️ Шахта завершена • 🪨 осталось $oreRemaining • 💎 +$diamondsReceived", true, "Шахта", 1f)
                 }
 
                 @JavascriptInterface
@@ -4591,7 +4591,8 @@ class MangaBuffAutomation(
                                     if (!${settings.mineAutoExchange}) {
                                         var finalOreManual = currentOre();
                                         var minedOreManual = reportMinedOre(finalOreManual, 'mine-page');
-                                        AndroidMine.onMineLog('AUTO_EXCHANGE_DISABLED_MANUAL_REQUIRED minedOre=' + minedOreManual);
+                                        AndroidMine.onMineLog('AUTO_EXCHANGE_DISABLED_MANUAL_REQUIRED minedOre=' + minedOreManual + ' remainingOre=' + finalOreManual);
+                                        AndroidMine.onMineProgress(clicks, initialHits, finalOreManual);
                                         AndroidMine.onMineComplete();
                                         return;
                                     }
@@ -6937,8 +6938,8 @@ class MangaBuffAutomation(
                                                     } else {
                                                         finishSetup(false, 'AUTOSCROLL_DID_NOT_START');
                                                     }
-                                                }, 700);
-                                            }, 300);
+                                                }, 400);
+                                            }, 180);
                                         }
 
                                         function configureSettings() {
