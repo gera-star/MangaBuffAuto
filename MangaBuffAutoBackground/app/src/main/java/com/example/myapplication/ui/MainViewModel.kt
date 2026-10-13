@@ -93,6 +93,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                 }
+                MangaBuffForegroundService.EVENT_MINE_BALANCE -> {
+                    updateAccountMineOreBalance(
+                        accountId,
+                        intent?.getIntExtra(MangaBuffForegroundService.EXTRA_MINE_BALANCE, 0) ?: 0
+                    )
+                }
                 MangaBuffForegroundService.EVENT_MANGA -> {
                     updateActiveMangaUrl(
                         accountId,
@@ -332,6 +338,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 chapterProgress = chapters,
                 commentProgress = comments
             )
+        } ?: return
+
+        _accounts.update { list ->
+            list.map { acc -> if (acc.id == updated.id) updated else acc }
+        }
+    }
+
+    private fun updateAccountMineOreBalance(accountId: String, oreBalance: Int) {
+        val updated = repository.updateAccount(accountId) {
+            it.copy(mineOreBalance = oreBalance, mineOreBalanceKnown = true)
         } ?: return
 
         _accounts.update { list ->
