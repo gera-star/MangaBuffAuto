@@ -54,6 +54,9 @@ data class MangaBuffAccount(
     val dailyMineOre: Int = 0,
     val dailyMineExchangeOre: Int = 0,
     val dailyMineDiamonds: Int = 0,
+    /** Last known current ore balance on the account, not the amount mined today. */
+    val mineOreBalance: Int = 0,
+    val mineOreBalanceKnown: Boolean = false,
     val dailyReaderChapters: Int = 0,
     val dailyComments: Int = 0
 ) {
