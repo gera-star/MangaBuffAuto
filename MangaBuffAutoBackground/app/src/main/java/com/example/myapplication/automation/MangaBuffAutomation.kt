@@ -5688,7 +5688,7 @@ class MangaBuffAutomation(
                     val currentUrl = url ?: ""
                     // Ignore stale callbacks and duplicate callbacks after the watchdog fallback.
                     if (view != null && currentUrl.substringBefore('#') != view.url?.substringBefore('#')) {
-                        log(account.username, "PAGE: STALE_PAGE_FINISHED_IGNORED callback=$currentUrl current=\${view.url}")
+                        log(account.username, "PAGE: STALE_PAGE_FINISHED_IGNORED callback=$currentUrl current=${view.url}")
                         return
                     }
                     if (handledPageGeneration == pageLoadGeneration) {
