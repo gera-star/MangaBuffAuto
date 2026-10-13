@@ -15,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.DisposableEffect
@@ -154,6 +155,12 @@ class MainActivity : ComponentActivity() {
 
                     val debugWebView = selectedDebugAccountId?.let(webViewsByAccount::get)
 
+                    var showKeenySplash by remember { mutableStateOf(true) }
+                    LaunchedEffect(Unit) {
+                        kotlinx.coroutines.delay(5_000L)
+                        showKeenySplash = false
+                    }
+
                     Box(modifier = Modifier.fillMaxSize()) {
                         MangaBuffAppUI(
                             viewModel = viewModel,
@@ -220,6 +227,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                 )
                             }
+                        }
+
+                        if (showKeenySplash) {
+                            KeenySplash(
+                                modifier = Modifier.matchParentSize()
+                            )
                         }
                     }
                 }
