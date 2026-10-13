@@ -28,6 +28,8 @@ data class MangaBuffAccount(
     val userAgent: String? = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     val readerEnabled: Boolean = true,
     val towerEnabled: Boolean = false,
+    val towerExpeditionEndsAtMillis: Long = 0L,
+    val towerExpeditionStateKnown: Boolean = false,
     val advEnabled: Boolean = true,
     val mineEnabled: Boolean = true,
     val commentEnabled: Boolean = true,
