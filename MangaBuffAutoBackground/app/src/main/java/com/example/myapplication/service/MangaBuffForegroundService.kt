@@ -100,6 +100,7 @@ class MangaBuffForegroundService : Service() {
 
         private const val PREFS_RUNTIME = "mangabuff_runtime"
         private const val KEY_ACTIVE_RUNS = "active_runs"
+        private const val KEY_TOWER_CYCLE_ENDS = "tower_cycle_ends"
         private const val WATCHDOG_INTERVAL_MS = 15_000L
         private const val WATCHDOG_MISSING_WEBVIEW_GRACE_MS = 30_000L
 
@@ -220,6 +221,10 @@ class MangaBuffForegroundService : Service() {
     // finish inline inside onStartCommand/startAllInternal before every account Job is registered.
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val accountJobs = ConcurrentHashMap<String, Job>()
+    // Tower cycles are scheduled independently from the account task queue.
+    // The delay never occupies the account WebView or blocks other tasks.
+    private val towerCycleJobs = ConcurrentHashMap<String, Job>()
+    private val towerCycleEndsAt = ConcurrentHashMap<String, Long>()
     private val recoveryRequests = ConcurrentHashMap.newKeySet<String>()
     private val missingWebViewSince = ConcurrentHashMap<String, Long>()
     private var watchdogJob: Job? = null
@@ -310,6 +315,7 @@ class MangaBuffForegroundService : Service() {
         if (!restoredPersistedRuns) {
             restoredPersistedRuns = true
             restorePersistedRuns()
+            restoreTowerCycles()
         }
 
         when (action) {
@@ -553,6 +559,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun stopAccountInternal(accountId: String) {
+        cancelTowerCycle(accountId, clearPersisted = true)
         recoveryRequests.remove(accountId)
         missingWebViewSince.remove(accountId)
         removePersistedRun(accountId)
@@ -565,6 +572,11 @@ class MangaBuffForegroundService : Service() {
 
     private fun stopAllInternal(explicitUserStop: Boolean) {
         if (explicitUserStop) stoppingExplicitly = true
+
+        towerCycleJobs.values.forEach { it.cancel() }
+        towerCycleJobs.clear()
+        towerCycleEndsAt.clear()
+        runtimePrefs.edit().remove(KEY_TOWER_CYCLE_ENDS).apply()
 
         val ids = accountJobs.keys.toList()
         ids.forEach { accountId ->
@@ -637,7 +649,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun stopSelfIfIdle() {
-        if (accountJobs.isNotEmpty() || readPersistedRuns().isNotEmpty() || recoveryRequests.isNotEmpty()) return
+        if (accountJobs.isNotEmpty() || towerCycleJobs.isNotEmpty() || readPersistedRuns().isNotEmpty() || recoveryRequests.isNotEmpty()) return
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {
@@ -760,6 +772,108 @@ class MangaBuffForegroundService : Service() {
             accountId = accountId,
             extras = { putExtra(EXTRA_TOWER_ENDS_AT_MS, endsAtMillis) }
         )
+        if (endsAtMillis > System.currentTimeMillis()) {
+            scheduleTowerCycle(accountId, endsAtMillis)
+        }
+    }
+
+    /**
+     * Schedules the next Tower-only pass without keeping runAccountTasks alive.
+     * Other tasks can finish normally; when the expedition expires, the next pass
+     * claims the reward and sends a new squad through the existing Tower DOM flow.
+     */
+    private fun scheduleTowerCycle(accountId: String, endsAtMillis: Long) {
+        if (stoppingExplicitly || endsAtMillis <= System.currentTimeMillis()) return
+        val oldEnd = towerCycleEndsAt[accountId]
+        if (oldEnd == endsAtMillis && towerCycleJobs[accountId]?.isActive == true) return
+
+        towerCycleJobs.remove(accountId)?.cancel()
+        towerCycleEndsAt[accountId] = endsAtMillis
+        val persisted = runtimePrefs.getStringSet(KEY_TOWER_CYCLE_ENDS, emptySet())
+            .orEmpty().toMutableSet()
+        persisted.removeAll { it.startsWith("$accountId|") }
+        persisted.add("$accountId|$endsAtMillis")
+        runtimePrefs.edit().putStringSet(KEY_TOWER_CYCLE_ENDS, persisted).apply()
+
+        acquireWakeLockIfNeeded()
+        publishLog(
+            LogEntry(
+                username = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty(),
+                component = "TOWER",
+                message = "TOWER_CYCLE_SCHEDULED endsAt=$endsAtMillis delayMs=${endsAtMillis - System.currentTimeMillis()}"
+            )
+        )
+
+        val job = serviceScope.launch {
+            try {
+                while (isActive) {
+                    val remaining = endsAtMillis - System.currentTimeMillis()
+                    if (remaining <= 0L) break
+                    delay(remaining.coerceAtMost(60_000L))
+                }
+                if (stoppingExplicitly || towerCycleEndsAt[accountId] != endsAtMillis) return@launch
+
+                // Remove this finished timer before the new Tower pass reports its next timer.
+                towerCycleJobs.remove(accountId)
+                val account = repository.getAccounts().firstOrNull { it.id == accountId }
+                if (account == null) {
+                    cancelTowerCycle(accountId, clearPersisted = true)
+                    return@launch
+                }
+                val persistedTask = readPersistedRuns()[accountId]
+                if (persistedTask != null || accountJobs[accountId]?.isActive == true) {
+                    // Never start a second WebView task concurrently. Retry shortly after the
+                    // current account pass releases its WebView.
+                    towerCycleEndsAt.remove(accountId)
+                    scheduleTowerCycle(accountId, System.currentTimeMillis() + 5_000L)
+                    return@launch
+                }
+
+                publishLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "TOWER",
+                        message = "TOWER_CYCLE_DUE reward_claim_and_next_expedition"
+                    )
+                )
+                startAccountInternal(accountId, TaskType.TOWER)
+            } catch (_: CancellationException) {
+                // Expected when the user stops this account or all automation.
+            } finally {
+                if (towerCycleJobs[accountId] == coroutineContext[Job]) {
+                    towerCycleJobs.remove(accountId)
+                }
+                releaseWakeLockIfIdle()
+                stopSelfIfIdle()
+            }
+        }
+        towerCycleJobs[accountId] = job
+    }
+
+    private fun cancelTowerCycle(accountId: String, clearPersisted: Boolean) {
+        towerCycleJobs.remove(accountId)?.cancel()
+        towerCycleEndsAt.remove(accountId)
+        if (clearPersisted) {
+            val persisted = runtimePrefs.getStringSet(KEY_TOWER_CYCLE_ENDS, emptySet())
+                .orEmpty().filterNot { it.startsWith("$accountId|") }.toSet()
+            runtimePrefs.edit().putStringSet(KEY_TOWER_CYCLE_ENDS, persisted).apply()
+        }
+    }
+
+    private fun restoreTowerCycles() {
+        val entries = runtimePrefs.getStringSet(KEY_TOWER_CYCLE_ENDS, emptySet()).orEmpty()
+        val now = System.currentTimeMillis()
+        entries.forEach { entry ->
+            val separator = entry.indexOf('|')
+            if (separator <= 0) return@forEach
+            val accountId = entry.substring(0, separator)
+            val endsAt = entry.substring(separator + 1).toLongOrNull() ?: return@forEach
+            if (repository.getAccounts().none { it.id == accountId }) {
+                cancelTowerCycle(accountId, clearPersisted = true)
+            } else {
+                scheduleTowerCycle(accountId, maxOf(endsAt, now + 1_000L))
+            }
+        }
     }
 
     private fun sendRuntimeEvent(
