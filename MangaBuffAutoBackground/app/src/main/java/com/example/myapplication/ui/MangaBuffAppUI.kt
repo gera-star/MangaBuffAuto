@@ -244,7 +244,6 @@ fun MangaBuffAppUI(
                     accounts = accounts,
                     settings = settings,
                     isRunning = isRunning,
-                    onRunAll = { type -> viewModel.runTaskForAllAccounts(type) },
                     onStopAll = { viewModel.stopAllTasks() },
                     onSaveSettings = { newSettings -> viewModel.saveSettings(newSettings) },
                     onOpenPromoDialog = { viewModel.setShowPromoDialog(true) }
@@ -1207,7 +1206,6 @@ fun TasksTab(
     accounts: List<MangaBuffAccount>,
     settings: GlobalSettings,
     isRunning: Boolean,
-    onRunAll: (TaskType) -> Unit,
     onStopAll: () -> Unit,
     onSaveSettings: (GlobalSettings) -> Unit,
     onOpenPromoDialog: () -> Unit
@@ -1222,9 +1220,9 @@ fun TasksTab(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-        contentPadding = PaddingValues(bottom = 8.dp)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+        contentPadding = PaddingValues(bottom = 4.dp)
     ) {
         item {
             Card(
@@ -1232,7 +1230,7 @@ fun TasksTab(
                 shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(7.dp)) {
+                Column(modifier = Modifier.padding(5.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1285,15 +1283,15 @@ fun TasksTab(
                         }
                     }
 
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(2.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         Row(
                             modifier = Modifier.weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             TaskActionButton(
@@ -1305,7 +1303,7 @@ fun TasksTab(
 
                             Box(
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(32.dp)
                                     .clip(CircleShape)
                                     .background(
                                         if (settings.mineAutoExchange) {
@@ -1407,8 +1405,8 @@ fun TasksTab(
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -1432,7 +1430,7 @@ fun TasksTab(
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         FilterChip(
                             selected = settings.towerUpgradeAssault,
                             onClick = { onSaveSettings(settings.copy(towerUpgradeAssault = !settings.towerUpgradeAssault)) },
@@ -1493,7 +1491,7 @@ fun TasksTab(
                 shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(9.dp)) {
+                Column(modifier = Modifier.padding(7.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1551,7 +1549,7 @@ fun TasksTab(
                         )
                     }
 
-                    Spacer(Modifier.height(5.dp))
+                    Spacer(Modifier.height(3.dp))
 
                     OutlinedButton(
                         onClick = {
@@ -1564,7 +1562,7 @@ fun TasksTab(
                             )
                         },
                         contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.fillMaxWidth().height(32.dp),
+                        modifier = Modifier.fillMaxWidth().height(29.dp),
                         shape = RoundedCornerShape(9.dp)
                     ) {
                         Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1605,7 +1603,7 @@ private fun TaskActionButton(
         onClick = onClick,
         enabled = enabled,
         contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
-        modifier = modifier.height(38.dp),
+        modifier = modifier.height(32.dp),
         shape = RoundedCornerShape(10.dp)
     ) {
         Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1)
@@ -1626,7 +1624,7 @@ private fun CompactNumberField(
         },
         label = { Text(label, maxLines = 1) },
         singleLine = true,
-        modifier = modifier.height(52.dp),
+        modifier = modifier.height(46.dp),
         textStyle = MaterialTheme.typography.bodyMedium,
         shape = RoundedCornerShape(10.dp)
     )
