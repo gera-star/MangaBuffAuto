@@ -1,6 +1,7 @@
 package com.example.myapplication.ui
 
 import android.Manifest
+import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -69,6 +70,25 @@ private fun openBatterySettings(context: Context) {
     }
 }
 
+private fun canScheduleExactAlarms(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    return alarmManager.canScheduleExactAlarms()
+}
+
+private fun openExactAlarmSettings(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    try {
+        context.startActivity(
+            Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                data = Uri.parse("package:${context.packageName}")
+            }
+        )
+    } catch (_: Exception) {
+        openAppInfo(context)
+    }
+}
+
 private fun openAutostartSettings(context: Context) {
     val intents = listOf(
         Intent().setClassName(
@@ -104,6 +124,7 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
 
     val batteryOk = remember(refreshKey) { isIgnoringBatteryOptimizations(context) }
     val notificationsOk = remember(refreshKey) { hasNotifications(context) }
+    val exactAlarmsOk = remember(refreshKey) { canScheduleExactAlarms(context) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -129,6 +150,13 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
                         batteryOk
                     )
                 )
+                BackgroundStatusRow(
+                    BackgroundCheck(
+                        "Точные будильники для Башни",
+                        "Позволяют проснуться к завершению экспедиции без удержания CPU активным во время ожидания.",
+                        exactAlarmsOk
+                    )
+                )
 
                 Text(
                     "Для HyperOS также рекомендуется вручную включить «Автозапуск», снять ограничения фоновой активности и при необходимости закрепить приложение в списке недавних.",
@@ -149,7 +177,11 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
                 )
                 BackgroundFeatureRow(
                     "PARTIAL_WAKE_LOCK",
-                    "CPU не отпускается в сон, пока есть активные задачи аккаунтов."
+                    "Удерживается только на время работающих задач аккаунта; таймер Башни не требует WakeLock."
+                )
+                BackgroundFeatureRow(
+                    "AlarmManager для Башни",
+                    "Сохраняет срок экспедиции и будит приложение по таймеру. Для точного срабатывания Android может запросить специальный доступ."
                 )
                 BackgroundFeatureRow(
                     "WebView Watchdog",
@@ -169,6 +201,16 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
                     Icon(Icons.Default.OpenInNew, contentDescription = null)
                     Spacer(Modifier.padding(horizontal = 3.dp))
                     Text("Открыть настройки батареи")
+                }
+
+                OutlinedButton(
+                    onClick = { openExactAlarmSettings(context) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                ) {
+                    Icon(Icons.Default.OpenInNew, contentDescription = null)
+                    Spacer(Modifier.padding(horizontal = 3.dp))
+                    Text("Разрешить точные будильники")
                 }
 
                 OutlinedButton(
