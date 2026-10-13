@@ -1536,6 +1536,8 @@ class MangaBuffAutomation(
     ): String = suspendCancellableCoroutine { continuation ->
 
         var watchdog: Runnable? = null
+        var pendingBalanceSummary: String? = null
+        var dailyRewardFlowResult: String? = null
 
         mainHandler.post {
 
@@ -1628,7 +1630,21 @@ class MangaBuffAutomation(
                     }
 
                     log(account.username, "STAT: BALANCE_COROUTINE_RESUMED")
-                    safeResume(summaryStr)
+                    pendingBalanceSummary = summaryStr
+                    if (dailyRewardFlowResult != null) {
+                        safeResume(summaryStr)
+                    } else {
+                        log(account.username, "STAT: WAITING_FOR_DAILY_REWARD_FLOW")
+                    }
+                }
+
+                @JavascriptInterface
+                fun onDailyRewardFlowDone(result: String) {
+                    if (resumed) return
+                    dailyRewardFlowResult = result
+                    log(account.username, "DAILY_REWARD: FLOW_DONE result=$result")
+                    val summary = pendingBalanceSummary
+                    if (summary != null) safeResume(summary)
                 }
 
                 @JavascriptInterface
@@ -1809,7 +1825,127 @@ class MangaBuffAutomation(
                         })();
                     """.trimIndent()
 
+                    val dailyRewardScript = """
+                        (function() {
+                            var finished = false;
+                            var startedAt = Date.now();
+                            var maxWaitMs = 8000;
+
+                            function textOf(el) {
+                                return el ? String(el.innerText || el.textContent || '')
+                                    .replace(/\\s+/g, ' ').trim() : '';
+                            }
+
+                            function finish(result) {
+                                if (finished) return;
+                                finished = true;
+                                try {
+                                    AndroidBalanceBridge.onDailyRewardFlowDone(result);
+                                } catch (e) {}
+                            }
+
+                            function verifyClaim(day, clickedAt) {
+                                var item = document.querySelector(
+                                    '.daily-rewards-item[data-day="' + day + '"]'
+                                );
+                                var exp = item ? item.querySelector('.daily-rewards-item-exp') : null;
+                                var label = textOf(exp);
+                                var stillClaimable = !!exp &&
+                                    exp.classList.contains('daily-rewards-item-exp--active') &&
+                                    /забрать/i.test(label);
+
+                                if (!stillClaimable) {
+                                    AndroidBalanceBridge.onBalanceDiag(
+                                        'DAILY_REWARD: CLAIM_STATE_CHANGED day=' + day +
+                                        ' label=' + label
+                                    );
+                                    finish('CLAIM_STATE_CHANGED day=' + day);
+                                    return;
+                                }
+
+                                if (Date.now() - clickedAt < 4500) {
+                                    setTimeout(function() { verifyClaim(day, clickedAt); }, 350);
+                                    return;
+                                }
+
+                                AndroidBalanceBridge.onBalanceDiag(
+                                    'DAILY_REWARD: CLAIM_STILL_ACTIVE day=' + day +
+                                    ' label=' + label
+                                );
+                                finish('CLAIM_STILL_ACTIVE day=' + day);
+                            }
+
+                            function inspectCalendar() {
+                                if (finished) return;
+
+                                var list = document.querySelector('.daily-rewards');
+                                var active = list
+                                    ? list.querySelector('.daily-rewards-item-exp--active')
+                                    : null;
+
+                                if (active) {
+                                    var label = textOf(active);
+                                    if (/забрать/i.test(label)) {
+                                        var item = active.closest
+                                            ? active.closest('.daily-rewards-item')
+                                            : active.parentElement;
+                                        var day = item ? (item.getAttribute('data-day') || '?') : '?';
+
+                                        AndroidBalanceBridge.onBalanceDiag(
+                                            'DAILY_REWARD: CLAIMABLE_FOUND day=' + day +
+                                            ' label=' + label
+                                        );
+
+                                        // Click only once per balance-page load. Poll the same day
+                                        // to verify the active "Забрать" state disappeared.
+                                        active.click();
+                                        AndroidBalanceBridge.onBalanceDiag(
+                                            'DAILY_REWARD: CLAIM_CLICKED day=' + day
+                                        );
+                                        var clickedAt = Date.now();
+                                        setTimeout(function() {
+                                            verifyClaim(day, clickedAt);
+                                        }, 350);
+                                        return;
+                                    }
+                                }
+
+                                if (list && Date.now() - startedAt >= 700) {
+                                    finish('NO_CLAIMABLE_REWARD');
+                                    return;
+                                }
+
+                                if (Date.now() - startedAt >= maxWaitMs) {
+                                    finish('CALENDAR_MODAL_TIMEOUT');
+                                    return;
+                                }
+
+                                setTimeout(inspectCalendar, 250);
+                            }
+
+                            try {
+                                var trigger = document.querySelector(
+                                    'button.daily-rewards-btn[data-modal-trigger="daily-rewards-info"]'
+                                );
+                                if (!trigger) {
+                                    AndroidBalanceBridge.onBalanceDiag(
+                                        'DAILY_REWARD: CALENDAR_BUTTON_NOT_FOUND'
+                                    );
+                                    finish('CALENDAR_BUTTON_NOT_FOUND');
+                                    return;
+                                }
+
+                                AndroidBalanceBridge.onBalanceDiag('DAILY_REWARD: CALENDAR_OPEN');
+                                trigger.click();
+                                setTimeout(inspectCalendar, 250);
+                            } catch (e) {
+                                finish('SCRIPT_ERROR ' + (e && e.message ? e.message : String(e)));
+                            }
+                        })();
+                    """.trimIndent()
+
                     view?.evaluateJavascript(script, null)
+                    view?.evaluateJavascript(dailyRewardScript, null)
                     view?.evaluateJavascript("""
                         (function() {
                             try {
