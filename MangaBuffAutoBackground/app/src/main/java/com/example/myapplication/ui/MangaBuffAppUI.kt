@@ -1429,9 +1429,17 @@ fun TasksTab(
                         }
                     }
 
+                    val selectedUpgradeChipColors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF2E7D32),
+                        selectedLabelColor = Color.White,
+                        selectedLeadingIconColor = Color.White,
+                        selectedTrailingIconColor = Color.White
+                    )
+
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         FilterChip(
                             selected = settings.towerUpgradeAssault,
+                            colors = selectedUpgradeChipColors,
                             onClick = { onSaveSettings(settings.copy(towerUpgradeAssault = !settings.towerUpgradeAssault)) },
                             enabled = !isRunning,
                             modifier = Modifier.weight(1f),
@@ -1439,6 +1447,7 @@ fun TasksTab(
                         )
                         FilterChip(
                             selected = settings.towerUpgradeFortitude,
+                            colors = selectedUpgradeChipColors,
                             onClick = { onSaveSettings(settings.copy(towerUpgradeFortitude = !settings.towerUpgradeFortitude)) },
                             enabled = !isRunning,
                             modifier = Modifier.weight(1f),
@@ -1449,6 +1458,7 @@ fun TasksTab(
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         FilterChip(
                             selected = settings.towerUpgradeHunt,
+                            colors = selectedUpgradeChipColors,
                             onClick = { onSaveSettings(settings.copy(towerUpgradeHunt = !settings.towerUpgradeHunt)) },
                             enabled = !isRunning,
                             modifier = Modifier.weight(1f),
@@ -1456,6 +1466,7 @@ fun TasksTab(
                         )
                         FilterChip(
                             selected = settings.towerUpgradeMentorship,
+                            colors = selectedUpgradeChipColors,
                             onClick = { onSaveSettings(settings.copy(towerUpgradeMentorship = !settings.towerUpgradeMentorship)) },
                             enabled = !isRunning,
                             modifier = Modifier.weight(1f),
@@ -1466,6 +1477,7 @@ fun TasksTab(
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         FilterChip(
                             selected = settings.towerUpgradeSupply,
+                            colors = selectedUpgradeChipColors,
                             onClick = { onSaveSettings(settings.copy(towerUpgradeSupply = !settings.towerUpgradeSupply)) },
                             enabled = !isRunning,
                             modifier = Modifier.weight(1f),
