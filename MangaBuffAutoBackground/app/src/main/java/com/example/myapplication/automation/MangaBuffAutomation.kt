@@ -7722,19 +7722,23 @@ class MangaBuffAutomation(
                                         if (readerScrollStarted) return;
                                         readerScrollStarted = true;
 
-                                        // Enable MangaBuff's own autoscroll in addition to our custom
-                                        // scroll and native recovery. This path is useful when Chromium
-                                        // throttles requestAnimationFrame for a hidden WebView.
-                                        AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_SETUP_BEGIN');
-                                        configureMangaBuffAutoscroll(function(ok) {
-                                            if (chapterDone) return;
-                                            AndroidReaderBridge.onLogStep(
-                                                ok
-                                                    ? 'READER: MANGABUFF_AUTOSCROLL_ACTIVE_WITH_BACKGROUND_SCROLL'
-                                                    : 'READER: MANGABUFF_AUTOSCROLL_UNAVAILABLE_CUSTOM_SCROLL_ONLY'
-                                            );
+                                        // The site-level autoscroll is user-toggleable from the Reading task row.
+                                        // The app's own background scroll remains active in either mode.
+                                        if (${settings.readerSiteAutoscroll}) {
+                                            AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_SETUP_BEGIN');
+                                            configureMangaBuffAutoscroll(function(ok) {
+                                                if (chapterDone) return;
+                                                AndroidReaderBridge.onLogStep(
+                                                    ok
+                                                        ? 'READER: MANGABUFF_AUTOSCROLL_ACTIVE_WITH_BACKGROUND_SCROLL'
+                                                        : 'READER: MANGABUFF_AUTOSCROLL_UNAVAILABLE_CUSTOM_SCROLL_ONLY'
+                                                );
+                                                humanScroll();
+                                            });
+                                        } else {
+                                            AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_DISABLED_BY_SETTING');
                                             humanScroll();
-                                        });
+                                        }
                                     }
 
                                     (function scanReaderChapterTotal() {
