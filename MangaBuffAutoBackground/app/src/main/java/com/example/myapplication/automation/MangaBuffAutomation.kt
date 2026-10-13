@@ -3005,6 +3005,160 @@ class MangaBuffAutomation(
                                         return 'click_error=' + (e && e.message ? e.message : String(e));
                                     }
                                 }
+                                async function upgradeTowerHeadquarters() {
+                                    var sequenceKey = runKey + ':hqUpgradeSequenceDone';
+                                    try {
+                                        if (sessionStorage.getItem(sequenceKey) === '1') {
+                                            return 'already_attempted_in_this_page_run';
+                                        }
+                                    } catch (e) {}
+
+                                    var openButton = document.querySelector('button[data-tower-hq-open]');
+                                    if (!openButton || !visible(openButton)) {
+                                        send('HQ_OPEN_BUTTON_NOT_FOUND',
+                                            'Could not find visible button[data-tower-hq-open]');
+                                        return 'hq_open_button_not_found';
+                                    }
+
+                                    try {
+                                        openButton.click();
+                                        send('HQ_OPEN_CLICKED', 'Opening Tower headquarters');
+                                    } catch (e) {
+                                        send('HQ_OPEN_CLICK_ERROR', e && e.message ? e.message : String(e));
+                                        return 'hq_open_click_failed';
+                                    }
+
+                                    function hqWait(ms) {
+                                        return new Promise(function(resolve) { setTimeout(resolve, ms); });
+                                    }
+
+                                    var panel = null;
+                                    for (var readyAttempt = 0; readyAttempt < 24; readyAttempt++) {
+                                        panel = document.querySelector(
+                                            '.mbf-tower-hq__panel.is-active[data-tower-hq-panel="banner"]'
+                                        ) || document.querySelector('.mbf-tower-hq__upgrade-grid');
+                                        if (panel) break;
+                                        await hqWait(250);
+                                    }
+
+                                    if (!panel) {
+                                        send('HQ_PANEL_NOT_FOUND',
+                                            'Upgrade panel did not appear after opening headquarters');
+                                        return 'hq_panel_not_found';
+                                    }
+
+                                    var order = [
+                                        {key: 'assault', name: 'Натиск'},
+                                        {key: 'fortitude', name: 'Оплот'},
+                                        {key: 'hunt', name: 'Знание Хранителей'},
+                                        {key: 'mentorship', name: 'Наставление'},
+                                        {key: 'supply', name: 'Снабжение'}
+                                    ];
+                                    var upgraded = 0;
+                                    var skipped = 0;
+
+                                    function readUpgradeLevel(key) {
+                                        var card = document.querySelector(
+                                            '[data-hq-upgrade-card="' + key + '"]'
+                                        );
+                                        var levelNode = card ? card.querySelector('[data-hq-upgrade-level]') : null;
+                                        var level = levelNode ? parseInt(textOf(levelNode), 10) : NaN;
+                                        return isNaN(level) ? -1 : level;
+                                    }
+
+                                    for (var i = 0; i < order.length; i++) {
+                                        var item = order[i];
+                                        var card = document.querySelector(
+                                            '[data-hq-upgrade-card="' + item.key + '"]'
+                                        );
+                                        var button = card
+                                            ? card.querySelector(
+                                                'button[data-upgrade-mode="max"][data-upgrade-key="' +
+                                                item.key + '"]'
+                                            )
+                                            : null;
+
+                                        if (!card || !button) {
+                                            skipped++;
+                                            send('HQ_UPGRADE_SKIPPED',
+                                                'key=' + item.key + ' name=' + item.name + ' reason=button_not_found');
+                                            continue;
+                                        }
+
+                                        if (button.disabled || button.getAttribute('aria-disabled') === 'true') {
+                                            skipped++;
+                                            send('HQ_UPGRADE_SKIPPED',
+                                                'key=' + item.key + ' name=' + item.name + ' reason=disabled_or_insufficient_essence');
+                                            continue;
+                                        }
+
+                                        if (!visible(button)) {
+                                            skipped++;
+                                            send('HQ_UPGRADE_SKIPPED',
+                                                'key=' + item.key + ' name=' + item.name + ' reason=not_visible');
+                                            continue;
+                                        }
+
+                                        var beforeLevel = readUpgradeLevel(item.key);
+                                        try {
+                                            button.click();
+                                            send('HQ_UPGRADE_CLICKED',
+                                                'key=' + item.key + ' name=' + item.name + ' beforeLevel=' + beforeLevel);
+                                        } catch (e) {
+                                            skipped++;
+                                            send('HQ_UPGRADE_CLICK_ERROR',
+                                                'key=' + item.key + ' error=' + (e && e.message ? e.message : String(e)));
+                                            continue;
+                                        }
+
+                                        var afterLevel = beforeLevel;
+                                        for (var updateAttempt = 0; updateAttempt < 16; updateAttempt++) {
+                                            await hqWait(250);
+                                            afterLevel = readUpgradeLevel(item.key);
+                                            if (afterLevel > beforeLevel) break;
+                                        }
+
+                                        if (afterLevel > beforeLevel) {
+                                            upgraded++;
+                                            send('HQ_UPGRADE_CONFIRMED',
+                                                'key=' + item.key + ' levels=' + beforeLevel + '->' + afterLevel);
+                                        } else {
+                                            skipped++;
+                                            send('HQ_UPGRADE_NOT_CONFIRMED',
+                                                'key=' + item.key + ' beforeLevel=' + beforeLevel +
+                                                ' afterLevel=' + afterLevel);
+                                        }
+                                        await hqWait(300);
+                                    }
+
+                                    try { sessionStorage.setItem(sequenceKey, '1'); } catch (e) {}
+
+                                    // Close the HQ panel before the normal expedition controls run.
+                                    var closeButton = document.querySelector(
+                                        '[data-tower-hq-close], [data-tower-hq-dismiss], .mbf-tower-hq__close,' +
+                                        'button[aria-label*="Закрыть"], button[title*="Закрыть"]'
+                                    );
+                                    if (closeButton && visible(closeButton)) {
+                                        try {
+                                            closeButton.click();
+                                            send('HQ_CLOSE_CLICKED', 'Closed headquarters panel');
+                                        } catch (e) {}
+                                    } else {
+                                        try {
+                                            document.dispatchEvent(new KeyboardEvent('keydown', {
+                                                key: 'Escape', code: 'Escape', bubbles: true
+                                            }));
+                                            document.dispatchEvent(new KeyboardEvent('keyup', {
+                                                key: 'Escape', code: 'Escape', bubbles: true
+                                            }));
+                                            send('HQ_CLOSE_ESCAPE_SENT', 'Sent Escape to close headquarters panel');
+                                        } catch (e) {}
+                                    }
+                                    await hqWait(300);
+                                    return 'upgraded=' + upgraded + ' skipped=' + skipped +
+                                        ' order=assault,fortitude,hunt,mentorship,supply';
+                                }
+
                                 async function run(root, attempt) {
                                     function wait(ms) {
                                         return new Promise(function(resolve) { setTimeout(resolve, ms); });
@@ -3104,6 +3258,9 @@ class MangaBuffAutomation(
                                         finish(false, 'tower_root_not_found');
                                         return;
                                     }
+
+                                    var hqUpgradeSummary = await upgradeTowerHeadquarters();
+                                    send('HQ_UPGRADE_SEQUENCE_DONE', hqUpgradeSummary);
 
                                     var currentRoot = liveRoot();
                                     var state = readAndPublishTimer(currentRoot);
