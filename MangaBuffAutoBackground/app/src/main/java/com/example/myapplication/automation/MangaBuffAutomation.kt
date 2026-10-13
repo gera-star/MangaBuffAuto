@@ -330,7 +330,7 @@ class MangaBuffAutomation(
                             !screenOff &&
                             backgroundFastScrollRunning &&
                             backgroundRemaining > fallbackRemainingThreshold &&
-                            fallbackIdleMs >= 1_000L &&
+                            fallbackIdleMs >= (BACKGROUND_SCROLL_SAMPLE_INTERVAL_MS + 500L) &&
                             tickNow - backgroundLastFallbackStepAt >= 650L
                         ) {
                             backgroundLastFallbackStepAt = tickNow
@@ -562,6 +562,8 @@ class MangaBuffAutomation(
             backgroundObservedUrl = currentUrl
             backgroundLastScrollY = y
             backgroundLastProgressAt = now
+            backgroundLastFallbackStepAt = 0L
+            backgroundLastFallbackLogAt = 0L
             backgroundFastScrollRunning = isRunning
             backgroundScrollHeight = height
             backgroundViewportHeight = viewport
