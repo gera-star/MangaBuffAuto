@@ -189,7 +189,8 @@ class AutomationRuntime(
         account: MangaBuffAccount,
         settings: GlobalSettings,
         taskType: TaskType,
-        expectedProfileName: String
+        expectedProfileName: String,
+        promoCode: String = ""
     ) {
         val runtime = runtimes[account.id] ?: prepareAccount(account)
         onWebViewAssigned(account.id, runtime.webView)
@@ -306,7 +307,13 @@ class AutomationRuntime(
         }
 
         try {
-            engine.runAccountTasks(account, settings, taskType, runtime.webView)
+            engine.runAccountTasks(
+                account = account,
+                settings = settings,
+                taskType = taskType,
+                webView = runtime.webView,
+                promoCode = promoCode
+            )
             runtime.state = AccountState.IDLE
             onLog(LogEntry(username = account.username, component = "ACCOUNT", message = "FINISHED"))
         } catch (e: CancellationException) {
