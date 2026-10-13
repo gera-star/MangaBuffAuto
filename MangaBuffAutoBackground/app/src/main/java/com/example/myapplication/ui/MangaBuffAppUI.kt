@@ -815,6 +815,7 @@ fun AccountCard(
     onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var showDeleteConfirmation by remember(account.id) { mutableStateOf(false) }
     val accountInitials = remember(account.username) {
         account.username
             .trim()
@@ -961,7 +962,7 @@ fun AccountCard(
                         }
 
                         IconButton(
-                            onClick = onDelete,
+                            onClick = { showDeleteConfirmation = true },
                             modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
@@ -1096,6 +1097,36 @@ fun AccountCard(
                 }
             }
         }
+    }
+
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Удалить аккаунт?") },
+            text = {
+                Text(
+                    "Аккаунт «${account.username.ifBlank { "Аккаунт" }}» будет удалён из приложения. Продолжить?"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmation = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Удалить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
     }
 }
 
