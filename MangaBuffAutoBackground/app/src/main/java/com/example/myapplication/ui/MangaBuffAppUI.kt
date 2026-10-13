@@ -1222,8 +1222,8 @@ fun TasksTab(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
         contentPadding = PaddingValues(bottom = 8.dp)
     ) {
         item {
@@ -1232,7 +1232,7 @@ fun TasksTab(
                 shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(9.dp)) {
+                Column(modifier = Modifier.padding(7.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1285,37 +1285,11 @@ fun TasksTab(
                         }
                     }
 
-                    Spacer(Modifier.height(7.dp))
-
-                    if (!isRunning) {
-                        Button(
-                            onClick = { onRunAll(TaskType.ALL) },
-                            enabled = accounts.isNotEmpty(),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier.fillMaxWidth().height(38.dp),
-                            shape = RoundedCornerShape(11.dp)
-                        ) {
-                            Icon(Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(17.dp))
-                            Spacer(Modifier.width(5.dp))
-                            Text("Запустить все", fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(Modifier.height(6.dp))
-                    }
+                    Spacer(Modifier.height(4.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        TaskActionButton("⚔️ Бои", { onRunAll(TaskType.BATTLE) }, actionEnabled, Modifier.weight(1f))
-                        TaskActionButton("🗼 Башня", { onRunAll(TaskType.TOWER) }, actionEnabled, Modifier.weight(1f))
-                        TaskActionButton("📺 Реклама", { onRunAll(TaskType.ADS) }, actionEnabled, Modifier.weight(1f))
-                    }
-
-                    Spacer(Modifier.height(5.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Row(
                             modifier = Modifier.weight(1f),
@@ -1324,8 +1298,8 @@ fun TasksTab(
                         ) {
                             TaskActionButton(
                                 "⛏️ Шахта",
-                                { onRunAll(TaskType.MINE) },
-                                actionEnabled,
+                                {},
+                                false,
                                 Modifier.weight(1f)
                             )
 
@@ -1373,8 +1347,8 @@ fun TasksTab(
                         ) {
                             TaskActionButton(
                                 "📖 Чтение",
-                                { onRunAll(TaskType.READER) },
-                                actionEnabled,
+                                {},
+                                false,
                                 Modifier.weight(1f)
                             )
 
@@ -1433,8 +1407,8 @@ fun TasksTab(
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -1451,7 +1425,7 @@ fun TasksTab(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                "Прокачивать выбранные навыки кнопкой «На все» после отправки отряда",
+                                "Один навык — «На все»; несколько — +1 по очереди",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.outline
                             )
@@ -1504,7 +1478,7 @@ fun TasksTab(
                     }
 
                     Text(
-                        "Порядок: Натиск → Оплот → Знание Хранителей → Наставление → Снабжение. " +
+                        "При нескольких выбранных навыках уровни покупаются по очереди. " +
                             "Отключённые навыки пропускаются.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
@@ -1551,21 +1525,18 @@ fun TasksTab(
                         }
                     }
 
-                    Spacer(Modifier.height(7.dp))
-
-                    CompactNumberField(
-                        battleTarget,
-                        { battleTarget = it },
-                        "⚔️ Бои",
-                        Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(Modifier.height(5.dp))
+                    Spacer(Modifier.height(4.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
+                        CompactNumberField(
+                            battleTarget,
+                            { battleTarget = it },
+                            "⚔️ Бои",
+                            Modifier.weight(1f)
+                        )
                         CompactNumberField(
                             adsCount,
                             { adsCount = it },
@@ -1580,7 +1551,7 @@ fun TasksTab(
                         )
                     }
 
-                    Spacer(Modifier.height(7.dp))
+                    Spacer(Modifier.height(5.dp))
 
                     OutlinedButton(
                         onClick = {
@@ -1593,15 +1564,15 @@ fun TasksTab(
                             )
                         },
                         contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.fillMaxWidth().height(36.dp),
-                        shape = RoundedCornerShape(10.dp)
+                        modifier = Modifier.fillMaxWidth().height(32.dp),
+                        shape = RoundedCornerShape(9.dp)
                     ) {
                         Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Сохранить")
                     }
 
-                    Spacer(Modifier.height(3.dp))
+                    Spacer(Modifier.height(2.dp))
 
                     Text(
                         if (settings.mineAutoExchange) {
@@ -1655,7 +1626,7 @@ private fun CompactNumberField(
         },
         label = { Text(label, maxLines = 1) },
         singleLine = true,
-        modifier = modifier.height(56.dp),
+        modifier = modifier.height(52.dp),
         textStyle = MaterialTheme.typography.bodyMedium,
         shape = RoundedCornerShape(10.dp)
     )
