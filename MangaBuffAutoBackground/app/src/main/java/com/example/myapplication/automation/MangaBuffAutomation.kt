@@ -4488,9 +4488,14 @@ class MangaBuffAutomation(
                                     function poll() {
                                         var modal = document.querySelector('#modal-mine-shop');
                                         var exchange = document.querySelector('#modal-mine-shop .mine-shop__ore-change-btn');
-                                        if (modal && exchange) { done(); return; }
+                                        var style = modal ? window.getComputedStyle(modal) : null;
+                                        var visible = !!modal &&
+                                            modal.getClientRects().length > 0 &&
+                                            style.display !== 'none' &&
+                                            style.visibility !== 'hidden';
+                                        if (visible && exchange) { done(); return; }
                                         if (Date.now() - started >= 10000) {
-                                            AndroidMine.onMineLog('SHOP_NOT_OPEN');
+                                            AndroidMine.onMineLog('SHOP_NOT_OPEN visible=' + visible + ' controls=' + !!exchange);
                                             if (failed) failed(); else AndroidMine.onMineComplete();
                                             return;
                                         }
