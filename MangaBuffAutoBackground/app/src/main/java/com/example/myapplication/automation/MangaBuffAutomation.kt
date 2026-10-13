@@ -7767,7 +7767,7 @@ class MangaBuffAutomation(
 
                                         // The site-level autoscroll is user-toggleable from the Reading task row.
                                         // The app's own background scroll remains active in either mode.
-                                        if (siteAutoscrollEnabled) {
+                                        if (${siteAutoscrollEnabled}) {
                                             AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_SETUP_BEGIN');
                                             configureMangaBuffAutoscroll(function(ok) {
                                                 if (chapterDone) return;
