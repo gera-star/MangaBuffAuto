@@ -4841,7 +4841,8 @@ class MangaBuffAutomation(
                     chaptersReadCount + 1,
                     target,
                     {},
-                    nextChapterUrlToOpen
+                    nextChapterUrlToOpen,
+                    siteAutoscrollEnabled = settings.readerSiteAutoscroll
                 )
             ) {
                 is ReaderResult.ChapterRead -> {
@@ -5029,7 +5030,8 @@ class MangaBuffAutomation(
         chapterIndex: Int,
         targetChapters: Int,
         onStepInfo: (String) -> Unit,
-        startUrl: String = ""
+        startUrl: String = "",
+        siteAutoscrollEnabled: Boolean = true
     ): ReaderResult = suspendCancellableCoroutine { continuation ->
 
         var resumed = false
@@ -7724,7 +7726,7 @@ class MangaBuffAutomation(
 
                                         // The site-level autoscroll is user-toggleable from the Reading task row.
                                         // The app's own background scroll remains active in either mode.
-                                        if (true) {
+                                        if (siteAutoscrollEnabled) {
                                             AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_SETUP_BEGIN');
                                             configureMangaBuffAutoscroll(function(ok) {
                                                 if (chapterDone) return;
