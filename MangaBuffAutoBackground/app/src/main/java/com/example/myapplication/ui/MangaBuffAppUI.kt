@@ -47,6 +47,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.delay
 
 private const val SUPPORT_PAYMENT_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019df8ad-96b5-7cd8-82aa-e64b36e96b93"
 private const val SUPPORT_RECIPIENT = "Алексей Г."
@@ -1039,7 +1040,7 @@ fun AccountCard(
                     TaskSwitchRow("🃏 Бои", "${dailyBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.towerEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, b)
                     }
-                    TaskSwitchRow("🗼 Башня Разлома", "Награды и экспедиции", account.towerEnabled) { tower ->
+                    TaskSwitchRow("🗼 Башня Разлома", towerRemainingLabel(account), account.towerEnabled) { tower ->
                         onUpdateTasks(account.readerEnabled, tower, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("📺 Просмотр рекламы", "${dailyAds}/3", account.advEnabled) { a ->
@@ -1096,6 +1097,31 @@ fun AccountCard(
             }
         }
     }
+}
+
+@Composable
+private fun towerRemainingLabel(account: MangaBuffAccount): String {
+    val endsAtMillis = account.towerExpeditionEndsAtMillis
+    var nowMillis by remember(account.id, endsAtMillis) { mutableStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(account.id, endsAtMillis) {
+        if (endsAtMillis <= 0L) return@LaunchedEffect
+        while (System.currentTimeMillis() < endsAtMillis) {
+            nowMillis = System.currentTimeMillis()
+            delay(1_000L)
+        }
+        nowMillis = System.currentTimeMillis()
+    }
+
+    if (!account.towerExpeditionStateKnown) return "Время появится после проверки"
+    if (endsAtMillis <= 0L) return "Нет активной экспедиции"
+
+    val remaining = ((endsAtMillis - nowMillis).coerceAtLeast(0L) / 1_000L)
+    if (remaining <= 0L) return "Время вышло · проверь награды"
+    val hours = remaining / 3_600L
+    val minutes = (remaining % 3_600L) / 60L
+    val seconds = remaining % 60L
+    return "Осталось %02d:%02d:%02d".format(hours, minutes, seconds)
 }
 
 @Composable
