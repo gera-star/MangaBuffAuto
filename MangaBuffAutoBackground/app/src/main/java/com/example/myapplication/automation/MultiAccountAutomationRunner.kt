@@ -18,7 +18,8 @@ class MultiAccountAutomationRunner(
     onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
-    onAccountRecoveryNeeded: (accountId: String) -> Unit = {}
+    onAccountRecoveryNeeded: (accountId: String) -> Unit = {},
+    onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> }
 ) {
     private val runtime = AutomationRuntime(
         context,
@@ -30,7 +31,8 @@ class MultiAccountAutomationRunner(
         onTowerExpeditionEndsAtUpdate,
         onWebViewAssigned,
         onWebViewCleared,
-        onAccountRecoveryNeeded
+        onAccountRecoveryNeeded,
+        onMineBalanceUpdate
     )
     suspend fun runForAccount(
         account: MangaBuffAccount,
