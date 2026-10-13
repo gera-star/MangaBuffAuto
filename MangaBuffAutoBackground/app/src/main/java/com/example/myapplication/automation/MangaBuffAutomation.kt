@@ -2960,11 +2960,13 @@ class MangaBuffAutomation(
         val runToken = UUID.randomUUID().toString().replace("-", "")
         val completed = java.util.concurrent.atomic.AtomicBoolean(false)
         var watchdog: Runnable? = null
+        var scriptRecovery: Runnable? = null
 
         fun finish(success: Boolean, detail: String) {
             if (!completed.compareAndSet(false, true)) return
             mainHandler.post {
                 watchdog?.let { mainHandler.removeCallbacks(it) }
+                scriptRecovery?.let { mainHandler.removeCallbacks(it) }
                 log(account.username, "TOWER: TASK_RESULT success=$success detail=$detail", !success)
                 updateStatus(
                     account,
@@ -2981,6 +2983,7 @@ class MangaBuffAutomation(
         continuation.invokeOnCancellation {
             mainHandler.post {
                 watchdog?.let { mainHandler.removeCallbacks(it) }
+                scriptRecovery?.let { mainHandler.removeCallbacks(it) }
                 try { webView.removeJavascriptInterface("AndroidTowerBridge") } catch (_: Exception) {}
             }
         }
@@ -3022,17 +3025,7 @@ class MangaBuffAutomation(
             try {
                 webView.removeJavascriptInterface("AndroidTowerBridge")
                 webView.addJavascriptInterface(TowerBridge(), "AndroidTowerBridge")
-                webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        if (url == null) return
-                        val uri = try { Uri.parse(url) } catch (_: Exception) { null }
-                        if (uri?.host == "mangabuff.ru" && uri.path.orEmpty().startsWith("/login")) {
-                            finish(false, "login_required")
-                            return
-                        }
-                        if (uri?.host != "mangabuff.ru" || !uri.path.orEmpty().startsWith("/tower")) return
-
-                        val script = """
+                val towerScript = """
                             (function() {
                                 var runKey = 'mb_tower_$runToken';
                                 if (window.__mbTowerPassActive === runKey) return;
@@ -3738,7 +3731,19 @@ class MangaBuffAutomation(
                                 });
                             })();
                         """.trimIndent()
-                        view?.evaluateJavascript(script, null)
+
+                webView.webViewClient = object : AutomationWebViewClient(account.username, webView) {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        if (url == null) return
+                        log(account.username, "TOWER: PAGE_FINISHED url=$url")
+                        val uri = try { Uri.parse(url) } catch (_: Exception) { null }
+                        if (uri?.host == "mangabuff.ru" && uri.path.orEmpty().startsWith("/login")) {
+                            finish(false, "login_required")
+                            return
+                        }
+                        if (uri?.host != "mangabuff.ru" || !uri.path.orEmpty().startsWith("/tower")) return
+
+                        view?.evaluateJavascript(towerScript, null)
                     }
                 }
                 watchdog = Runnable { finish(false, "tower_page_timeout") }
@@ -3746,6 +3751,40 @@ class MangaBuffAutomation(
                 log(account.username, "TOWER: OPEN url=https://mangabuff.ru/tower")
                 updateStatus(account, "🗼 Башня Разлома: проверка состояния…", true, "Башня Разлома", 0.05f)
                 webView.loadUrl("https://mangabuff.ru/tower")
+                scriptRecovery = object : Runnable {
+                    private var attempt = 0
+                    override fun run() {
+                        if (completed.get() || attempt >= 12) return
+                        attempt++
+                        val currentUrl = webView.url.orEmpty()
+                        val currentUri = try { Uri.parse(currentUrl) } catch (_: Exception) { null }
+                        if (currentUri?.host != "mangabuff.ru" || !currentUri.path.orEmpty().startsWith("/tower")) {
+                            mainHandler.postDelayed(this, 2500L)
+                            return
+                        }
+                        val markerCheck = "(function(){return window.__mbTowerPassActive === 'mb_tower_$runToken' ? 'RUNNING' : 'MISSING';})()"
+                        try {
+                            webView.evaluateJavascript(markerCheck) { raw ->
+                                if (completed.get()) return@evaluateJavascript
+                                if (raw.orEmpty().contains("RUNNING")) {
+                                    log(account.username, "TOWER: SCRIPT_RECOVERY_NOT_NEEDED attempt=$attempt")
+                                    return@evaluateJavascript
+                                }
+                                log(account.username, "TOWER: SCRIPT_RECOVERY_INJECT attempt=$attempt url=\${currentUrl.take(140)}", true)
+                                try {
+                                    webView.evaluateJavascript(towerScript, null)
+                                } catch (e: Exception) {
+                                    log(account.username, "TOWER: SCRIPT_RECOVERY_ERROR error=\${e.message}", true)
+                                }
+                                if (attempt < 12 && !completed.get()) mainHandler.postDelayed(this, 2500L)
+                            }
+                        } catch (e: Exception) {
+                            log(account.username, "TOWER: SCRIPT_RECOVERY_CHECK_ERROR error=\${e.message}", true)
+                            if (attempt < 12 && !completed.get()) mainHandler.postDelayed(this, 2500L)
+                        }
+                    }
+                }
+                mainHandler.postDelayed(scriptRecovery!!, 6000L)
             } catch (e: Exception) {
                 finish(false, "startup_error=" + (e.message ?: "unknown"))
             }
