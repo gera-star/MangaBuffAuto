@@ -118,5 +118,6 @@ data class GlobalSettings(
     val readerChapters: Int = 10,
     val commentCount: Int = 3,
     val battleTargetCount: Int = 20,
-    val keepScreenOn: Boolean = false
+    val keepScreenOn: Boolean = false,
+    val readerSiteAutoscroll: Boolean = true
 )
