@@ -16,7 +16,8 @@ class TowerCycleRescheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         when (intent?.action) {
             Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_MY_PACKAGE_REPLACED -> reschedule(context)
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            ACTION_EXACT_ALARM_PERMISSION_CHANGED -> reschedule(context)
             else -> return
         }
     }
@@ -59,5 +60,7 @@ class TowerCycleRescheduleReceiver : BroadcastReceiver() {
         private const val TAG = "TowerCycleReschedule"
         private const val PREFS_RUNTIME = "mangabuff_runtime"
         private const val KEY_TOWER_CYCLE_ENDS = "tower_cycle_ends"
+        private const val ACTION_EXACT_ALARM_PERMISSION_CHANGED =
+            "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED"
     }
 }
