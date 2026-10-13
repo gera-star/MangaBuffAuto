@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.graphics.Color
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -27,6 +28,55 @@ class ProfileWebViewStore(
     private val activeWebViews = mutableMapOf<String, WebView>()
     private val attachDeferreds = mutableMapOf<String, CompletableDeferred<Unit>>()
     private val webViewRunIds = mutableMapOf<String, String>()
+
+    /**
+     * A WebView used by the foreground service may intentionally have no parent:
+     * MainActivity only mounts one account's WebView for optional debugging.
+     * Keep the detached WebView measured so Chromium does not fall back to a
+     * 0x0/one-pixel layout viewport while JavaScript continues in the background.
+     *
+     * Must be called on the main thread, just like all WebView view operations.
+     */
+    private fun ensureHeadlessViewport(
+        accountId: String,
+        webView: WebView,
+        reason: String
+    ) {
+        if (webView.isAttachedToWindow) return
+
+        val metrics = context.resources.displayMetrics
+        val width = metrics.widthPixels.coerceAtLeast(1)
+        val height = metrics.heightPixels.coerceAtLeast(1)
+
+        try {
+            webView.layoutParams = ViewGroup.LayoutParams(width, height)
+            webView.measure(
+                View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
+            )
+            webView.layout(0, 0, width, height)
+
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "WEBVIEW",
+                    message = "HEADLESS_VIEWPORT_READY reason=$reason " +
+                        "size=${webView.width}x${webView.height} " +
+                        "measured=${webView.measuredWidth}x${webView.measuredHeight} " +
+                        "attached=${webView.isAttachedToWindow}"
+                )
+            )
+        } catch (e: Exception) {
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "WEBVIEW",
+                    message = "HEADLESS_VIEWPORT_ERROR reason=$reason error=${e.message}",
+                    isError = true
+                )
+            )
+        }
+    }
 
     @Synchronized
     fun getOrCreateWebView(accountId: String, cookiesJson: String = ""): Pair<String, WebView> {
@@ -76,6 +126,8 @@ class ProfileWebViewStore(
                 )
             }
         }
+
+        ensureHeadlessViewport(accountId, webView, "INITIALIZE")
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -147,7 +199,12 @@ class ProfileWebViewStore(
                     deferred.complete(Unit)
                 }
             }
-            override fun onViewDetachedFromWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) {
+                // Activity/Compose can detach the live WebView when the screen locks
+                // or when another account is selected in the debug viewer.
+                // Re-measure immediately so background DOM scrolling keeps a viewport.
+                ensureHeadlessViewport(accountId, webView, "DETACHED")
+            }
         })
 
         activeWebViews[accountId] = webView
