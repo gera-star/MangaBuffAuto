@@ -2497,9 +2497,98 @@ class MangaBuffAutomation(
                                         .some(function(el) { return visible(el) && /резонанс|resonance/i.test(textOf(el)); });
                                 }
                                 async function run(root, attempt) {
+                                    function wait(ms) {
+                                        return new Promise(function(resolve) { setTimeout(resolve, ms); });
+                                    }
+                                    function liveRoot() {
+                                        return document.querySelector('[data-tower-root]') || root;
+                                    }
+                                    function findClaimButton() {
+                                        var button = document.querySelector('[data-tower-claim]');
+                                        if (button && visible(button)) return button;
+                                        return action(document, /забрать\s+(награды|награду)|получить\s+награды|claim\s+reward/i);
+                                    }
+                                    function findStartButton(currentRoot) {
+                                        return action(currentRoot, /отправить\s+отряд|начать\s+экспедицию|отправить\s+в\s+экспедицию|запустить\s+экспедицию|start\s+expedition|send\s+squad/i);
+                                    }
+                                    function findAcceptButton(currentRoot) {
+                                        if (resonanceOpen(document) || resonanceOpen(currentRoot)) return null;
+                                        var overlays = Array.from(document.querySelectorAll(
+                                            'dialog,[role="dialog"],[aria-modal="true"],.modal,.modal-dialog,[class*="modal"],[class*="dialog"],[class*="confirm"]'
+                                        )).filter(visible);
+                                        for (var i = overlays.length - 1; i >= 0; i--) {
+                                            var overlayText = textOf(overlays[i]);
+                                            if (/резонанс|resonance/i.test(overlayText)) continue;
+                                            var button = action(
+                                                overlays[i],
+                                                /^(принять|подтвердить|подтверждаю|да,?\s*отправить|отправить\s+экспедицию)$/i
+                                            );
+                                            if (button) return button;
+                                        }
+                                        // Some Tower confirmations are rendered without dialog semantics.
+                                        return action(currentRoot, /^принять$/i) || action(document, /^принять$/i);
+                                    }
+                                    var lastTimerSignature = '';
+                                    function readAndPublishTimer(currentRoot) {
+                                        var state = expeditionState(currentRoot);
+                                        var signature = [
+                                            state.active ? 1 : 0,
+                                            state.complete ? 1 : 0,
+                                            state.remainingSeconds
+                                        ].join(':');
+                                        if (signature !== lastTimerSignature) {
+                                            lastTimerSignature = signature;
+                                            try {
+                                                AndroidTowerBridge.onTowerTimerState(
+                                                    state.remainingSeconds,
+                                                    state.active,
+                                                    state.complete
+                                                );
+                                            } catch (timerError) {
+                                                send('TIMER_BRIDGE_ERROR', timerError && timerError.message ? timerError.message : String(timerError));
+                                            }
+                                        }
+                                        return state;
+                                    }
+                                    async function claimRewards(currentRoot) {
+                                        var button = findClaimButton();
+                                        if (!button) return 'none';
+                                        var state = readAndPublishTimer(currentRoot);
+                                        if (state.active && !state.complete && state.remainingSeconds > 0) {
+                                            return 'active';
+                                        }
+                                        var claimKey = runKey + ':claimClicked';
+                                        if (sessionStorage.getItem(claimKey) !== '1') {
+                                            sessionStorage.setItem(claimKey, '1');
+                                            send('CLAIM_CLICKED', 'Visible reward button found; invoking the site UI handler');
+                                            try {
+                                                button.click();
+                                            } catch (e) {
+                                                send('CLAIM_CLICK_ERROR', e && e.message ? e.message : String(e));
+                                                return 'failed';
+                                            }
+                                        } else {
+                                            send('CLAIM_CLICKED_PREVIOUSLY', 'Not clicking reward button twice in the same run');
+                                        }
+                                        for (var claimAttempt = 0; claimAttempt < 24; claimAttempt++) {
+                                            await wait(350);
+                                            currentRoot = liveRoot();
+                                            state = readAndPublishTimer(currentRoot);
+                                            var currentButton = findClaimButton();
+                                            if (!currentButton || (state.active && !state.complete && state.remainingSeconds > 0)) {
+                                                send('CLAIM_CONFIRMED', 'Reward button disappeared or Tower moved to an active expedition state');
+                                                return 'claimed';
+                                            }
+                                        }
+                                        send('CLAIM_NOT_CONFIRMED', 'Reward button remains visible after click');
+                                        return 'failed';
+                                    }
+
                                     if (!root) {
                                         if (attempt < 20) {
-                                            setTimeout(function() { run(document.querySelector('[data-tower-root]'), attempt + 1); }, 500);
+                                            setTimeout(function() {
+                                                run(document.querySelector('[data-tower-root]'), attempt + 1);
+                                            }, 500);
                                             return;
                                         }
                                         send('ROOT_NOT_FOUND', 'No [data-tower-root] after 10 seconds');
@@ -2507,170 +2596,188 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
-                                    var claimUrl = sameOriginUrl(attr(root, ['data-claim-url']));
-                                    var startUrl = sameOriginUrl(attr(root, ['data-start-url']));
-                                    var squadUrl = sameOriginUrl(attr(root, ['data-save-squad-url']));
-                                    var preparationUrl = sameOriginUrl(attr(root, ['data-save-preparation-url','data-preparation-save-url']));
-                                    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
-                                    var csrf = attr(root, ['data-csrf-token']) || (csrfMeta ? (csrfMeta.content || '') : '');
-                                    // Reward modal is outside [data-tower-root] in the live page.
-                                    var claimButton = document.querySelector("[data-tower-claim]");
-                                    if (claimButton && !visible(claimButton)) claimButton = null;
-                                    claimButton = claimButton ||
-                                        action(document, /забрать\s+(награды|награду)|получить\s+награды|claim\s+reward/i);
-                                    var startButton = action(root, /отправить\s+отряд|начать\s+экспедицию|отправить\s+в\s+экспедицию|запустить\s+экспедицию|start\s+expedition|send\s+squad/i);
-                                    var squadButton = action(root, /сохранить\s+отряд|save\s+squad/i);
-                                    var preparationButton = action(root, /сохранить\s+подготовку|сохранить\s+приказ|save\s+preparation/i);
-                                    var stateAtStart = expeditionState(root);
-                                    try {
-                                        AndroidTowerBridge.onTowerTimerState(
-                                            stateAtStart.remainingSeconds,
-                                            stateAtStart.active,
-                                            stateAtStart.complete
-                                        );
-                                    } catch (timerError) {
-                                        send('TIMER_BRIDGE_ERROR', timerError && timerError.message ? timerError.message : String(timerError));
-                                    }
-                                    var didAction = false;
+                                    var currentRoot = liveRoot();
+                                    var state = readAndPublishTimer(currentRoot);
                                     send('EXPEDITION_STATE',
-                                        'active=' + stateAtStart.active +
-                                        ' complete=' + stateAtStart.complete +
-                                        ' remainingSeconds=' + stateAtStart.remainingSeconds +
-                                        ' rootActiveAttr=' + root.getAttribute('data-expedition-active') +
-                                        ' rootCompleteAttr=' + root.getAttribute('data-expedition-complete'));
+                                        'active=' + state.active +
+                                        ' complete=' + state.complete +
+                                        ' remainingSeconds=' + state.remainingSeconds +
+                                        ' rootActiveAttr=' + currentRoot.getAttribute('data-expedition-active') +
+                                        ' rootCompleteAttr=' + currentRoot.getAttribute('data-expedition-complete'));
 
-                                    // Live page uses data-expedition-active="1" and is-expedition-active.
-                                    // Do not save or start another squad while a non-complete expedition runs.
-                                    if (stateAtStart.active && !stateAtStart.complete) {
-                                        finish(true, 'expedition_already_active; remainingSeconds=' + stateAtStart.remainingSeconds);
+                                    // 1) If the timer is running, the squad has already been sent.
+                                    // Never press "Send squad" a second time.
+                                    if (state.active && !state.complete && state.remainingSeconds > 0) {
+                                        send('EXPEDITION_ALREADY_RUNNING', 'Timer is visible; no new squad will be sent');
+                                        finish(true, 'expedition_already_active; remainingSeconds=' + state.remainingSeconds);
                                         return;
                                     }
 
-                                    send('ROOT_READY', 'claim=' + !!claimUrl + ' start=' + !!startUrl +
-                                        ' squad=' + !!squadUrl + ' preparation=' + !!preparationUrl +
-                                        ' csrfAvailable=' + !!csrf + ' selectedCards=' + selectedCards(root));
+                                    // 2) If rewards are ready, click the real visible button and wait for
+                                    // the site to update before deciding whether another expedition can start.
+                                    var claimResult = await claimRewards(currentRoot);
+                                    if (claimResult === 'active') {
+                                        state = readAndPublishTimer(liveRoot());
+                                        finish(true, 'expedition_already_active; remainingSeconds=' + state.remainingSeconds);
+                                        return;
+                                    }
+                                    if (claimResult === 'failed') {
+                                        finish(false, 'claim_not_confirmed');
+                                        return;
+                                    }
 
-                                    if (claimButton && sessionStorage.getItem(runKey + ':claimDone') !== '1' &&
-                                        sessionStorage.getItem(runKey + ':claimAttempted') !== '1') {
-                                        if (claimUrl && csrf) {
-                                            sessionStorage.setItem(runKey + ':claimAttempted', '1');
-                                            try {
-                                                var response = await fetch(claimUrl, {
-                                                    method: 'POST',
-                                                    credentials: 'same-origin',
-                                                    headers: {
-                                                        'Accept': 'application/json',
-                                                        'Content-Type': 'application/json',
-                                                        'X-CSRF-TOKEN': csrf,
-                                                        'X-Requested-With': 'XMLHttpRequest'
-                                                    },
-                                                    body: JSON.stringify({})
-                                                });
-                                                var body = await response.text();
-                                                var accepted = response.ok;
-                                                try {
-                                                    var data = JSON.parse(body);
-                                                    if (data && (data.success === false || data.ok === false || data.status === 'error')) accepted = false;
-                                                } catch (ignored) {}
-                                                if (accepted) {
-                                                    sessionStorage.setItem(runKey + ':claimDone', '1');
-                                                    send('CLAIM_ACCEPTED', 'HTTP=' + response.status + '; reloading Tower state');
-                                                    location.reload();
-                                                    return;
-                                                }
-                                                send('CLAIM_FAILED', 'HTTP=' + response.status + '; ' + body.slice(0, 100));
-                                            } catch (e) {
-                                                send('CLAIM_ERROR', e && e.message ? e.message : String(e));
+                                    // 3) After claiming (or when there were no rewards), wait for the live
+                                    // page to expose the next valid state: timer, reward button, or Send squad.
+                                    var startButton = null;
+                                    for (var stateAttempt = 0; stateAttempt < 24; stateAttempt++) {
+                                        currentRoot = liveRoot();
+                                        state = readAndPublishTimer(currentRoot);
+                                        if (state.active && !state.complete && state.remainingSeconds > 0) {
+                                            send('EXPEDITION_ALREADY_RUNNING', 'Timer appeared while refreshing Tower state');
+                                            finish(true, 'expedition_already_active; remainingSeconds=' + state.remainingSeconds);
+                                            return;
+                                        }
+                                        var newClaimButton = findClaimButton();
+                                        if (newClaimButton) {
+                                            claimResult = await claimRewards(currentRoot);
+                                            if (claimResult === 'failed') {
+                                                finish(false, 'claim_not_confirmed');
+                                                return;
                                             }
-                                        } else {
-                                            // Fallback to the site's own handler only if its live endpoint/token
-                                            // metadata is unavailable; do not build an invented request payload.
-                                            claimButton.click();
-                                            sessionStorage.setItem(runKey + ':claimAttempted', '1');
-                                            send('CLAIM_UI_FALLBACK', 'site request handler invoked because metadata was unavailable');
-                                            didAction = true;
-                                            await new Promise(function(resolve) { setTimeout(resolve, 900); });
+                                            if (claimResult === 'active') {
+                                                state = readAndPublishTimer(liveRoot());
+                                                finish(true, 'expedition_already_active; remainingSeconds=' + state.remainingSeconds);
+                                                return;
+                                            }
                                         }
+                                        startButton = findStartButton(currentRoot);
+                                        if (startButton) break;
+                                        await wait(350);
                                     }
 
-                                    var selectedCount = selectedCards(root);
-                                    if (squadButton && squadUrl && sessionStorage.getItem(runKey + ':squadSaved') !== '1') {
-                                        if (selectedCount >= 4) {
-                                            squadButton.click();
-                                            sessionStorage.setItem(runKey + ':squadSaved', '1');
-                                            send('SQUAD_SAVE_REQUESTED', 'selectedCards=' + selectedCount);
-                                            didAction = true;
-                                            await new Promise(function(resolve) { setTimeout(resolve, 900); });
-                                        } else {
-                                            send('SQUAD_SAVE_SKIPPED', 'Select four awakened cards before saving');
-                                        }
+                                    // Contract for this task: if "Send squad" is absent, do not create a
+                                    // second expedition. The site is either running the timer or is in its
+                                    // post-expedition/reward transition state.
+                                    if (!startButton) {
+                                        currentRoot = liveRoot();
+                                        state = readAndPublishTimer(currentRoot);
+                                        send('START_BUTTON_ABSENT_ASSUME_SENT',
+                                            'No visible Send squad button; avoiding a duplicate expedition; active=' +
+                                            state.active + ' complete=' + state.complete +
+                                            ' remainingSeconds=' + state.remainingSeconds);
+                                        finish(true, state.remainingSeconds > 0
+                                            ? 'expedition_already_active; remainingSeconds=' + state.remainingSeconds
+                                            : 'start_button_absent_existing_expedition_state');
+                                        return;
                                     }
 
-                                    if (preparationButton && preparationUrl &&
-                                        sessionStorage.getItem(runKey + ':preparationSaved') !== '1') {
-                                        preparationButton.click();
-                                        sessionStorage.setItem(runKey + ':preparationSaved', '1');
-                                        send('PREPARATION_SAVE_REQUESTED', 'site request handler invoked');
-                                        didAction = true;
-                                        await new Promise(function(resolve) { setTimeout(resolve, 900); });
-                                    }
-
-                                    if (resonanceOpen(root)) {
-                                        send('RESONANCE_DECISION_REQUIRED', 'No cost-bearing offer selected automatically');
+                                    if (resonanceOpen(document) || resonanceOpen(currentRoot)) {
+                                        send('RESONANCE_DECISION_REQUIRED', 'Review the resonance offer manually; no cost-bearing choice was selected');
                                         finish(false, 'resonance_decision_required');
                                         return;
                                     }
 
-                                    if (startButton && sessionStorage.getItem(runKey + ':startRequested') !== '1') {
-                                        if (selectedCount < 4) {
-                                            send('START_SKIPPED', 'Fewer than four selected cards detected');
-                                        } else {
+                                    // 4) Send the squad using the site's own button handler.
+                                    // If this run survived a page reload, do not repeat the same click.
+                                    var startKey = runKey + ':startClicked';
+                                    if (sessionStorage.getItem(startKey) !== '1') {
+                                        sessionStorage.setItem(startKey, '1');
+                                        send('START_CLICKED', 'Clicking visible Send squad button');
+                                        try {
                                             startButton.click();
-                                            sessionStorage.setItem(runKey + ':startRequested', '1');
-                                            send('START_REQUESTED', 'site request handler invoked');
-                                            didAction = true;
-                                            await new Promise(function(resolve) { setTimeout(resolve, 1200); });
-                                            var liveRoot = document.querySelector('[data-tower-root]') || root;
-                                            if (resonanceOpen(liveRoot) || resonanceOpen(document)) {
-                                                send('RESONANCE_DECISION_REQUIRED', 'Review the offer manually; no paid choice was selected');
-                                                finish(false, 'resonance_decision_required');
-                                                return;
-                                            }
-                                            var confirmedActive = false;
-                                            for (var verifyAttempt = 0; verifyAttempt < 5; verifyAttempt++) {
-                                                liveRoot = document.querySelector('[data-tower-root]') || root;
-                                                var verifyState = expeditionState(liveRoot);
-                                                if (verifyState.active && !verifyState.complete) {
-                                                    confirmedActive = true;
-                                                    break;
-                                                }
-                                                if (/отряд\s+(уже\s+)?в\s+пути|экспедиция\s+отправлена|верн[её]тся\s+через/i.test(textOf(document.body))) {
-                                                    confirmedActive = true;
-                                                    break;
-                                                }
-                                                await new Promise(function(resolve) { setTimeout(resolve, 700); });
-                                            }
-                                            if (!confirmedActive) {
-                                                send('START_NOT_CONFIRMED', 'Site did not confirm an active expedition after start request');
-                                                finish(false, 'start_not_confirmed');
-                                                return;
-                                            }
-                                            send('START_CONFIRMED', 'Live page confirms an active expedition');
+                                        } catch (e) {
+                                            send('START_CLICK_ERROR', e && e.message ? e.message : String(e));
+                                            finish(false, 'start_click_failed');
+                                            return;
                                         }
-                                    } else if (!startButton) {
-                                        send('START_NOT_AVAILABLE', 'Configure a squad/preparation on /tower');
+                                    } else {
+                                        send('START_CLICKED_PREVIOUSLY', 'Waiting for the result of the previous click; will not click twice');
                                     }
 
-                                    var finalRoot = document.querySelector('[data-tower-root]') || root;
-                                    var finalState = expeditionState(finalRoot);
-                                    var active = finalState.active ||
-                                        /отряд\s+(уже\s+)?в\s+пути|экспедиция\s+отправлена|верн[её]тся\s+через/i.test(textOf(document.body));
-                                    send('STATE_CHECK', 'expeditionActive=' + active +
-                                        ' complete=' + finalState.complete +
-                                        ' claimButton=' + !!claimButton + ' startButton=' + !!startButton);
-                                    finish(active, active
-                                        ? 'expedition_confirmed_active'
-                                        : 'expedition_not_confirmed; inspect squad, preparation, or reward state');
+                                    // 5) The site may show a confirmation dialog after Send squad.
+                                    // Click its "Принять" button, but never accept a resonance/purchase dialog.
+                                    var acceptButton = null;
+                                    for (var acceptAttempt = 0; acceptAttempt < 36; acceptAttempt++) {
+                                        await wait(300);
+                                        currentRoot = liveRoot();
+                                        state = readAndPublishTimer(currentRoot);
+                                        if (resonanceOpen(document) || resonanceOpen(currentRoot)) {
+                                            send('RESONANCE_DECISION_REQUIRED', 'Manual confirmation required; no paid selection was made');
+                                            finish(false, 'resonance_decision_required');
+                                            return;
+                                        }
+                                        if (state.active && !state.complete && state.remainingSeconds > 0) {
+                                            send('START_CONFIRMED', 'Timer became visible after Send squad');
+                                            finish(true, 'expedition_started; remainingSeconds=' + state.remainingSeconds);
+                                            return;
+                                        }
+                                        acceptButton = findAcceptButton(currentRoot);
+                                        if (acceptButton) {
+                                            var acceptKey = runKey + ':acceptClicked';
+                                            if (sessionStorage.getItem(acceptKey) !== '1') {
+                                                sessionStorage.setItem(acceptKey, '1');
+                                                send('ACCEPT_CLICKED', 'Clicking the Tower confirmation button');
+                                                try {
+                                                    acceptButton.click();
+                                                } catch (e) {
+                                                    send('ACCEPT_CLICK_ERROR', e && e.message ? e.message : String(e));
+                                                    finish(false, 'accept_click_failed');
+                                                    return;
+                                                }
+                                            } else {
+                                                send('ACCEPT_CLICKED_PREVIOUSLY', 'Confirmation already clicked in this run');
+                                            }
+                                            break;
+                                        }
+                                    }
+
+                                    if (!acceptButton) {
+                                        send('ACCEPT_BUTTON_NOT_FOUND', 'No visible confirmation button; checking whether the timer started directly');
+                                    }
+
+                                    // 6) Wait until the site shows an active expedition timer or a claimable reward.
+                                    for (var verifyAttempt = 0; verifyAttempt < 45; verifyAttempt++) {
+                                        await wait(350);
+                                        currentRoot = liveRoot();
+                                        state = readAndPublishTimer(currentRoot);
+                                        if (resonanceOpen(document) || resonanceOpen(currentRoot)) {
+                                            send('RESONANCE_DECISION_REQUIRED', 'Manual confirmation required; no paid selection was made');
+                                            finish(false, 'resonance_decision_required');
+                                            return;
+                                        }
+                                        if (state.active && !state.complete && state.remainingSeconds > 0) {
+                                            send('START_CONFIRMED', 'Live Tower DOM exposes the active timer');
+                                            finish(true, 'expedition_started; remainingSeconds=' + state.remainingSeconds);
+                                            return;
+                                        }
+                                        if (findClaimButton() && !(state.active && state.remainingSeconds > 0)) {
+                                            claimResult = await claimRewards(currentRoot);
+                                            if (claimResult === 'claimed') {
+                                                send('CLAIM_AFTER_START', 'Reward was claimed; refreshing Tower state');
+                                                currentRoot = liveRoot();
+                                                state = readAndPublishTimer(currentRoot);
+                                            } else if (claimResult === 'failed') {
+                                                finish(false, 'claim_not_confirmed_after_start');
+                                                return;
+                                            }
+                                        }
+                                    }
+
+                                    currentRoot = liveRoot();
+                                    state = readAndPublishTimer(currentRoot);
+                                    startButton = findStartButton(currentRoot);
+                                    if (!startButton) {
+                                        send('START_BUTTON_ABSENT_ASSUME_SENT',
+                                            'Send squad button disappeared after confirmation; no duplicate click will be attempted');
+                                        finish(true, state.remainingSeconds > 0
+                                            ? 'expedition_started; remainingSeconds=' + state.remainingSeconds
+                                            : 'send_and_accept_processed; waiting_for_tower_timer_render');
+                                        return;
+                                    }
+
+                                    send('START_NOT_CONFIRMED',
+                                        'Send squad remains available and the site did not expose an active timer');
+                                    finish(false, 'start_not_confirmed');
                                 }
                                 run(document.querySelector('[data-tower-root]'), 0).catch(function(e) {
                                     send('TASK_ERROR', e && e.message ? e.message : String(e));
