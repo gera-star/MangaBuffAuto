@@ -1009,8 +1009,11 @@ fun AccountCard(
                     val dailyBattles = if (isToday) account.dailyBattles else 0
                     val dailyBattleAttempts = if (isToday) account.dailyBattleAttempts else 0
                     val dailyAds = if (isToday) account.dailyAds else 0
-                    val dailyMineOre = if (isToday) account.dailyMineOre else 0
-                    val dailyMineDiamonds = if (isToday) account.dailyMineDiamonds else 0
+                    val mineOreBalanceLabel = if (account.mineOreBalanceKnown) {
+                        "${account.mineOreBalance} 🪨 на аккаунте"
+                    } else {
+                        "🪨 баланс не обновлён"
+                    }
                     val dailyReaderChapters = if (isToday) account.dailyReaderChapters else 0
                     val dailyComments = if (isToday) account.dailyComments else 0
 
@@ -1047,7 +1050,7 @@ fun AccountCard(
                     TaskSwitchRow("📺 Просмотр рекламы", "${dailyAds}/3", account.advEnabled) { a ->
                         onUpdateTasks(account.readerEnabled, account.towerEnabled, a, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("⛏️ Шахта", "${dailyMineOre} 🪨 → 💎${dailyMineDiamonds}", account.mineEnabled) { m ->
+                    TaskSwitchRow("⛏️ Шахта", mineOreBalanceLabel, account.mineEnabled) { m ->
                         onUpdateTasks(account.readerEnabled, account.towerEnabled, account.advEnabled, m, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("📖 Чтение", "${dailyReaderChapters} глав", account.readerEnabled) { r ->
