@@ -2281,6 +2281,8 @@ class MangaBuffAutomation(
         suspendCancellableCoroutine<Unit> { continuation ->
             val completed = java.util.concurrent.atomic.AtomicBoolean(false)
             var watchdog: Runnable? = null
+            val promoScriptInjected = java.util.concurrent.atomic.AtomicBoolean(false)
+            val promoActivationStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
             fun finish(success: Boolean, detail: String) {
                 if (!completed.compareAndSet(false, true)) return
@@ -2310,6 +2312,9 @@ class MangaBuffAutomation(
                 class PromoBridge {
                     @JavascriptInterface
                     fun onPromoLog(state: String, detail: String) {
+                        if (state == "ACTIVATE_CLICKING" || state == "ACTIVATE_CLICKED") {
+                            promoActivationStarted.set(true)
+                        }
                         val error = state.contains("ERROR", true) ||
                             state.contains("FAIL", true) ||
                             state.contains("REJECTED", true)
@@ -2337,6 +2342,46 @@ class MangaBuffAutomation(
                                 return
                             }
                             if (uri.path.orEmpty().trimEnd('/') != "/promo-code") return
+
+                            if (!promoScriptInjected.compareAndSet(false, true)) {
+                                // A full-page response after Activate must be inspected, not submitted again.
+                                if (promoActivationStarted.get()) {
+                                    val resultOnlyScript = """
+                                        (function() {
+                                            var startedAt = Date.now();
+                                            function readMessage() {
+                                                var nodes = Array.from(document.querySelectorAll(
+                                                    '.promo-page__message,.promo-page__error,.promo-page__success,' +
+                                                    '.promo-code-message,.promo-code-result,[role="alert"],.alert,.toast,.notification'
+                                                ));
+                                                return nodes.map(function(el) {
+                                                    return String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+                                                }).filter(function(t) { return t.length > 0; }).slice(-3).join(' | ');
+                                            }
+                                            function inspect() {
+                                                var message = readMessage();
+                                                var lower = message.toLowerCase();
+                                                if (message && /невер|ист[её]к|уже использ|уже активир|не существует|ошиб|недоступ|не найден|лимит|отказ/i.test(lower)) {
+                                                    AndroidPromoBridge.onPromoFinished(false, 'site_rejected_after_navigation: ' + message);
+                                                    return;
+                                                }
+                                                if (message && /успеш|активирован|примен[её]н|получен|начислен|бонус|промокод принят/i.test(lower)) {
+                                                    AndroidPromoBridge.onPromoFinished(true, 'site_confirmed_after_navigation: ' + message);
+                                                    return;
+                                                }
+                                                if (Date.now() - startedAt >= 6000) {
+                                                    AndroidPromoBridge.onPromoFinished(false, 'activation_navigation_result_unconfirmed');
+                                                    return;
+                                                }
+                                                setTimeout(inspect, 350);
+                                            }
+                                            inspect();
+                                        })();
+                                    """.trimIndent()
+                                    view?.evaluateJavascript(resultOnlyScript, null)
+                                }
+                                return
+                            }
 
                             log(account.username, "PROMO: PAGE_READY url=$url")
                             val codeLiteral = org.json.JSONObject.quote(code)
@@ -2457,6 +2502,7 @@ class MangaBuffAutomation(
                                                     return;
                                                 }
                                                 clickedAt = Date.now();
+                                                send('ACTIVATE_CLICKING', 'Submitting entered promo code');
                                                 button.click();
                                                 send('ACTIVATE_CLICKED', 'Clicked the real site Activate button');
                                                 setTimeout(pollResult, 400);
