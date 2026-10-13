@@ -2516,7 +2516,13 @@ class MangaBuffAutomation(
                                                 send('CLAIM_ERROR', e && e.message ? e.message : String(e));
                                             }
                                         } else {
-                                            send('CLAIM_METADATA_MISSING', 'No live claim URL or CSRF metadata');
+                                            // Fallback to the site's own handler only if its live endpoint/token
+                                            // metadata is unavailable; do not build an invented request payload.
+                                            claimButton.click();
+                                            sessionStorage.setItem(runKey + ':claimAttempted', '1');
+                                            send('CLAIM_UI_FALLBACK', 'site request handler invoked because metadata was unavailable');
+                                            didAction = true;
+                                            await new Promise(function(resolve) { setTimeout(resolve, 900); });
                                         }
                                     }
 
@@ -2527,6 +2533,7 @@ class MangaBuffAutomation(
                                             sessionStorage.setItem(runKey + ':squadSaved', '1');
                                             send('SQUAD_SAVE_REQUESTED', 'selectedCards=' + selectedCount);
                                             didAction = true;
+                                            await new Promise(function(resolve) { setTimeout(resolve, 900); });
                                         } else {
                                             send('SQUAD_SAVE_SKIPPED', 'Select four awakened cards before saving');
                                         }
@@ -2538,6 +2545,7 @@ class MangaBuffAutomation(
                                         sessionStorage.setItem(runKey + ':preparationSaved', '1');
                                         send('PREPARATION_SAVE_REQUESTED', 'site request handler invoked');
                                         didAction = true;
+                                        await new Promise(function(resolve) { setTimeout(resolve, 900); });
                                     }
 
                                     if (resonanceOpen(root)) {
