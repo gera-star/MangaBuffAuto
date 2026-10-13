@@ -1599,12 +1599,13 @@ class MangaBuffAutomation(
         var watchdog: Runnable? = null
         var pendingBalanceSummary: String? = null
         var dailyRewardFlowResult: String? = null
+        // Must outlive the main-thread setup block because cancellation cleanup runs outside it.
+        val dailyRewardAttemptReserved = java.util.concurrent.atomic.AtomicBoolean(false)
 
         mainHandler.post {
 
             var resumed = false
             var dailyRewardScriptInjected = false
-            val dailyRewardAttemptReserved = java.util.concurrent.atomic.AtomicBoolean(false)
 
             fun removeWatchdog() {
                 watchdog?.let {
