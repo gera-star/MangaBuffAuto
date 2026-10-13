@@ -3355,10 +3355,7 @@ class MangaBuffAutomation(
                                         send('HQ_UPGRADE_SKIPPED', 'reason=no_skills_selected');
                                     }
 
-                                        await hqWait(300);
-                                    }
-
-                                    try { sessionStorage.setItem(sequenceKey, '1'); } catch (e) {}                                    try { sessionStorage.setItem(sequenceKey, '1'); } catch (e) {}
+                                    try { sessionStorage.setItem(sequenceKey, '1'); } catch (e) {}
 
                                     // Close the HQ panel before the normal expedition controls run.
                                     var closeButton = document.querySelector(
@@ -3456,9 +3453,8 @@ class MangaBuffAutomation(
                                         var button = findClaimButton();
                                         if (!button) return 'none';
                                         var state = readAndPublishTimer(currentRoot);
-                                        if (state.active && !state.complete && state.remainingSeconds > 0) {
-                                            return 'active';
-                                        }
+                                        // The visible claim button is authoritative. Timer attributes can be stale
+                                        // for a moment after expiry, so never let them suppress this click.
                                         var claimKey = runKey + ':claimClicked';
                                         if (sessionStorage.getItem(claimKey) !== '1') {
                                             sessionStorage.setItem(claimKey, '1');
@@ -3512,7 +3508,8 @@ class MangaBuffAutomation(
 
                                     // 1) If the timer is running, the squad has already been sent.
                                     // Never press "Send squad" a second time.
-                                    if (state.active && !state.complete && state.remainingSeconds > 0) {
+                                    if (state.active && !state.complete && state.remainingSeconds > 0 &&
+                                        !findClaimButton()) {
                                         send('EXPEDITION_ALREADY_RUNNING', 'Timer is visible; no new squad will be sent');
                                         finish(true, 'expedition_already_active; remainingSeconds=' + state.remainingSeconds);
                                         return;
@@ -3537,7 +3534,8 @@ class MangaBuffAutomation(
                                     for (var stateAttempt = 0; stateAttempt < 24; stateAttempt++) {
                                         currentRoot = liveRoot();
                                         state = readAndPublishTimer(currentRoot);
-                                        if (state.active && !state.complete && state.remainingSeconds > 0) {
+                                        if (state.active && !state.complete && state.remainingSeconds > 0 &&
+                                            !findClaimButton()) {
                                             send('EXPEDITION_ALREADY_RUNNING', 'Timer appeared while refreshing Tower state');
                                             finish(true, 'expedition_already_active; remainingSeconds=' + state.remainingSeconds);
                                             return;
@@ -3685,14 +3683,15 @@ class MangaBuffAutomation(
                                             finish(false, 'resonance_accept_failed=' + resonanceResult);
                                             return;
                                         }
-                                        if (state.active && !state.complete && state.remainingSeconds > 0) {
+                                        if (state.active && !state.complete && state.remainingSeconds > 0 &&
+                                            !findClaimButton()) {
                                             send('START_CONFIRMED', 'Live Tower DOM exposes the active timer');
                                             await finishAfterExpeditionStarted(
                                                 'expedition_started; remainingSeconds=' + state.remainingSeconds
                                             );
                                             return;
                                         }
-                                        if (findClaimButton() && !(state.active && state.remainingSeconds > 0)) {
+                                        if (findClaimButton()) {
                                             claimResult = await claimRewards(currentRoot);
                                             if (claimResult === 'claimed') {
                                                 send('CLAIM_AFTER_START', 'Reward was claimed; refreshing Tower state');
