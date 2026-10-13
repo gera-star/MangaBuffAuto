@@ -2521,12 +2521,12 @@ class MangaBuffAutomation(
                                             if (/резонанс|resonance/i.test(overlayText)) continue;
                                             var button = action(
                                                 overlays[i],
-                                                /^(принять|подтвердить|подтверждаю|да,?\s*отправить|отправить\s+экспедицию)$/i
+                                                /^(принять|подтвердить|подтверждаю|да,?\s*отправить|отправить\s+экспедицию)${'$'}/i
                                             );
                                             if (button) return button;
                                         }
                                         // Some Tower confirmations are rendered without dialog semantics.
-                                        return action(currentRoot, /^принять$/i) || action(document, /^принять$/i);
+                                        return action(currentRoot, /^принять${'$'}/i) || action(document, /^принять${'$'}/i);
                                     }
                                     var lastTimerSignature = '';
                                     function readAndPublishTimer(currentRoot) {
