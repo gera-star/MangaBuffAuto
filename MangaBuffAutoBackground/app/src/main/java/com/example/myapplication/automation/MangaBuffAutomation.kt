@@ -244,6 +244,8 @@ class MangaBuffAutomation(
     private var backgroundLastDiagnosticAt = 0L
     private var backgroundObservedUrl: String? = null
     private var backgroundFastScrollRunning = false
+    private var backgroundLastFallbackStepAt = 0L
+    private var backgroundLastFallbackLogAt = 0L
     private var backgroundScrollHeight = 0L
     private var backgroundViewportHeight = 0L
     private var backgroundRemaining = Long.MAX_VALUE
