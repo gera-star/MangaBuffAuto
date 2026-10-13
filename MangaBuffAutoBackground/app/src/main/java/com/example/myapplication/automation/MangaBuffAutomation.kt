@@ -128,7 +128,8 @@ class MangaBuffAutomation(
     ) -> Unit = { _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     private val onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
-    private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
+    private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
+    private val onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> }
 ) {
 
     private open inner class AutomationWebViewClient(
@@ -4436,6 +4437,7 @@ class MangaBuffAutomation(
             class MineBridge {
                 @JavascriptInterface
                 fun onMineProgress(clicks: Int, total: Int, ore: Int) {
+                    if (ore >= 0) onMineBalanceUpdate(account.id, ore)
                     updateStatus(account, "⛏️ Шахта ($clicks/$total) • 🪨 $ore", true, "Шахта",
                         if (total > 0) clicks.toFloat() / total else 1f)
                 }
@@ -4451,6 +4453,7 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun onMineExchange(oreMined: Int, oreExchanged: Int, diamondsReceived: Int, oreRemaining: Int) {
                     addDaily(account) { it.copy(mineExchangeOre = it.mineExchangeOre + oreExchanged, mineDiamonds = it.mineDiamonds + diamondsReceived) }
+                    onMineBalanceUpdate(account.id, oreRemaining)
                     log(account.username, "MINE: EXCHANGE_SUCCESS mined=$oreMined exchanged=$oreExchanged diamonds=+$diamondsReceived remainingOre=$oreRemaining")
                     updateStatus(account, "⛏️ Шахта завершена • 🪨 осталось $oreRemaining • 💎 +$diamondsReceived", true, "Шахта", 1f)
                 }
