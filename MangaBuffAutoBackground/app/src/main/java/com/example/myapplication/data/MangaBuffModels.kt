@@ -27,7 +27,7 @@ data class MangaBuffAccount(
     val csrfToken: String? = "",
     val userAgent: String? = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     val readerEnabled: Boolean = true,
-    val quizEnabled: Boolean = true,
+    val towerEnabled: Boolean = false,
     val advEnabled: Boolean = true,
     val mineEnabled: Boolean = true,
     val commentEnabled: Boolean = true,
@@ -87,7 +87,7 @@ data class MangaBuffAccount(
 enum class TaskType(val title: String) {
     ALL("Все задачи"),
     BATTLE("Карточные бои"),
-    QUIZ("Викторина / Квиз"),
+    TOWER("Башня Разлома"),
     ADS("Просмотр рекламы"),
     MINE("Шахта"),
     READER("Чтение манги"),

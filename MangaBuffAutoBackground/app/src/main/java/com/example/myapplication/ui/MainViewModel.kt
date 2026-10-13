@@ -265,7 +265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateAccountTasks(
         account: MangaBuffAccount,
         reader: Boolean,
-        quiz: Boolean,
+        tower: Boolean,
         adv: Boolean,
         mine: Boolean,
         comment: Boolean,
@@ -275,7 +275,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updated = repository.updateAccount(account.id) {
             it.copy(
                 readerEnabled = reader,
-                quizEnabled = quiz,
+                towerEnabled = tower,
                 advEnabled = adv,
                 mineEnabled = mine,
                 commentEnabled = comment,

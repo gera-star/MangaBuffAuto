@@ -768,7 +768,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun String.toTaskTypeOrNull(): TaskType? =
-        runCatching { TaskType.valueOf(this) }.getOrNull()
+        if (this == "QUIZ") TaskType.TOWER else runCatching { TaskType.valueOf(this) }.getOrNull()
 
     override fun onDestroy() {
         watchdogJob?.cancel()

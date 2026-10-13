@@ -1006,7 +1006,6 @@ fun AccountCard(
                     val isToday = account.dailyStatsDay == today
                     val dailyBattles = if (isToday) account.dailyBattles else 0
                     val dailyBattleAttempts = if (isToday) account.dailyBattleAttempts else 0
-                    val dailyQuiz = if (isToday) account.dailyQuiz else 0
                     val dailyAds = if (isToday) account.dailyAds else 0
                     val dailyMineOre = if (isToday) account.dailyMineOre else 0
                     val dailyMineDiamonds = if (isToday) account.dailyMineDiamonds else 0
@@ -1038,24 +1037,24 @@ fun AccountCard(
                     }
 
                     TaskSwitchRow("🃏 Бои", "${dailyBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, b)
+                        onUpdateTasks(account.readerEnabled, account.towerEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, b)
                     }
-                    TaskSwitchRow("🧠 Квиз", "${dailyQuiz}", account.quizEnabled) { q ->
-                        onUpdateTasks(account.readerEnabled, q, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
+                    TaskSwitchRow("🗼 Башня Разлома", "Награды и экспедиции", account.towerEnabled) { tower ->
+                        onUpdateTasks(account.readerEnabled, tower, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("📺 Просмотр рекламы", "${dailyAds}/3", account.advEnabled) { a ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, a, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
+                        onUpdateTasks(account.readerEnabled, account.towerEnabled, a, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("⛏️ Шахта", "${dailyMineOre} 🪨 → 💎${dailyMineDiamonds}", account.mineEnabled) { m ->
-                        onUpdateTasks(account.readerEnabled, account.quizEnabled, account.advEnabled, m, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
+                        onUpdateTasks(account.readerEnabled, account.towerEnabled, account.advEnabled, m, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("📖 Чтение", "${dailyReaderChapters} глав", account.readerEnabled) { r ->
-                        onUpdateTasks(r, account.quizEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
+                        onUpdateTasks(r, account.towerEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow("💬 Комментарии", "${dailyComments}/13", account.commentEnabled) { c ->
                         onUpdateTasks(
                             account.readerEnabled,
-                            account.quizEnabled,
+                            account.towerEnabled,
                             account.advEnabled,
                             account.mineEnabled,
                             c,
@@ -1076,7 +1075,7 @@ fun AccountCard(
                             onClick = {
                                 onUpdateTasks(
                                     account.readerEnabled,
-                                    account.quizEnabled,
+                                    account.towerEnabled,
                                     account.advEnabled,
                                     account.mineEnabled,
                                     account.commentEnabled,
@@ -1134,7 +1133,7 @@ fun TasksTab(
     onSaveSettings: (GlobalSettings) -> Unit,
     onOpenPromoDialog: () -> Unit
 ) {
-    var quizMax by remember { mutableStateOf(settings.quizMaxClicks.toString()) }
+
     var adsCount by remember { mutableStateOf(settings.adsCount.toString()) }
     var readerChapters by remember { mutableStateOf(settings.readerChapters.toString()) }
     var battleTarget by remember { mutableStateOf(settings.battleTargetCount.toString()) }
@@ -1229,7 +1228,7 @@ fun TasksTab(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         TaskActionButton("⚔️ Бои", { onRunAll(TaskType.BATTLE) }, actionEnabled, Modifier.weight(1f))
-                        TaskActionButton("🧠 Квиз", { onRunAll(TaskType.QUIZ) }, actionEnabled, Modifier.weight(1f))
+                        TaskActionButton("🗼 Башня", { onRunAll(TaskType.TOWER) }, actionEnabled, Modifier.weight(1f))
                         TaskActionButton("📺 Реклама", { onRunAll(TaskType.ADS) }, actionEnabled, Modifier.weight(1f))
                     }
 
@@ -1345,23 +1344,12 @@ fun TasksTab(
 
                     Spacer(Modifier.height(7.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        CompactNumberField(
-                            battleTarget,
-                            { battleTarget = it },
-                            "⚔️ Бои",
-                            Modifier.weight(1f)
-                        )
-                        CompactNumberField(
-                            quizMax,
-                            { quizMax = it },
-                            "🧠 Квиз",
-                            Modifier.weight(1f)
-                        )
-                    }
+                    CompactNumberField(
+                        battleTarget,
+                        { battleTarget = it },
+                        "⚔️ Бои",
+                        Modifier.fillMaxWidth()
+                    )
 
                     Spacer(Modifier.height(5.dp))
 
@@ -1390,7 +1378,6 @@ fun TasksTab(
                             onSaveSettings(
                                 settings.copy(
                                     battleTargetCount = battleTarget.toIntOrNull() ?: settings.battleTargetCount,
-                                    quizMaxClicks = quizMax.toIntOrNull() ?: settings.quizMaxClicks,
                                     adsCount = adsCount.toIntOrNull() ?: settings.adsCount,
                                     readerChapters = readerChapters.toIntOrNull() ?: settings.readerChapters
                                 )

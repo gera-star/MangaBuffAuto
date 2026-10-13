@@ -3,6 +3,8 @@ package com.example.myapplication.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.google.gson.Gson
+import com.google.gson.JsonParser
+import com.google.gson.JsonPrimitive
 import com.google.gson.reflect.TypeToken
 
 class AccountRepository(context: Context) {
@@ -24,10 +26,32 @@ class AccountRepository(context: Context) {
         val json = prefs.getString(KEY_ACCOUNTS, null) ?: return emptyList()
         val type = object : TypeToken<List<MangaBuffAccount>>() {}.type
         return try {
-            val list: List<MangaBuffAccount>? = gson.fromJson(json, type)
+            // Migrate the account's previous quiz setting to the new Tower setting.
+            val root = JsonParser.parseString(json)
+            val normalizedJson = if (root.isJsonArray) {
+                var changed = false
+                root.asJsonArray.forEach { element ->
+                    if (element.isJsonObject) {
+                        val accountJson = element.asJsonObject
+                        if (!accountJson.has("towerEnabled")) {
+                            accountJson.add("towerEnabled", accountJson.get("quizEnabled") ?: JsonPrimitive(false))
+                            changed = true
+                        }
+                        if (accountJson.has("quizEnabled")) {
+                            accountJson.remove("quizEnabled")
+                            changed = true
+                        }
+                    }
+                }
+                if (changed) prefs.edit().putString(KEY_ACCOUNTS, root.toString()).apply()
+                root.toString()
+            } else {
+                json
+            }
+            val list: List<MangaBuffAccount>? = gson.fromJson(normalizedJson, type)
             list?.map { acc ->
                 val rawStatus = acc.getSafeStatusMessage()
-                val cleanStatus = if (acc.isRunning || rawStatus.contains("Инициализация") || rawStatus.contains("Квиз") || rawStatus.contains("Реклама") || rawStatus.contains("Майнинг") || rawStatus.contains("Чтение") || rawStatus.contains("Комментарий")) {
+                val cleanStatus = if (acc.isRunning || rawStatus.contains("Инициализация") || rawStatus.contains("Башня") || rawStatus.contains("Реклама") || rawStatus.contains("Майнинг") || rawStatus.contains("Чтение") || rawStatus.contains("Комментарий")) {
                     "Готов"
                 } else {
                     rawStatus
