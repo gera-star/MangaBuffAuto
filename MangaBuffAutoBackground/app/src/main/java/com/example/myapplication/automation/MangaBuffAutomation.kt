@@ -1196,9 +1196,9 @@ class MangaBuffAutomation(
         }.format(java.util.Date())
 
     /**
-     * The calendar is only opened after all three ad rewards have been recorded for today.
-     * A per-account/day preference prevents repeated modal openings, and an in-flight set
-     * prevents overlapping balance refreshes from clicking the same reward twice.
+     * The daily calendar can be checked after the Mine task (and after other explicitly
+     * allowed balance refreshes). A per-account/day preference prevents repeated modal
+     * openings, and an in-flight set prevents overlapping refreshes from double-clicking.
      */
     private fun reserveDailyCalendarAttempt(account: MangaBuffAccount): Pair<Boolean, String> {
         val statsDay = currentStatsDay()
@@ -1206,9 +1206,6 @@ class MangaBuffAutomation(
             dailyStats.day == statsDay -> dailyStats.ads.coerceAtLeast(0)
             account.dailyStatsDay == statsDay -> account.dailyAds.coerceAtLeast(0)
             else -> 0
-        }
-        if (adsToday < ADS_DAILY_LIMIT) {
-            return false to "SKIPPED_WAITING_FOR_ADS ads=$adsToday/$ADS_DAILY_LIMIT"
         }
 
         val calendarDay = dailyCalendarDate()
@@ -1219,7 +1216,7 @@ class MangaBuffAutomation(
         if (!dailyCalendarAttemptsInFlight.add(account.id)) {
             return false to "SKIPPED_ALREADY_IN_FLIGHT"
         }
-        return true to "RUN day=$calendarDay ads=$adsToday/$ADS_DAILY_LIMIT"
+        return true to "RUN day=$calendarDay ads=$adsToday/$ADS_DAILY_LIMIT trigger=ALLOWED_BALANCE_REFRESH"
     }
 
     private fun completeDailyCalendarAttempt(account: MangaBuffAccount, result: String) {
@@ -2401,6 +2398,10 @@ class MangaBuffAutomation(
                 val start = SystemClock.elapsedRealtime()
                 runMineTask(account, settings, webView)
                 log(account.username, "TASK: MINE_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
+                coroutineContext.ensureActive()
+                log(account.username, "TASK: MINE_CALENDAR_CHECK_START")
+                fetchAndLogBalanceInfo(account, webView, allowDailyCalendar = true)
+                log(account.username, "TASK: MINE_CALENDAR_CHECK_END")
             }
         }
 
