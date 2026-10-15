@@ -10080,7 +10080,9 @@ class MangaBuffAutomation(
                     var result = [];
 
                     nodes.forEach(function(node) {
-                        if (result.length >= 9) return;
+                        // Collect enough distinct decks to support the daily cap of 13
+                        // across multiple runs; sending still remains capped at 8/run.
+                        if (result.length >= 30) return;
 
                         var href = node.getAttribute('href') || '';
                         var url = new URL(href, location.href).href
