@@ -430,6 +430,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runTaskForAccount(account: MangaBuffAccount, taskType: TaskType) {
+        if (account.isOffline) {
+            addLog(
+                LogEntry(
+                    username = account.username,
+                    component = "OFFLINE",
+                    message = "START_REJECTED account is OFFLINE"
+                )
+            )
+            return
+        }
         val accepted = MangaBuffForegroundService.startAccount(getApplication(), account.id, taskType)
         if (!accepted) {
             addLog(
@@ -465,7 +475,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runTaskForAllAccounts(taskType: TaskType) {
-        val requestedCount = _accounts.value.size
+        val eligibleAccountIds = _accounts.value.filterNot { it.isOffline }.map { it.id }.toSet()
+        val requestedCount = eligibleAccountIds.size
+        if (requestedCount == 0) {
+            addLog(LogEntry(component = "BG", message = "START_ALL_REJECTED no_online_accounts"))
+            return
+        }
         val accepted = MangaBuffForegroundService.startAll(getApplication(), taskType)
         if (!accepted) {
             addLog(
@@ -479,12 +494,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _accounts.update { list ->
             list.map { item ->
-                item.copy(
-                    isRunning = true,
-                    statusMessage = "Запуск: ${taskType.title}…",
-                    currentTask = taskType.title,
-                    taskProgress = 0f
-                )
+                if (item.id in eligibleAccountIds) {
+                    item.copy(
+                        isRunning = true,
+                        statusMessage = "Запуск: ${taskType.title}…",
+                        currentTask = taskType.title,
+                        taskProgress = 0f
+                    )
+                } else item
             }
         }
         _isRunning.value = requestedCount > 0
@@ -500,9 +517,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val code = promoCode.trim()
         if (code.isEmpty()) return false
 
-        val requestedCount = _accounts.value.size
+        val eligibleAccountIds = _accounts.value.filterNot { it.isOffline }.map { it.id }.toSet()
+        val requestedCount = eligibleAccountIds.size
         if (requestedCount == 0) {
-            addLog(LogEntry(component = "PROMO", message = "PROMO_START_REJECTED no_accounts", isError = true))
+            addLog(LogEntry(component = "PROMO", message = "PROMO_START_REJECTED no_online_accounts"))
             return false
         }
 
@@ -520,12 +538,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _accounts.update { list ->
             list.map { item ->
-                item.copy(
-                    isRunning = true,
-                    statusMessage = "Запуск промокода…",
-                    currentTask = TaskType.PROMO.title,
-                    taskProgress = 0f
-                )
+                if (item.id in eligibleAccountIds) {
+                    item.copy(
+                        isRunning = true,
+                        statusMessage = "Запуск промокода…",
+                        currentTask = TaskType.PROMO.title,
+                        taskProgress = 0f
+                    )
+                } else item
             }
         }
         _isRunning.value = true
@@ -554,6 +574,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         repository.saveAccounts(_accounts.value)
+    }
+
+    /**
+     * Toggle account automation availability without touching its saved cookies/profile.
+     * Returning online only permits future manual runs; it never starts tasks implicitly.
+     */
+    fun setAccountOffline(accountId: String, offline: Boolean) {
+        val updated = repository.updateAccount(accountId) { account ->
+            account.copy(
+                isOffline = offline,
+                isRunning = false,
+                taskProgress = 0f,
+                currentTask = "",
+                statusMessage = if (offline) {
+                    "OFFLINE — задачи остановлены, авторизация сохранена"
+                } else {
+                    "ONLINE — задачи не запущены"
+                }
+            )
+        } ?: return
+
+        _accounts.update { list ->
+            list.map { account -> if (account.id == accountId) updated else account }
+        }
+
+        if (offline) {
+            // Persist OFFLINE first, then stop the current run and cancel scheduled activity.
+            MangaBuffForegroundService.stopAccount(getApplication(), accountId)
+        }
+
+        _isRunning.value = _accounts.value.any { it.isRunning }
+        addLog(
+            LogEntry(
+                username = updated.username,
+                component = "OFFLINE",
+                message = if (offline) {
+                    "ACCOUNT_OFFLINE tasks_cancelled auth_preserved"
+                } else {
+                    "ACCOUNT_ONLINE ready_for_manual_start"
+                }
+            )
+        )
     }
 
     fun stopAccountTask(accountId: String) {
