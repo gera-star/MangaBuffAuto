@@ -39,7 +39,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
 import kotlin.coroutines.coroutineContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -249,14 +248,8 @@ class MangaBuffForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val accountJobs = ConcurrentHashMap<String, Job>()
 
-    // Only one account may drive the shared device/network automation at a time.
-    // Each account still owns a dedicated WebView profile, but requests otherwise
-    // leave through the same device IP; serial execution avoids cross-account bursts.
-    private val accountExecutionSemaphore = Semaphore(1)
-
-    // Lets the watchdog distinguish a healthy queued job from a lost WebView.
-    // Store the Job as the value so an older cancelled run cannot remove a newer run's marker.
-    private val queuedAccountJobs = ConcurrentHashMap<String, Job>()
+    // One account at a time; queue state is isolated in a small class with unit tests.
+    private val accountExecutionQueue = AccountExecutionQueue()
 
     // Tower cycles are scheduled independently from the account task queue.
     // The delay never occupies the account WebView or blocks other tasks.
@@ -519,7 +512,7 @@ class MangaBuffForegroundService : Service() {
         val job = serviceScope.launch(start = CoroutineStart.LAZY) {
             val currentJob = coroutineContext[Job]
             var hasExecutionPermit = false
-            if (currentJob != null) queuedAccountJobs[accountId] = currentJob
+            if (currentJob != null) accountExecutionQueue.markQueued(accountId, currentJob)
 
             try {
                 publishLog(
@@ -531,9 +524,9 @@ class MangaBuffForegroundService : Service() {
                 )
                 publishStatus(accountId, "В очереди — ожидает освобождения аккаунта", true, taskType.title, 0f)
 
-                accountExecutionSemaphore.acquire()
+                accountExecutionQueue.acquire()
                 hasExecutionPermit = true
-                if (currentJob != null) queuedAccountJobs.remove(accountId, currentJob)
+                if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
 
                 publishLog(
                     LogEntry(
@@ -638,8 +631,8 @@ class MangaBuffForegroundService : Service() {
                         }
                     }
                 } finally {
-                    if (currentJob != null) queuedAccountJobs.remove(accountId, currentJob)
-                    if (hasExecutionPermit) accountExecutionSemaphore.release()
+                    if (currentJob != null) accountExecutionQueue.forget(accountId, currentJob)
+                    if (hasExecutionPermit) accountExecutionQueue.release()
                 }
             }
         }
@@ -684,7 +677,7 @@ class MangaBuffForegroundService : Service() {
                     // Queued jobs intentionally do not own a WebView yet; starting
                     // recovery for them would cancel/restart a healthy queue entry.
                     val accountJob = accountJobs[accountId]
-                    if (accountJob != null && queuedAccountJobs[accountId] === accountJob) {
+                    if (accountJob != null && accountExecutionQueue.isQueued(accountId, accountJob)) {
                         missingWebViewSince.remove(accountId)
                         continue
                     }
@@ -779,7 +772,6 @@ class MangaBuffForegroundService : Service() {
         }
         recoveryRequests.clear()
         missingWebViewSince.clear()
-        queuedAccountJobs.clear()
         automationRunner.stopAll()
 
         if (explicitUserStop) {
