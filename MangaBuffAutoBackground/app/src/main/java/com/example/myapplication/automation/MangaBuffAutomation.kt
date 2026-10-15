@@ -516,15 +516,33 @@ class MangaBuffAutomation(
                                         )
                                     }
                                 }
-                            } else if (tickNow - backgroundLastDiagnosticAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
-                                backgroundLastDiagnosticAt = tickNow
-                                log(
-                                    accountUsername,
-                                    "READER: BACKGROUND_SCROLL_STALLED_NEAR_BOTTOM idleMs=${idleMs} " +
-                                        "y=${backgroundLastScrollY ?: -1L} height=${backgroundScrollHeight} " +
-                                        "viewport=${backgroundViewportHeight} remaining=${backgroundRemaining} " +
-                                        "recovery=SKIPPED"
-                                )
+                            } else {
+                                // Near the bottom, do not issue another long swipe (it can overshoot
+                                // the end marker). Still tick the JS reader loop so bottom
+                                // stabilization and the terminal "Таков конец..." check can run.
+                                try {
+                                    target.evaluateJavascript(
+                                        "window.__mbBackgroundStep && window.__mbBackgroundStep();",
+                                        null
+                                    )
+                                    if (tickNow - backgroundLastDiagnosticAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
+                                        backgroundLastDiagnosticAt = tickNow
+                                        log(
+                                            accountUsername,
+                                            "READER: BACKGROUND_SCROLL_STALLED_NEAR_BOTTOM idleMs=${idleMs} " +
+                                                "y=${backgroundLastScrollY ?: -1L} height=${backgroundScrollHeight} " +
+                                                "viewport=${backgroundViewportHeight} remaining=${backgroundRemaining} " +
+                                                "recovery=JS_BACKGROUND_TICK"
+                                        )
+                                    }
+                                } catch (e: Exception) {
+                                    log(
+                                        accountUsername,
+                                        "READER: BACKGROUND_SCROLL_NEAR_BOTTOM_TICK_ERROR error=${e.message}",
+                                        true
+                                    )
+                                }
+                                backgroundLastProgressAt = tickNow
                             }
                         }
                     }
