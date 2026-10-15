@@ -2345,6 +2345,24 @@ class MangaBuffAutomation(
             }
         }
 
+        // Run enabled deck comments before the potentially long reader task.
+        // Otherwise "Start all" can spend a long time reading chapters before the
+        // user sees any deck-comment activity in the logs.
+        if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) && account.deckCommentEnabled) {
+            coroutineContext.ensureActive()
+            log(account.username, "TASK: DECK_COMMENT_DISPATCH taskType=${taskType.title}")
+            val deckStart = SystemClock.elapsedRealtime()
+            val deckSent = runDeckCommentTask(account, webView)
+            log(
+                account.username,
+                "TASK: DECK_COMMENT_END sent=$deckSent elapsed=" +
+                    (SystemClock.elapsedRealtime() - deckStart) + "ms"
+            )
+            fetchAndLogBalanceInfo(account, webView)
+        } else if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) && !account.deckCommentEnabled) {
+            log(account.username, "COMMENT: DECK_DISABLED taskType=${taskType.title}")
+        }
+
         if (taskType == TaskType.ALL || taskType == TaskType.READER) {
             coroutineContext.ensureActive()
             if (account.readerEnabled || taskType == TaskType.READER) {
@@ -2370,20 +2388,6 @@ class MangaBuffAutomation(
                 fetchAndLogBalanceInfo(account, webView)
             }
 
-            if (account.deckCommentEnabled) {
-                coroutineContext.ensureActive()
-                log(account.username, "TASK: DECK_COMMENT_ENABLED")
-                val start = SystemClock.elapsedRealtime()
-                runDeckCommentTask(account, webView)
-                log(
-                    account.username,
-                    "TASK: DECK_COMMENT_END elapsed=" +
-                        (SystemClock.elapsedRealtime() - start) + "ms"
-                )
-                fetchAndLogBalanceInfo(account, webView)
-            } else {
-                log(account.username, "COMMENT: DECK_DISABLED")
-            }
         }
 
         if (taskType == TaskType.PROMO) {
