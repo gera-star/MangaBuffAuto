@@ -306,7 +306,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Publish only an actual deck-toggle change. Other task switches must not
         // overwrite a newer deck state with a stale AccountCard snapshot.
-        if (previousDeckCommentEnabled != updated.deckCommentEnabled) {
+        if (previousDeckCommentEnabled != null &&
+            previousDeckCommentEnabled != updated.deckCommentEnabled
+        ) {
+            // Seed from the persisted pre-toggle value first. Otherwise an OFF tap
+            // before the service starts could create an initial OFF snapshot with
+            // disableVersion=0, and a rapid ON tap would hide the cancellation.
+            DeckCommentToggleRegistry.initializeIfAbsent(account.id, previousDeckCommentEnabled!!)
             DeckCommentToggleRegistry.setEnabled(account.id, updated.deckCommentEnabled)
         }
 
