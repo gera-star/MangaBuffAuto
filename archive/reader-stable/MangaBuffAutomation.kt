@@ -3352,9 +3352,24 @@ class MangaBuffAutomation(
                                         }, 350);
                                     }
 
+                                    // A screen-off WebView can miss the native swipe's JS cleanup callback.
+                                    // Do not let a stale busy flag permanently block end-of-chapter checks.
+                                    var nativeFingerBusySince = 0;
+
                                     function checkEnd() {
                                         if (chapterDone) return;
-                                        if (window.__mbNativeFingerBusy) return;
+                                        if (window.__mbNativeFingerBusy) {
+                                            if (!nativeFingerBusySince) nativeFingerBusySince = Date.now();
+                                            if (Date.now() - nativeFingerBusySince < 12000) return;
+
+                                            window.__mbNativeFingerBusy = false;
+                                            nativeFingerBusySince = 0;
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: NATIVE_FINGER_BUSY_TIMEOUT_RECOVERED'
+                                            );
+                                        } else {
+                                            nativeFingerBusySince = 0;
+                                        }
 
                                         var scrollingElement = document.scrollingElement || document.documentElement || document.body;
                                         var rawY = Math.max(
