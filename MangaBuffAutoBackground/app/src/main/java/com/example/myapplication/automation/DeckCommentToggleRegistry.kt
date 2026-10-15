@@ -1,5 +1,6 @@
 package com.example.myapplication.automation
 
+import android.os.SystemClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,7 +12,9 @@ data class DeckCommentToggleSnapshot(
      * Increases whenever ON transitions to OFF. Active runs capture this value at
      * start, so a rapid OFF -> ON cannot accidentally revive an already-cancelled run.
      */
-    val disableVersion: Long = 0L
+    val disableVersion: Long = 0L,
+    /** Monotonic timestamp of the most recent ON -> OFF transition in this process. */
+    val disabledAtElapsedRealtimeMs: Long = 0L
 )
 
 /**
@@ -57,14 +60,21 @@ object DeckCommentToggleRegistry {
         synchronized(state) {
             val previous = state.value
             if (previous.enabled == enabled) return
-            val nextDisableVersion = if (previous.enabled && !enabled) {
+            val disablingNow = previous.enabled && !enabled
+            val nextDisableVersion = if (disablingNow) {
                 previous.disableVersion + 1L
             } else {
                 previous.disableVersion
             }
             state.value = DeckCommentToggleSnapshot(
                 enabled = enabled,
-                disableVersion = nextDisableVersion
+                disableVersion = nextDisableVersion,
+                disabledAtElapsedRealtimeMs = if (disablingNow) {
+                    SystemClock.elapsedRealtime()
+                } else {
+                    // Preserve the last disable timestamp through a quick OFF -> ON.
+                    previous.disabledAtElapsedRealtimeMs
+                }
             )
         }
     }
