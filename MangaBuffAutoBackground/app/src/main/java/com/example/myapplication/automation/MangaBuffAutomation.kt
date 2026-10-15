@@ -9926,8 +9926,20 @@ class MangaBuffAutomation(
         val dailyDeckAttemptCountKey = "attempt_count_${deckCommentDay}_${deckAccountKey}"
         val deckCommentGapMs = 40_000L
         val accountRepository = AccountRepository(context)
-        var dailyDeckAttemptCount = deckCommentPrefs.getInt(dailyDeckAttemptCountKey, 0).coerceAtLeast(0)
+        // Migrate attempts already stored by the previous version today; each
+        // per-deck reservation represented a Send click even if confirmation failed.
+        val previouslyReservedDeckAttempts = deckCommentPrefs.all.entries.count { entry ->
+            entry.key.startsWith(deckAttemptPrefix) && entry.value == true
+        }
+        var dailyDeckAttemptCount = maxOf(
+            deckCommentPrefs.getInt(dailyDeckAttemptCountKey, 0),
+            previouslyReservedDeckAttempts
+        ).coerceAtLeast(0).coerceAtMost(DECK_COMMENT_DAILY_LIMIT)
+        if (deckCommentPrefs.getInt(dailyDeckAttemptCountKey, 0) != dailyDeckAttemptCount) {
+            deckCommentPrefs.edit().putInt(dailyDeckAttemptCountKey, dailyDeckAttemptCount).apply()
+        }
         val remainingDaily = (DECK_COMMENT_DAILY_LIMIT - dailyDeckAttemptCount).coerceAtLeast(0)
+        var sentCount = 0
 
         // Read the persisted toggle while a run is active. Once disabled, the current
         // deck-comment routine exits instead of becoming active again mid-run.
@@ -10152,7 +10164,6 @@ class MangaBuffAutomation(
         // At most eight deck comments per Start run, and at most thirteen
         // send attempts per account/day, retained across app restarts.
         val targetDecks = unattemptedDecks.take(minOf(remainingDaily, 8))
-        var sentCount = 0
         log(
             account.username,
             "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} " +
