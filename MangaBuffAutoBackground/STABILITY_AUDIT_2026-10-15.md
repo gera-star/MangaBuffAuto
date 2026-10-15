@@ -8,10 +8,11 @@ This is not a claim that the complete Android app has been built or device-teste
 
 ## Changes made
 
-1. **One active automation account at a time.** The foreground service uses a coroutine semaphore around account execution. This avoids simultaneous automation bursts from several account WebViews on the same device/network. Waiting accounts are tracked separately so the WebView watchdog does not mistake a healthy queued job for a broken one.
+1. **One active automation account at a time.** The foreground service uses `AccountExecutionQueue`, a small class that owns the semaphore and identity-checked queued-job markers. Waiting accounts are tracked separately so the WebView watchdog does not mistake a healthy queued job for a broken one. Unit tests were added for serialization, cancellation while waiting, and stale queued markers.
 2. **Bounded log history.** The UI retains the newest 2,000 log entries in memory, newest first. Older entries roll off instead of clearing all recent diagnostics at once. Service-broadcast log entries now keep their originating component and timestamp.
-3. **A small log-buffer unit test.** It checks the 2,000-entry bound, newest/oldest retention, and ordering.
+3. **A log-buffer unit test.** It checks the 2,000-entry bound, newest/oldest retention, and ordering.
 4. **Last-manga completion fallback.** A confirmed terminal chapter tries to mark the manga in the site's “Прочитано” folder before the normal catalog flow. Mark-read UI failures/timeouts are retried up to three times; if the site never confirms the folder update, the reader records that failure and continues rather than hanging forever or discarding the confirmed chapter.
+5. **Watchdog recovery limits and single-flight mark-read.** The current branch also includes identity-checked cancellation of jobs stuck without a WebView, a three-recovery budget per ten-minute window, heartbeat exception isolation, and a gate preventing the mark-read callback and timeout from scheduling duplicate retries.
 
 ## Existing safeguards verified in code
 
@@ -32,6 +33,8 @@ This is not a claim that the complete Android app has been built or device-teste
 
 - Verified the branch head and fetched the changed service, ViewModel, profile-store, reader, helper, and test files from GitHub.
 - Ran an isolated Kotlin check of the rolling-log algorithm: 2,000 entries retained, latest entry first, oldest retained entry `101` after appending `0..2100`.
+- Added `AccountExecutionQueueTest` for serial execution, identity-safe queue tracking, and cancellation of a waiting account. These repository tests have been added but were **not executed in this environment**.
+- The branch's `RecoveryBudgetTest` and `MarkReadAttemptGateTest` were reported by the previous contributor as passing under standalone `kotlinc` + JUnit; I have not independently rerun them.
 - **Not run:** Android `assembleDebug`, Gradle unit tests, instrumentation tests, or Redmi/HyperOS real-device validation, because this environment has no Android SDK or Gradle executable.
 
 ## Suggested release gate
