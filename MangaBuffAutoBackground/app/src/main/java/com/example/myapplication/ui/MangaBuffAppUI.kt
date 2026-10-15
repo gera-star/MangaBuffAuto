@@ -1645,7 +1645,7 @@ fun TasksTab(
                         CompactNumberField(
                             readerChapters,
                             { readerChapters = it },
-                            "📖 Главы",
+                            "📖 Главы 1–100",
                             Modifier.weight(1f)
                         )
                     }
@@ -1654,10 +1654,14 @@ fun TasksTab(
 
                     OutlinedButton(
                         onClick = {
+                            val selectedReaderChapters = (
+                                readerChapters.toIntOrNull() ?: settings.readerChapters
+                            ).coerceIn(1, GlobalSettings.MAX_READER_CHAPTERS)
+                            readerChapters = selectedReaderChapters.toString()
                             onSaveSettings(
                                 settings.copy(
                                     battleTargetCount = battleTarget.toIntOrNull() ?: settings.battleTargetCount,
-                                    readerChapters = readerChapters.toIntOrNull() ?: settings.readerChapters
+                                    readerChapters = selectedReaderChapters
                                 )
                             )
                         },
