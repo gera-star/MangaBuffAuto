@@ -155,9 +155,26 @@ class MainActivity : ComponentActivity() {
                     val debugWebView = selectedDebugAccountId?.let(webViewsByAccount::get)
 
                     var showKeenySplash by remember { mutableStateOf(true) }
+                    var splashPlaybackStarted by remember { mutableStateOf(false) }
+                    var splashPlaybackFailed by remember { mutableStateOf(false) }
+
+                    // Keep the intro visible long enough to see the animation, but never
+                    // let a slow/unreachable video delay the main screen indefinitely.
                     LaunchedEffect(Unit) {
-                        kotlinx.coroutines.delay(5_000L)
+                        kotlinx.coroutines.delay(10_000L)
                         showKeenySplash = false
+                    }
+                    LaunchedEffect(splashPlaybackStarted, splashPlaybackFailed) {
+                        when {
+                            splashPlaybackStarted -> {
+                                kotlinx.coroutines.delay(5_000L)
+                                showKeenySplash = false
+                            }
+                            splashPlaybackFailed -> {
+                                kotlinx.coroutines.delay(1_500L)
+                                showKeenySplash = false
+                            }
+                        }
                     }
 
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -230,8 +247,11 @@ class MainActivity : ComponentActivity() {
 
                         if (showKeenySplash) {
                             // fillMaxSize works across Compose versions; avoid matchParentSize here.
-                            KeenySplash(
-                                modifier = Modifier.fillMaxSize()
+                            MangaBuffSplash(
+                                modifier = Modifier.fillMaxSize(),
+                                playbackFailed = splashPlaybackFailed,
+                                onPlaybackStarted = { splashPlaybackStarted = true },
+                                onPlaybackFailed = { splashPlaybackFailed = true }
                             )
                         }
                     }
