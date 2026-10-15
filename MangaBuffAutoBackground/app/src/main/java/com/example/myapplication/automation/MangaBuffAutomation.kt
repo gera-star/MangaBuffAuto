@@ -2279,6 +2279,27 @@ class MangaBuffAutomation(
             }
         }
 
+        // Deck comments have priority: once the account's stats/authentication
+        // check succeeds, go directly to /decks before battle, tower, ads, mine,
+        // or reader tasks. This makes the user's enabled-decks flow predictable.
+        // Run enabled deck comments before the potentially long reader task.
+        // Otherwise "Start all" can spend a long time reading chapters before the
+        // user sees any deck-comment activity in the logs.
+        if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) && account.deckCommentEnabled) {
+            coroutineContext.ensureActive()
+            log(account.username, "TASK: DECK_COMMENT_DISPATCH taskType=${taskType.title}")
+            val deckStart = SystemClock.elapsedRealtime()
+            val deckSent = runDeckCommentTask(account, webView)
+            log(
+                account.username,
+                "TASK: DECK_COMMENT_END sent=$deckSent elapsed=" +
+                    (SystemClock.elapsedRealtime() - deckStart) + "ms"
+            )
+            fetchAndLogBalanceInfo(account, webView)
+        } else if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) && !account.deckCommentEnabled) {
+            log(account.username, "COMMENT: DECK_DISABLED taskType=${taskType.title}")
+        }
+
         if (taskType == TaskType.ALL || taskType == TaskType.BATTLE) {
             coroutineContext.ensureActive()
             if (account.battleEnabled || taskType == TaskType.BATTLE) {
@@ -2343,24 +2364,6 @@ class MangaBuffAutomation(
                 runMineTask(account, settings, webView)
                 log(account.username, "TASK: MINE_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
             }
-        }
-
-        // Run enabled deck comments before the potentially long reader task.
-        // Otherwise "Start all" can spend a long time reading chapters before the
-        // user sees any deck-comment activity in the logs.
-        if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) && account.deckCommentEnabled) {
-            coroutineContext.ensureActive()
-            log(account.username, "TASK: DECK_COMMENT_DISPATCH taskType=${taskType.title}")
-            val deckStart = SystemClock.elapsedRealtime()
-            val deckSent = runDeckCommentTask(account, webView)
-            log(
-                account.username,
-                "TASK: DECK_COMMENT_END sent=$deckSent elapsed=" +
-                    (SystemClock.elapsedRealtime() - deckStart) + "ms"
-            )
-            fetchAndLogBalanceInfo(account, webView)
-        } else if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) && !account.deckCommentEnabled) {
-            log(account.username, "COMMENT: DECK_DISABLED taskType=${taskType.title}")
         }
 
         if (taskType == TaskType.ALL || taskType == TaskType.READER) {
@@ -10069,7 +10072,9 @@ class MangaBuffAutomation(
             deckId.isNotBlank() &&
                 !deckCommentPrefs.getBoolean(deckAttemptPrefix + deckId.hashCode(), false)
         }
-        val targetDecks = unattemptedDecks.take(remainingDaily)
+        // This task is intentionally eight decks per run; the page may expose
+        // more links, but a single Start run must not comment on more than eight.
+        val targetDecks = unattemptedDecks.take(minOf(remainingDaily, 8))
         log(
             account.username,
             "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} gapSec=40"
