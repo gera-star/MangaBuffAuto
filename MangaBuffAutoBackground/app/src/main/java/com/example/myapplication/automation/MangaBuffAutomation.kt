@@ -10134,6 +10134,7 @@ class MangaBuffAutomation(
             )
 
             var actionClicked = false
+            var buttonStillDisabledAfterInput = false
 
             repeat(50) { attempt ->
                 if (actionClicked) return@repeat
@@ -10200,9 +10201,15 @@ class MangaBuffAutomation(
 
                 when {
                     state == "WAIT_CONTROLS" -> delay(300L)
-                    state == "WAIT_BUTTON_AFTER_INPUT" -> delay(300L)
+                    state == "WAIT_BUTTON_AFTER_INPUT" -> {
+                        buttonStillDisabledAfterInput = true
+                        delay(300L)
+                    }
                     // Backward-compatible while older injected JS callbacks are still in flight.
-                    state == "WAIT_BUTTON" -> delay(300L)
+                    state == "WAIT_BUTTON" -> {
+                        buttonStillDisabledAfterInput = true
+                        delay(300L)
+                    }
                     state == "CLICKED" -> {
                         actionClicked = true
                         val deckId = deckUrl.substringBefore('?').trimEnd('/')
@@ -10250,7 +10257,11 @@ class MangaBuffAutomation(
                 if (attempt == 49 && !actionClicked) {
                     log(
                         account.username,
-                        "COMMENT: DECK_CONTROLS_TIMEOUT name='" + deckName + "'",
+                        if (buttonStillDisabledAfterInput) {
+                            "COMMENT: DECK_SEND_BUTTON_REMAINS_DISABLED_AFTER_TEXT name='" + deckName + "'"
+                        } else {
+                            "COMMENT: DECK_CONTROLS_TIMEOUT name='" + deckName + "'"
+                        },
                         true
                     )
                 }
