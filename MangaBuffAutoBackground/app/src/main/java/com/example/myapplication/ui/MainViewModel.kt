@@ -426,6 +426,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             return
         }
+        _accounts.update { list ->
+            list.map { item ->
+                if (item.id == account.id) {
+                    item.copy(
+                        isRunning = true,
+                        statusMessage = "Запуск задания: ${taskType.title}…",
+                        currentTask = taskType.title,
+                        taskProgress = 0f
+                    )
+                } else item
+            }
+        }
         _isRunning.value = true
         addLog(
             LogEntry(
@@ -448,6 +460,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
             return
+        }
+        _accounts.update { list ->
+            list.map { item ->
+                item.copy(
+                    isRunning = true,
+                    statusMessage = "Запуск: ${taskType.title}…",
+                    currentTask = taskType.title,
+                    taskProgress = 0f
+                )
+            }
         }
         _isRunning.value = requestedCount > 0
         addLog(
@@ -480,6 +502,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return false
         }
 
+        _accounts.update { list ->
+            list.map { item ->
+                item.copy(
+                    isRunning = true,
+                    statusMessage = "Запуск промокода…",
+                    currentTask = TaskType.PROMO.title,
+                    taskProgress = 0f
+                )
+            }
+        }
         _isRunning.value = true
         addLog(
             LogEntry(
@@ -496,10 +528,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 acc.copy(
                     isRunning = false,
                     taskProgress = 0f,
+                    currentTask = "",
                     statusMessage = if (acc.statusMessage?.contains("Завершено") == true) {
                         acc.statusMessage
                     } else {
-                        "Остановлено пользователем"
+                        "Остановка запрошена…"
                     }
                 )
             }
