@@ -91,10 +91,10 @@ fun MangaBuffSplash(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
-                    (LayoutInflater.from(viewContext)
-                        .inflate(R.layout.splash_player_view, null, false) as PlayerView).apply {
-                        player = player
-                    }
+                    val playerView = LayoutInflater.from(viewContext)
+                        .inflate(R.layout.splash_player_view, null, false) as PlayerView
+                    playerView.player = player
+                    playerView
                 },
                 update = { playerView ->
                     if (playerView.player !== player) {
