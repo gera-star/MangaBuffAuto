@@ -9942,6 +9942,7 @@ class MangaBuffAutomation(
         }
         val remainingDaily = (DECK_COMMENT_DAILY_LIMIT - dailyDeckAttemptCount).coerceAtLeast(0)
         var sentCount = 0
+        var targetDeckCount = minOf(remainingDaily, 8)
 
         // UI and automation share this process-local signal. disableVersion makes
         // OFF a one-way cancellation for this run, even if the user switches ON again.
@@ -9951,6 +9952,14 @@ class MangaBuffAutomation(
         )
         val deckToggleDisableVersion = deckToggleState.value.disableVersion
         val disableEndLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        updateStatus(
+            account,
+            "🃏 Колоды: подготовка $sentCount/$targetDeckCount",
+            true,
+            "Колоды",
+            0f
+        )
 
         fun deckCommentEnabledNow(): Boolean {
             val state = deckToggleState.value
@@ -9999,6 +10008,17 @@ class MangaBuffAutomation(
             log(
                 account.username,
                 "COMMENT: DECK_TASK_CANCELLED stage=$stage sent=$sentCount"
+            )
+            updateStatus(
+                account,
+                "🃏 Колоды: $sentCount/$targetDeckCount (выключено)",
+                true,
+                "Колоды",
+                if (targetDeckCount > 0) {
+                    (sentCount.toFloat() / targetDeckCount).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
             )
             val latencyLabel = stopLatencyMs?.toString() ?: "unknown"
             log(
@@ -10304,6 +10324,14 @@ class MangaBuffAutomation(
         // At most eight deck comments per Start run, and at most thirteen
         // send attempts per account/day, retained across app restarts.
         val targetDecks = unattemptedDecks.take(minOf(remainingDaily, 8))
+        targetDeckCount = targetDecks.size
+        updateStatus(
+            account,
+            "🃏 Колоды: $sentCount/$targetDeckCount комментариев",
+            true,
+            "Колоды",
+            if (targetDeckCount > 0) 0f else 1f
+        )
         log(
             account.username,
             "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} " +
@@ -10674,6 +10702,17 @@ class MangaBuffAutomation(
 
             if (confirmed) {
                 sentCount++
+                updateStatus(
+                    account,
+                    "🃏 Колоды: $sentCount/$targetDeckCount комментариев",
+                    true,
+                    "Колоды",
+                    if (targetDeckCount > 0) {
+                        (sentCount.toFloat() / targetDeckCount).coerceIn(0f, 1f)
+                    } else {
+                        1f
+                    }
+                )
                 log(
                     account.username,
                     "COMMENT: DECK_SUBMIT_CONFIRMED name='" +
