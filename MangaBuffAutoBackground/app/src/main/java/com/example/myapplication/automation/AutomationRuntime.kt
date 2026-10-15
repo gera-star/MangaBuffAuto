@@ -269,32 +269,48 @@ class AutomationRuntime(
         val engineHeartbeatJob = CoroutineScope(coroutineContext + Dispatchers.IO).launch {
             while (isActive) {
                 delay(15_000L)
-                val (url, isAttached, chapterContext) = withContext(Dispatchers.Main.immediate) {
-                    Triple(
-                        runtime.webView.url ?: "UNKNOWN",
-                        runtime.webView.isAttachedToWindow,
-                        engine.getHeartbeatChapterContext()
+                // This coroutine is a child of the account's Job, so an uncaught exception here
+                // (for example reading webView.url after the WebView was destroyed) would cancel
+                // the whole account run. Diagnostics must never do that.
+                try {
+                    val (url, isAttached, chapterContext) = withContext(Dispatchers.Main.immediate) {
+                        Triple(
+                            runtime.webView.url ?: "UNKNOWN",
+                            runtime.webView.isAttachedToWindow,
+                            engine.getHeartbeatChapterContext()
+                        )
+                    }
+                    val urlChapter = url.substringBefore('?')
+                        .trimEnd('/')
+                        .substringAfterLast('/')
+                        .takeIf { it.toIntOrNull() != null }
+                        .orEmpty()
+                    val chapterMatchesUrl = urlChapter.isNotBlank() && urlChapter == chapterContext.second
+                    val heartbeatChapterId = if (chapterMatchesUrl) chapterContext.first.ifBlank { "PENDING" } else "PENDING"
+                    val heartbeatChapter = urlChapter
+                        .ifBlank { if (chapterMatchesUrl) chapterContext.second else "UNKNOWN" }
+                    onLog(
+                        LogEntry(
+                            username = account.username,
+                            component = "ENGINE",
+                            message = "HEARTBEAT accountId=${account.id} engineId=${engine.hashCode()} " +
+                                "url=$url attached=$isAttached manga=${engine.getCurrentMangaUrl()} " +
+                                "chapterId=$heartbeatChapterId chapter=$heartbeatChapter " +
+                                "chapterContextMatchesUrl=$chapterMatchesUrl"
+                        )
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    onLog(
+                        LogEntry(
+                            username = account.username,
+                            component = "ENGINE",
+                            message = "HEARTBEAT_ERROR accountId=${account.id} error=${e.message}",
+                            isError = true
+                        )
                     )
                 }
-                val urlChapter = url.substringBefore('?')
-                    .trimEnd('/')
-                    .substringAfterLast('/')
-                    .takeIf { it.toIntOrNull() != null }
-                    .orEmpty()
-                val chapterMatchesUrl = urlChapter.isNotBlank() && urlChapter == chapterContext.second
-                val heartbeatChapterId = if (chapterMatchesUrl) chapterContext.first.ifBlank { "PENDING" } else "PENDING"
-                val heartbeatChapter = urlChapter
-                    .ifBlank { if (chapterMatchesUrl) chapterContext.second else "UNKNOWN" }
-                onLog(
-                    LogEntry(
-                        username = account.username,
-                        component = "ENGINE",
-                        message = "HEARTBEAT accountId=${account.id} engineId=${engine.hashCode()} " +
-                            "url=$url attached=$isAttached manga=${engine.getCurrentMangaUrl()} " +
-                            "chapterId=$heartbeatChapterId chapter=$heartbeatChapter " +
-                            "chapterContextMatchesUrl=$chapterMatchesUrl"
-                    )
-                )
             }
         }
 

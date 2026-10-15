@@ -14,6 +14,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -110,6 +111,11 @@ class MangaBuffForegroundService : Service() {
         private const val KEY_TOWER_CYCLE_ENDS = "tower_cycle_ends"
         private const val WATCHDOG_INTERVAL_MS = 15_000L
         private const val WATCHDOG_MISSING_WEBVIEW_GRACE_MS = 30_000L
+
+        // Automatic recovery is bounded: a WebView that keeps crashing must end in a
+        // safe stopped state with a clear log entry instead of restarting forever.
+        private const val RECOVERY_MAX_PER_WINDOW = 3
+        private const val RECOVERY_WINDOW_MS = 10 * 60_000L
 
         fun startService(
             context: Context,
@@ -258,6 +264,7 @@ class MangaBuffForegroundService : Service() {
     private val towerCycleEndsAt = ConcurrentHashMap<String, Long>()
     private val recoveryRequests = ConcurrentHashMap.newKeySet<String>()
     private val missingWebViewSince = ConcurrentHashMap<String, Long>()
+    private val recoveryBudget = RecoveryBudget(RECOVERY_MAX_PER_WINDOW, RECOVERY_WINDOW_MS)
     private var watchdogJob: Job? = null
     private val repository by lazy { AccountRepository(applicationContext) }
     private lateinit var automationRunner: MultiAccountAutomationRunner
@@ -367,6 +374,8 @@ class MangaBuffForegroundService : Service() {
                 val taskType = taskTypeName.toTaskTypeOrNull()
                 val promoCode = intent?.getStringExtra(EXTRA_PROMO_CODE)
                 if (accountId.isNotBlank() && taskType != null) {
+                    // A deliberate start opens a fresh recovery budget for this account.
+                    recoveryBudget.reset(accountId)
                     startAccountInternal(accountId, taskType, promoCode)
                 }
             }
@@ -376,6 +385,7 @@ class MangaBuffForegroundService : Service() {
                     ?.toTaskTypeOrNull()
                     ?: TaskType.ALL
                 val promoCode = intent?.getStringExtra(EXTRA_PROMO_CODE)
+                recoveryBudget.resetAll()
                 startAllInternal(taskType, promoCode)
             }
 
@@ -567,10 +577,13 @@ class MangaBuffForegroundService : Service() {
                         val recoveryRequested = recoveryRequests.remove(accountId)
                         missingWebViewSince.remove(accountId)
                         val persistedTask = readPersistedRuns()[accountId]
-                        val shouldRecover =
+                        val recoveryWanted =
                             recoveryRequested &&
                                 !stoppingExplicitly &&
                                 persistedTask == taskType
+                        val shouldRecover = recoveryWanted &&
+                            recoveryBudget.tryConsume(accountId, SystemClock.elapsedRealtime())
+                        val recoveryExhausted = recoveryWanted && !shouldRecover
 
                         if (shouldRecover) {
                             publishLog(
@@ -596,11 +609,30 @@ class MangaBuffForegroundService : Service() {
                                 }
                             }
                         } else {
+                            if (recoveryExhausted) {
+                                publishLog(
+                                    LogEntry(
+                                        username = account.username,
+                                        component = "BG",
+                                        message = "WATCHDOG_RECOVERY_GIVE_UP accountId=$accountId " +
+                                            "taskType=${taskType.title} " +
+                                            "limit=$RECOVERY_MAX_PER_WINDOW/${RECOVERY_WINDOW_MS / 60_000L}min " +
+                                            "state=STOPPED_SAFE",
+                                        isError = true
+                                    )
+                                )
+                            }
                             removePersistedRun(accountId)
                             if (taskType == TaskType.PROMO) {
                                 runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
                             }
-                            publishStatus(accountId, "Готово", false, "", 0f)
+                            publishStatus(
+                                accountId,
+                                if (recoveryExhausted) "Остановлено: слишком много сбоев WebView" else "Готово",
+                                false,
+                                "",
+                                0f
+                            )
                             releaseWakeLockIfIdle()
                             stopSelfIfIdle()
                         }
@@ -665,6 +697,25 @@ class MangaBuffForegroundService : Service() {
                     val since = missingWebViewSince.putIfAbsent(accountId, now) ?: now
                     if (now - since >= WATCHDOG_MISSING_WEBVIEW_GRACE_MS) {
                         requestAccountRecovery(accountId)
+                        // Flagging alone never ends a stuck job: recovery runs only in the job's
+                        // finally block. Cancel it so that path actually executes. The identity
+                        // check keeps a newer run of the same account untouched.
+                        if (
+                            accountJob != null &&
+                            recoveryRequests.contains(accountId) &&
+                            accountJobs[accountId] === accountJob
+                        ) {
+                            publishLog(
+                                LogEntry(
+                                    username = accountId,
+                                    component = "BG",
+                                    message = "WATCHDOG_CANCEL_STUCK_JOB accountId=$accountId " +
+                                        "missingWebViewMs=${now - since}",
+                                    isError = true
+                                )
+                            )
+                            accountJob.cancel()
+                        }
                     }
                 }
             }
