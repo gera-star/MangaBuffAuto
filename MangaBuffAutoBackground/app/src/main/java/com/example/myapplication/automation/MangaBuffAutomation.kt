@@ -219,6 +219,7 @@ class MangaBuffAutomation(
         private const val READER_MAX_CHAPTERS = 10
 
         private const val DECK_PAGE_SETTLE_MS = 2000L
+        private const val DECK_SUBMIT_CALLBACK_TIMEOUT_MS = 1500L
 
         private const val BATTLE_COOLDOWN_MS = 2000L
         private const val BATTLE_WIN_TARGET = 2
@@ -10011,6 +10012,8 @@ class MangaBuffAutomation(
                 val evaluation = async {
                     suspendCancellableCoroutine<String?> { continuation ->
                         mainHandler.post {
+                            // A cancelled/timed-out evaluation must not run later from the Main queue.
+                            if (!continuation.isActive) return@post
                             // The toggle can change while this coroutine is queued on Main.
                             if (!deckCommentEnabledNow()) {
                                 logDeckDisabled("BEFORE_WEBVIEW_EVAL_DISPATCH")
@@ -10037,8 +10040,16 @@ class MangaBuffAutomation(
 
                 if (waitForResultAfterDispatch) {
                     // A Send script already dispatched while enabled is an in-flight action.
-                    // Keep its callback so the daily duplicate guard can record the outcome.
-                    evaluation.await()
+                    // Bound its callback wait so a stalled WebView cannot hold the account task.
+                    val result = withTimeoutOrNull(DECK_SUBMIT_CALLBACK_TIMEOUT_MS) {
+                        evaluation.await()
+                    }
+                    if (result == null) {
+                        evaluation.cancel()
+                        com.google.gson.Gson().toJson("SUBMIT_RESULT_TIMEOUT")
+                    } else {
+                        result
+                    }
                 } else {
                     val disabled = async {
                         deckToggleState.first {
@@ -10462,7 +10473,9 @@ class MangaBuffAutomation(
                                     return@repeat
                                 }
                             }
-                            submitState == "CLICKED" -> {
+                            submitState == "CLICKED" ||
+                                submitState == "SUBMIT_RESULT_TIMEOUT" -> {
+                                val submitCallbackTimedOut = submitState == "SUBMIT_RESULT_TIMEOUT"
                                 actionClicked = true
                                 val deckId = deckUrl.substringBefore('?').trimEnd('/')
                                 // Reserve before confirmation: an uncertain response must not
@@ -10497,11 +10510,20 @@ class MangaBuffAutomation(
                                     "COMMENT: DECK_TEXT_SET name='" +
                                         deckName + "' length=" + commentText.length
                                 )
-                                log(
-                                    account.username,
-                                    "COMMENT: DECK_SEND_CLICKED name='" +
-                                        deckName + "'"
-                                )
+                                if (submitCallbackTimedOut) {
+                                    log(
+                                        account.username,
+                                        "COMMENT: DECK_SEND_RESULT_TIMEOUT name='" +
+                                            deckName + "' attemptReserved=true",
+                                        true
+                                    )
+                                } else {
+                                    log(
+                                        account.username,
+                                        "COMMENT: DECK_SEND_CLICKED name='" +
+                                            deckName + "'"
+                                    )
+                                }
                             }
                             submitState.startsWith("ERROR:") -> {
                                 log(
@@ -10603,6 +10625,12 @@ class MangaBuffAutomation(
                     account.username,
                     "COMMENT: DECK_SUBMIT_CONFIRMED name='" +
                         deckName + "' sentThisRun=" + sentCount
+                )
+            } else if (disabledDuringConfirmation || !deckCommentEnabledNow()) {
+                log(
+                    account.username,
+                    "COMMENT: DECK_SUBMIT_CONFIRMATION_INTERRUPTED reason=TOGGLE_DISABLED name='" +
+                        deckName + "'"
                 )
             } else {
                 log(
