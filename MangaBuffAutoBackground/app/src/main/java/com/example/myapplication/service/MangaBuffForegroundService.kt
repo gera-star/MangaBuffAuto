@@ -38,6 +38,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlin.coroutines.coroutineContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -239,6 +240,16 @@ class MangaBuffForegroundService : Service() {
     // finish inline inside onStartCommand/startAllInternal before every account Job is registered.
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val accountJobs = ConcurrentHashMap<String, Job>()
+
+    // Only one account may drive the shared device/network automation at a time.
+    // Each account still owns a dedicated WebView profile, but requests otherwise
+    // leave through the same device IP; serial execution avoids cross-account bursts.
+    private val accountExecutionSemaphore = Semaphore(1)
+
+    // Lets the watchdog distinguish a healthy queued job from a lost WebView.
+    // Store the Job as the value so an older cancelled run cannot remove a newer run's marker.
+    private val queuedAccountJobs = ConcurrentHashMap<String, Job>()
+
     // Tower cycles are scheduled independently from the account task queue.
     // The delay never occupies the account WebView or blocks other tasks.
     private val towerCycleJobs = ConcurrentHashMap<String, Job>()
@@ -494,7 +505,33 @@ class MangaBuffForegroundService : Service() {
         // complete a failing run inline before accountJobs[accountId] is populated,
         // skipping finally cleanup and leaving a persisted run/WakeLock behind.
         val job = serviceScope.launch(start = CoroutineStart.LAZY) {
+            val currentJob = coroutineContext[Job]
+            var hasExecutionPermit = false
+            if (currentJob != null) queuedAccountJobs[accountId] = currentJob
+
             try {
+                publishLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "QUEUE",
+                        message = "ACCOUNT_QUEUED taskType=${taskType.title} activeLimit=1"
+                    )
+                )
+                publishStatus(accountId, "В очереди — ожидает освобождения аккаунта", true, taskType.title, 0f)
+
+                accountExecutionSemaphore.acquire()
+                hasExecutionPermit = true
+                if (currentJob != null) queuedAccountJobs.remove(accountId, currentJob)
+
+                publishLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "QUEUE",
+                        message = "ACCOUNT_QUEUE_ACQUIRED taskType=${taskType.title}"
+                    )
+                )
+                publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
+
                 automationRunner.runForAccount(
                     account = account,
                     settings = repository.getSettings(),
@@ -519,51 +556,56 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
             } finally {
-                val currentJob = coroutineContext[Job]
-                if (currentJob != null && accountJobs[accountId] === currentJob) {
-                    accountJobs.remove(accountId)
-                    automationRunner.stopAccount(accountId)
+                try {
+                    if (currentJob != null && accountJobs[accountId] === currentJob) {
+                        accountJobs.remove(accountId)
+                        // Clean up the previous account before yielding the queue permit.
+                        automationRunner.stopAccount(accountId)
 
-                    val recoveryRequested = recoveryRequests.remove(accountId)
-                    missingWebViewSince.remove(accountId)
-                    val persistedTask = readPersistedRuns()[accountId]
-                    val shouldRecover =
-                        recoveryRequested &&
-                            !stoppingExplicitly &&
-                            persistedTask == taskType
+                        val recoveryRequested = recoveryRequests.remove(accountId)
+                        missingWebViewSince.remove(accountId)
+                        val persistedTask = readPersistedRuns()[accountId]
+                        val shouldRecover =
+                            recoveryRequested &&
+                                !stoppingExplicitly &&
+                                persistedTask == taskType
 
-                    if (shouldRecover) {
-                        publishLog(
-                            LogEntry(
-                                username = account.username,
-                                component = "BG",
-                                message = "WATCHDOG_RECOVERY_SCHEDULED accountId=$accountId taskType=${taskType.title}",
-                                isError = true
+                        if (shouldRecover) {
+                            publishLog(
+                                LogEntry(
+                                    username = account.username,
+                                    component = "BG",
+                                    message = "WATCHDOG_RECOVERY_SCHEDULED accountId=$accountId taskType=${taskType.title}",
+                                    isError = true
+                                )
                             )
-                        )
-                        publishStatus(
-                            accountId,
-                            "Восстановление после сбоя WebView...",
-                            true,
-                            taskType.title,
-                            0f
-                        )
+                            publishStatus(
+                                accountId,
+                                "Восстановление после сбоя WebView...",
+                                true,
+                                taskType.title,
+                                0f
+                            )
 
-                        serviceScope.launch {
-                            delay(1_500L)
-                            if (!stoppingExplicitly && readPersistedRuns()[accountId] == taskType) {
-                                startAccountInternal(accountId, taskType)
+                            serviceScope.launch {
+                                delay(1_500L)
+                                if (!stoppingExplicitly && readPersistedRuns()[accountId] == taskType) {
+                                    startAccountInternal(accountId, taskType)
+                                }
                             }
+                        } else {
+                            removePersistedRun(accountId)
+                            if (taskType == TaskType.PROMO) {
+                                runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
+                            }
+                            publishStatus(accountId, "Готово", false, "", 0f)
+                            releaseWakeLockIfIdle()
+                            stopSelfIfIdle()
                         }
-                    } else {
-                        removePersistedRun(accountId)
-                        if (taskType == TaskType.PROMO) {
-                            runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
-                        }
-                        publishStatus(accountId, "Готово", false, "", 0f)
-                        releaseWakeLockIfIdle()
-                        stopSelfIfIdle()
                     }
+                } finally {
+                    if (currentJob != null) queuedAccountJobs.remove(accountId, currentJob)
+                    if (hasExecutionPermit) accountExecutionSemaphore.release()
                 }
             }
         }
@@ -605,6 +647,14 @@ class MangaBuffForegroundService : Service() {
                     .forEach { missingWebViewSince.remove(it) }
 
                 for (accountId in activeIds) {
+                    // Queued jobs intentionally do not own a WebView yet; starting
+                    // recovery for them would cancel/restart a healthy queue entry.
+                    val accountJob = accountJobs[accountId]
+                    if (accountJob != null && queuedAccountJobs[accountId] === accountJob) {
+                        missingWebViewSince.remove(accountId)
+                        continue
+                    }
+
                     if (webViews.containsKey(accountId)) {
                         missingWebViewSince.remove(accountId)
                         continue
@@ -676,6 +726,7 @@ class MangaBuffForegroundService : Service() {
         }
         recoveryRequests.clear()
         missingWebViewSince.clear()
+        queuedAccountJobs.clear()
         automationRunner.stopAll()
 
         if (explicitUserStop) {
