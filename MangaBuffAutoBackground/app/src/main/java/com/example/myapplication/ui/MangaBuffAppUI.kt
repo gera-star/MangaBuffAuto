@@ -90,7 +90,61 @@ fun MangaBuffAppUI(
             Column {
                 TopAppBar(
                     title = { Text("MB+", fontWeight = FontWeight.Bold) },
-                    actions = {},
+                    actions = {
+                        if (webViewAccountIds.isNotEmpty()) {
+                            Box {
+                                IconButton(onClick = { showWebViewAccountMenu = true }) {
+                                    Icon(
+                                        Icons.Default.Language,
+                                        contentDescription = "Параметры WEB",
+                                        tint = Color(0xFF69E9FF)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showWebViewAccountMenu,
+                                    onDismissRequest = { showWebViewAccountMenu = false }
+                                ) {
+                                    if (webViewContainer != null) {
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    if (debugWebViewVisible) {
+                                                        "Вернуться в приложение"
+                                                    } else {
+                                                        "Открыть WEB"
+                                                    }
+                                                )
+                                            },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.Language, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                viewModel.setDebugWebViewVisible(!debugWebViewVisible)
+                                                showWebViewAccountMenu = false
+                                            }
+                                        )
+                                    }
+                                    if (webViewAccountIds.size > 1) {
+                                        webViewAccountIds.forEach { accountId ->
+                                            val accountName = accounts.firstOrNull {
+                                                it.id == accountId
+                                            }?.username ?: accountId
+                                            DropdownMenuItem(
+                                                text = { Text(accountName) },
+                                                leadingIcon = {
+                                                    Icon(Icons.Default.People, contentDescription = null)
+                                                },
+                                                onClick = {
+                                                    onSelectWebViewAccount(accountId)
+                                                    showWebViewAccountMenu = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
 
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = Color.Transparent,
@@ -130,179 +184,76 @@ fun MangaBuffAppUI(
                 tonalElevation = 0.dp,
                 shadowElevation = 8.dp
             ) {
-                Column(
+                NavigationBar(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .height(56.dp)
+                        .padding(horizontal = 4.dp),
+                    containerColor = Color.Transparent,
+                    windowInsets = WindowInsets(0, 0, 0, 0)
                 ) {
-                    // Compact utility row lives at the very bottom, below the main navigation.
-                    Row(
-                        modifier = Modifier.fillMaxWidth().height(32.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Surface(
-                            onClick = { showSupportDialog = true },
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0x332EDCF4)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Favorite,
-                                    contentDescription = "Пожертвование",
-                                    tint = Color(0xFF69E9FF),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text("Поддержка", fontSize = 10.sp, color = Color.White, maxLines = 1)
-                            }
-                        }
-                        Surface(
-                            onClick = { showBackgroundSettings = true },
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0x332EDCF4)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Settings,
-                                    contentDescription = "Настройки фоновой работы",
-                                    tint = Color(0xFF69E9FF),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text("Настройки", fontSize = 10.sp, color = Color.White, maxLines = 1)
-                            }
-                        }
-
-                        if (webViewAccountIds.size > 1) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                Surface(
-                                    onClick = { showWebViewAccountMenu = true },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0x443D9DFF),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Language,
-                                            contentDescription = "Выбрать WEB-аккаунт",
-                                            tint = Color(0xFFB9A0FF),
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        val selectedName = accounts.firstOrNull {
-                                            it.id == selectedWebViewAccountId
-                                        }?.username ?: "WEB"
-                                        Text(
-                                            selectedName,
-                                            fontSize = 10.sp,
-                                            color = Color.White,
-                                            maxLines = 1,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Icon(
-                                            Icons.Default.ExpandMore,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                }
-                                DropdownMenu(
-                                    expanded = showWebViewAccountMenu,
-                                    onDismissRequest = { showWebViewAccountMenu = false }
-                                ) {
-                                    webViewAccountIds.forEach { accountId ->
-                                        val accountName = accounts.firstOrNull {
-                                            it.id == accountId
-                                        }?.username ?: accountId
-                                        DropdownMenuItem(
-                                            text = { Text(accountName) },
-                                            onClick = {
-                                                onSelectWebViewAccount(accountId)
-                                                showWebViewAccountMenu = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            Spacer(Modifier.weight(1f))
-                        }
-
-                        if (webViewContainer != null) {
-                            Surface(
-                                onClick = { viewModel.setDebugWebViewVisible(!debugWebViewVisible) },
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (debugWebViewVisible) Color(0x5538D9EE) else Color(0x332B3040)
-                            ) {
-                                Text(
-                                    if (debugWebViewVisible) "UI" else "WEB",
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                        }
-                    }
-
-                    NavigationBar(
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        containerColor = Color.Transparent,
-                        windowInsets = WindowInsets(0, 0, 0, 0)
-                    ) {
-                        val navColors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color(0xFF6CEBFF),
-                            selectedTextColor = Color.White,
-                            indicatorColor = Color(0x554A8DFF),
-                            unselectedIconColor = Color(0xFFB8C0D5)
-                        )
-                        NavigationBarItem(
-                            selected = activeTab == 0,
-                            onClick = { viewModel.setActiveTab(0) },
-                            icon = {
-                                Icon(
-                                    Icons.Default.People,
-                                    contentDescription = "Аккаунты (${accounts.size})"
-                                )
-                            },
-                            label = null,
-                            alwaysShowLabel = false,
-                            colors = navColors
-                        )
-                        NavigationBarItem(
-                            selected = activeTab == 1,
-                            onClick = { viewModel.setActiveTab(1) },
-                            icon = { Icon(Icons.Default.PlayCircle, contentDescription = "Задачи") },
-                            label = null,
-                            alwaysShowLabel = false,
-                            colors = navColors
-                        )
-                        NavigationBarItem(
-                            selected = activeTab == 2,
-                            onClick = { viewModel.setActiveTab(2) },
-                            icon = {
-                                Icon(
-                                    Icons.Default.List,
-                                    contentDescription = "Логи (${logs.size})"
-                                )
-                            },
-                            label = null,
-                            alwaysShowLabel = false,
-                            colors = navColors
-                        )
-                    }
+                    val navColors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color(0xFF6CEBFF),
+                        selectedTextColor = Color.White,
+                        indicatorColor = Color(0x554A8DFF),
+                        unselectedIconColor = Color(0xFFB8C0D5)
+                    )
+                    NavigationBarItem(
+                        selected = activeTab == 0,
+                        onClick = { viewModel.setActiveTab(0) },
+                        icon = {
+                            Icon(
+                                Icons.Default.People,
+                                contentDescription = "Аккаунты (${accounts.size})"
+                            )
+                        },
+                        label = null,
+                        alwaysShowLabel = false,
+                        colors = navColors
+                    )
+                    NavigationBarItem(
+                        selected = activeTab == 1,
+                        onClick = { viewModel.setActiveTab(1) },
+                        icon = { Icon(Icons.Default.PlayCircle, contentDescription = "Задачи") },
+                        label = null,
+                        alwaysShowLabel = false,
+                        colors = navColors
+                    )
+                    NavigationBarItem(
+                        selected = false,
+                        onClick = { showSupportDialog = true },
+                        icon = { Icon(Icons.Default.Favorite, contentDescription = "Поддержка") },
+                        label = null,
+                        alwaysShowLabel = false,
+                        colors = navColors
+                    )
+                    NavigationBarItem(
+                        selected = false,
+                        onClick = { showBackgroundSettings = true },
+                        icon = {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Настройки фоновой работы"
+                            )
+                        },
+                        label = null,
+                        alwaysShowLabel = false,
+                        colors = navColors
+                    )
+                    NavigationBarItem(
+                        selected = activeTab == 2,
+                        onClick = { viewModel.setActiveTab(2) },
+                        icon = {
+                            Icon(
+                                Icons.Default.List,
+                                contentDescription = "Логи (${logs.size})"
+                            )
+                        },
+                        label = null,
+                        alwaysShowLabel = false,
+                        colors = navColors
+                    )
                 }
             }
         }
