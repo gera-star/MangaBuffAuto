@@ -89,7 +89,7 @@ fun MangaBuffAppUI(
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text("MB+", fontWeight = FontWeight.Bold) },
+                    title = {},
                     actions = {
                         if (webViewAccountIds.size > 1) {
                             Box {
