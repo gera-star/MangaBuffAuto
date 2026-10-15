@@ -8938,9 +8938,10 @@ class MangaBuffAutomation(
                                                     return;
                                                 }
 
+                                                // Reduce each background scroll step by 10% (20% -> 18% of viewport).
                                                 var step = Math.min(
-                                                    420,
-                                                    Math.max(140, Math.floor(viewport * 0.20))
+                                                    378,
+                                                    Math.max(126, Math.floor(viewport * 0.18))
                                                 );
                                                 step = Math.min(step, remaining);
                                                 mbScrollReaderBy(step);
@@ -8964,7 +8965,8 @@ class MangaBuffAutomation(
                                             );
                                         }
 
-                                        var speedPxPerSecond = 2200 + Math.floor(Math.random() * 801); // 2200..3000 px/s
+                                        // Scroll speed is 10% lower than before: 1980..2700 px/s.
+                                        var speedPxPerSecond = 1980 + Math.floor(Math.random() * 721);
                                         var lastFrame = performance.now();
                                         window.__mbFastScrollRunning = true;
 
@@ -9016,7 +9018,7 @@ class MangaBuffAutomation(
                                             // Slow down only in the final viewport so the existing
                                             // bottom-stabilization logic can reliably settle.
                                             var currentSpeed = remaining < viewport * 1.5
-                                                ? Math.max(450, speedPxPerSecond * (remaining / (viewport * 1.5)))
+                                                ? Math.max(405, speedPxPerSecond * (remaining / (viewport * 1.5)))
                                                 : speedPxPerSecond;
 
                                             if (remaining > 2) {
