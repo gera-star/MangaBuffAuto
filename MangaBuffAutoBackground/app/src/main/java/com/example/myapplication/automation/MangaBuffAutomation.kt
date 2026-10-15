@@ -9886,7 +9886,7 @@ class MangaBuffAutomation(
             ?: lastFinishedChapterUrl.ifBlank { null }
 
         val targetClean = targetUrl?.substringBefore('?')?.substringBefore('#').orEmpty()
-        val targetIsChapter = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+(?:\.\d+)?$").matches(targetClean)
+        val targetIsChapter = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+(?:\\.\\d+)?$").matches(targetClean)
 
         if (!targetIsChapter) {
             val current = webView.url.orEmpty().substringBefore('?').substringBefore('#')
