@@ -81,6 +81,7 @@ fun MangaBuffAppUI(
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     Scaffold(
+        modifier = Modifier.statusBarsPadding(),
         containerColor = Color.Transparent,
         topBar = {
             Column {
@@ -140,57 +141,6 @@ fun MangaBuffAppUI(
                     )
                 )
 
-                Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = if (settings.keepScreenOn) {
-                                Icons.Default.LightMode
-                            } else {
-                                Icons.Default.Brightness4
-                            },
-                            contentDescription = null,
-                            tint = if (settings.keepScreenOn) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Не выключать экран",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                if (settings.keepScreenOn) {
-                                    "Включено во время работы автоматизации"
-                                } else {
-                                    "Выключено"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                viewModel.saveSettings(
-                                    settings.copy(keepScreenOn = !settings.keepScreenOn)
-                                )
-                            },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Text(if (settings.keepScreenOn) "Отключить" else "Включить")
-                        }
-                    }
-                }
             }
         },
         floatingActionButton = {
@@ -204,24 +154,42 @@ fun MangaBuffAppUI(
             }
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .height(48.dp),
+                windowInsets = WindowInsets(0, 0, 0, 0)
+            ) {
                 NavigationBarItem(
                     selected = activeTab == 0,
                     onClick = { viewModel.setActiveTab(0) },
-                    icon = { Icon(Icons.Default.People, contentDescription = null) },
-                    label = { Text("Аккаунты (${accounts.size})") }
+                    icon = {
+                        Icon(
+                            Icons.Default.People,
+                            contentDescription = "Аккаунты (${accounts.size})"
+                        )
+                    },
+                    label = null,
+                    alwaysShowLabel = false
                 )
                 NavigationBarItem(
                     selected = activeTab == 1,
                     onClick = { viewModel.setActiveTab(1) },
-                    icon = { Icon(Icons.Default.PlayCircle, contentDescription = null) },
-                    label = { Text("Задачи") }
+                    icon = { Icon(Icons.Default.PlayCircle, contentDescription = "Задачи") },
+                    label = null,
+                    alwaysShowLabel = false
                 )
                 NavigationBarItem(
                     selected = activeTab == 2,
                     onClick = { viewModel.setActiveTab(2) },
-                    icon = { Icon(Icons.Default.List, contentDescription = null) },
-                    label = { Text("Логи (${logs.size})") }
+                    icon = {
+                        Icon(
+                            Icons.Default.List,
+                            contentDescription = "Логи (${logs.size})"
+                        )
+                    },
+                    label = null,
+                    alwaysShowLabel = false
                 )
             }
         }
@@ -846,6 +814,9 @@ fun AccountCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
@@ -1290,6 +1261,29 @@ fun TasksTab(
                                     if (isRunning) "выполняются" else "готово",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                onSaveSettings(
+                                    settings.copy(keepScreenOn = !settings.keepScreenOn)
+                                )
+                            },
+                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(9.dp)
+                        ) {
+                            Icon(
+                                if (settings.keepScreenOn) Icons.Default.LightMode else Icons.Default.Brightness4,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                if (settings.keepScreenOn) "Экран ВКЛ" else "Экран ВЫКЛ",
+                                fontSize = 10.sp,
+                                maxLines = 1
                             )
                         }
 
