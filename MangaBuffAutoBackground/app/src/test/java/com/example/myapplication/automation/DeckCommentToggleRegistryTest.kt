@@ -21,10 +21,15 @@ class DeckCommentToggleRegistryTest {
             DeckCommentToggleRegistry.setEnabled(accountId, false)
             assertFalse(activeRunState.value.enabled)
             assertEquals(runDisableVersion + 1L, activeRunState.value.disableVersion)
+            val disabledAt = activeRunState.value.disabledAtElapsedRealtimeMs
+            assertTrue(disabledAt > 0L)
 
             DeckCommentToggleRegistry.setEnabled(accountId, true)
             assertTrue(activeRunState.value.enabled)
             assertEquals(runDisableVersion + 1L, activeRunState.value.disableVersion)
+            // Preserve the OFF timestamp through a rapid ON so shutdown latency remains
+            // measurable even if the setting is re-enabled before the coroutine resumes.
+            assertEquals(disabledAt, activeRunState.value.disabledAtElapsedRealtimeMs)
 
             // The original run checks both enabled and its captured version;
             // the ON transition must not make that run valid again.
