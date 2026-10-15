@@ -8391,30 +8391,36 @@ class MangaBuffAutomation(
                                         var waitReason = '';
                                         var postOk = postStatus !== null && postStatus >= 200 && postStatus < 300;
 
-                                        // Leave the reader once MangaBuff itself reports the current chapter
-                                        // as read and places it in history. The authoritative reward check
-                                        // is the forced /balance refresh on the native side.
+                                        // A chapter may remain in history_pool while MangaBuff batches
+                                        // CCL entries. That local queue is enough to continue ONLY when no
+                                        // /addHistory request is in flight. Navigating away with a pending
+                                        // request can cancel it and leave chapters read locally but not
+                                        // credited by the server (observed as many local chapters vs few
+                                        // chapters added to the reading quest).
                                         if (!isRead) {
                                             waitReason = 'PAGE_NOT_READ';
-                                        } else if (readSend && containsCurrent) {
-                                            confirmed = true;
-                                            confirmSource = postOk
-                                                ? 'ADD_HISTORY_2XX'
-                                                : (postStarted ? 'LOCAL_HISTORY_AFTER_POST' : 'LOCAL_HISTORY_STATE');
-                                            if (!postStarted) {
-                                                waitReason = 'ADDHISTORY_NOT_INTERCEPTED_BALANCE_WILL_VERIFY';
+                                        } else if (postStarted) {
+                                            // Once the site starts submitting a batch, wait for its response.
+                                            // Do not let readSend && containsCurrent bypass this branch:
+                                            // the current item can still be only in the outgoing request.
+                                            if (postOk) {
+                                                confirmed = true;
+                                                confirmSource = 'ADD_HISTORY_2XX';
+                                            } else if (postStatus !== null && postStatus !== 0) {
+                                                waitReason = 'POST_STATUS_' + postStatus;
+                                            } else {
+                                                waitReason = 'POST_PENDING';
                                             }
-                                        } else if (!postStarted) {
+                                        } else if (readSend && containsCurrent) {
+                                            // No request is active; MangaBuff has queued this chapter locally
+                                            // for its next CCL batch, so advancing is safe.
+                                            confirmed = true;
+                                            confirmSource = 'LOCAL_HISTORY_STATE';
+                                            waitReason = 'ADDHISTORY_NOT_INTERCEPTED_BALANCE_WILL_VERIFY';
+                                        } else {
                                             waitReason = readSend
                                                 ? 'WAITING_FOR_HISTORY_POOL_CURRENT'
                                                 : 'READ_STATUS_NOT_READY';
-                                        } else if (postOk) {
-                                            confirmed = true;
-                                            confirmSource = 'ADD_HISTORY_2XX';
-                                        } else if (postStatus !== null && postStatus !== 0) {
-                                            waitReason = 'POST_STATUS_' + postStatus;
-                                        } else {
-                                            waitReason = 'POST_PENDING';
                                         }
 
                                         return {
