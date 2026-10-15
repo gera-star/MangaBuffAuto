@@ -86,53 +86,6 @@ fun MangaBuffAppUI(
     Scaffold(
         modifier = Modifier.statusBarsPadding(),
         containerColor = Color.Transparent,
-        topBar = {
-            Column {
-                TopAppBar(
-                    title = {},
-                    actions = {
-                        if (webViewAccountIds.size > 1) {
-                            Box {
-                                IconButton(onClick = { showWebViewAccountMenu = true }) {
-                                    Icon(
-                                        Icons.Default.People,
-                                        contentDescription = "Выбор аккаунта WEB",
-                                        tint = Color(0xFF69E9FF)
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = showWebViewAccountMenu,
-                                    onDismissRequest = { showWebViewAccountMenu = false }
-                                ) {
-                                    webViewAccountIds.forEach { accountId ->
-                                        val accountName = accounts.firstOrNull {
-                                            it.id == accountId
-                                        }?.username ?: accountId
-                                        DropdownMenuItem(
-                                            text = { Text(accountName) },
-                                            leadingIcon = {
-                                                Icon(Icons.Default.People, contentDescription = null)
-                                            },
-                                            onClick = {
-                                                onSelectWebViewAccount(accountId)
-                                                showWebViewAccountMenu = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    },
-
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent,
-                        titleContentColor = Color.White,
-                        actionIconContentColor = Color.White
-                    )
-                )
-
-            }
-        },
         bottomBar = {
             Surface(
                 modifier = Modifier
@@ -190,9 +143,40 @@ fun MangaBuffAppUI(
                     )
                     NavigationBarItem(
                         selected = debugWebViewVisible,
-                        onClick = { viewModel.setDebugWebViewVisible(true) },
-                        enabled = webViewContainer != null,
-                        icon = { Icon(Icons.Default.Language, contentDescription = "Открыть WEB") },
+                        onClick = {
+                            if (webViewAccountIds.size > 1) {
+                                showWebViewAccountMenu = true
+                            } else if (webViewAccountIds.isNotEmpty()) {
+                                viewModel.setDebugWebViewVisible(true)
+                            }
+                        },
+                        enabled = webViewAccountIds.isNotEmpty(),
+                        icon = {
+                            Box {
+                                Icon(Icons.Default.Language, contentDescription = "Открыть WEB")
+                                DropdownMenu(
+                                    expanded = showWebViewAccountMenu,
+                                    onDismissRequest = { showWebViewAccountMenu = false }
+                                ) {
+                                    webViewAccountIds.forEach { accountId ->
+                                        val accountName = accounts.firstOrNull {
+                                            it.id == accountId
+                                        }?.username ?: accountId
+                                        DropdownMenuItem(
+                                            text = { Text(accountName) },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.People, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                onSelectWebViewAccount(accountId)
+                                                viewModel.setDebugWebViewVisible(true)
+                                                showWebViewAccountMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        },
                         label = null,
                         alwaysShowLabel = false,
                         colors = navColors
