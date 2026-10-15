@@ -313,48 +313,55 @@ private fun WebViewReturnOverlay(
     modifier: Modifier = Modifier,
     onReturn: () -> Unit
 ) {
-    Surface(
+    Box(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-            .border(
-                BorderStroke(
-                    1.dp,
-                    Brush.linearGradient(
-                        listOf(Color(0xFF43E8FF), Color(0xFFB85CFF))
-                    )
-                ),
-                RoundedCornerShape(18.dp)
-            ),
-        shape = RoundedCornerShape(18.dp),
-        color = Color(0xE6171A24),
-        tonalElevation = 0.dp,
-        shadowElevation = 8.dp
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(bottom = 56.dp),
+        contentAlignment = Alignment.BottomCenter
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
-                .height(56.dp)
-                .padding(horizontal = 4.dp),
+                .height(52.dp)
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             repeat(7) { index ->
-                if (index == 2) {
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        IconButton(onClick = onReturn, modifier = Modifier.size(48.dp)) {
-                            Icon(
-                                Icons.Default.KeyboardReturn,
-                                contentDescription = "Вернуться в приложение",
-                                tint = Color(0xFF6CEBFF)
-                            )
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (index == 2) {
+                        Surface(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .border(
+                                    BorderStroke(
+                                        1.5.dp,
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF43E8FF), Color(0xFFB85CFF))
+                                        )
+                                    ),
+                                    RoundedCornerShape(50)
+                                ),
+                            shape = RoundedCornerShape(50),
+                            color = Color(0xF0171A24),
+                            tonalElevation = 0.dp,
+                            shadowElevation = 8.dp
+                        ) {
+                            IconButton(
+                                onClick = onReturn,
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardReturn,
+                                    contentDescription = "Вернуться в приложение",
+                                    tint = Color(0xFF6CEBFF)
+                                )
+                            }
                         }
                     }
-                } else {
-                    Spacer(Modifier.weight(1f).fillMaxHeight())
                 }
             }
         }
