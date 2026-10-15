@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import com.example.myapplication.data.AccountRepository
+import com.example.myapplication.automation.DeckCommentToggleRegistry
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
@@ -210,6 +211,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccount(accountId: String) {
         stopAccountTask(accountId)
         repository.deleteAccount(accountId)
+        DeckCommentToggleRegistry.remove(accountId)
         loadData()
         addLog(LogEntry(message = "Аккаунт удален"))
     }
@@ -288,7 +290,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         deckComment: Boolean,
         battle: Boolean
     ) {
+        var previousDeckCommentEnabled: Boolean? = null
         val updated = repository.updateAccount(account.id) {
+            previousDeckCommentEnabled = it.deckCommentEnabled
             it.copy(
                 readerEnabled = reader,
                 towerEnabled = tower,
@@ -299,6 +303,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 battleEnabled = battle
             )
         } ?: return
+
+        // Publish only an actual deck-toggle change. Other task switches must not
+        // overwrite a newer deck state with a stale AccountCard snapshot.
+        if (previousDeckCommentEnabled != updated.deckCommentEnabled) {
+            DeckCommentToggleRegistry.setEnabled(account.id, updated.deckCommentEnabled)
+        }
 
         _accounts.update { list ->
             list.map { acc -> if (acc.id == updated.id) updated else acc }
