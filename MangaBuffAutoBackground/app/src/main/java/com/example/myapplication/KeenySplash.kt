@@ -1,8 +1,10 @@
 package com.example.myapplication
 
+import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.VideoView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -183,6 +188,67 @@ fun MangaBuffSplash(
                     modifier = Modifier.size(26.dp),
                     color = Color(0xFFFF4657),
                     strokeWidth = 2.dp
+                )
+            }
+        }
+    }
+}
+
+
+/**
+ * Bundled artwork fallback, so the splash remains visible when the remote video
+ * cannot be reached or is still preparing.
+ */
+@Composable
+fun KeenySplash(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val splashBitmap = remember(context) {
+        runCatching {
+            val parts = (0 until 7).map { index ->
+                context.assets.open("keeny_splash/part$index.bin").use { it.readBytes() }
+            }
+            val totalSize = parts.sumOf { it.size }
+            val bytes = ByteArray(totalSize)
+            var offset = 0
+            parts.forEach { part ->
+                System.arraycopy(part, 0, bytes, offset, part.size)
+                offset += part.size
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }.getOrNull()
+    }
+
+    if (splashBitmap != null) {
+        Image(
+            bitmap = splashBitmap,
+            contentDescription = "MangaBuff splash fallback",
+            modifier = modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+    } else {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF08070B), Color(0xFF3A111C), Color(0xFF08070B))
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "MangaBuff",
+                    fontSize = 36.sp,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "AUTO",
+                    fontSize = 17.sp,
+                    letterSpacing = 5.sp,
+                    color = Color(0xFFFF4657),
+                    fontWeight = FontWeight.ExtraBold
                 )
             }
         }
