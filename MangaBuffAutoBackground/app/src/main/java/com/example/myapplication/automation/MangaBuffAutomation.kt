@@ -9941,7 +9941,7 @@ class MangaBuffAutomation(
 
         // UI and automation share this process-local signal. disableVersion makes
         // OFF a one-way cancellation for this run, even if the user switches ON again.
-        val deckToggleState = DeckCommentToggleState.stateFor(
+        val deckToggleState = DeckCommentToggleRegistry.stateFor(
             account.id,
             account.deckCommentEnabled
         )
