@@ -215,7 +215,7 @@ class MangaBuffAutomation(
         private const val COMMENT_DELAY_MS = 4000L
         private const val COMMENT_DAILY_LIMIT = 13
         private const val DECK_COMMENT_DAILY_LIMIT = 13
-        private const val READER_MAX_CHAPTERS = 10
+
 
         private const val DECK_PAGE_SETTLE_MS = 2000L
         private const val DECK_SUBMIT_CALLBACK_TIMEOUT_MS = 1500L
@@ -5822,7 +5822,7 @@ class MangaBuffAutomation(
         var dailyCommentCount = 0
         var nextChapterUrlToOpen = ""
 
-        val target = settings.readerChapters.coerceIn(1, READER_MAX_CHAPTERS)
+        val target = settings.readerChapters.coerceIn(1, GlobalSettings.MAX_READER_CHAPTERS)
         currentSessionTarget = target
         currentSessionChaptersRead = 0
         log(account.username, "READER: START targetChapters=$target")
