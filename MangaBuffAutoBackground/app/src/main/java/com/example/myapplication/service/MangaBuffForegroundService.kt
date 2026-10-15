@@ -80,6 +80,8 @@ class MangaBuffForegroundService : Service() {
 
         const val EXTRA_USERNAME = "EXTRA_USERNAME"
         const val EXTRA_MESSAGE = "EXTRA_MESSAGE"
+        const val EXTRA_COMPONENT = "EXTRA_COMPONENT"
+        const val EXTRA_LOG_TIMESTAMP = "EXTRA_LOG_TIMESTAMP"
         const val EXTRA_ERROR = "EXTRA_ERROR"
         const val EXTRA_IS_RUNNING = "EXTRA_IS_RUNNING"
         const val EXTRA_CURRENT_TASK = "EXTRA_CURRENT_TASK"
@@ -858,6 +860,8 @@ class MangaBuffForegroundService : Service() {
             username = entry.username,
             extras = {
                 putExtra(EXTRA_MESSAGE, entry.message)
+                putExtra(EXTRA_COMPONENT, entry.component)
+                putExtra(EXTRA_LOG_TIMESTAMP, entry.timestamp)
                 putExtra(EXTRA_ERROR, entry.isError)
             }
         )
