@@ -17,6 +17,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -242,7 +244,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                     // Keep the debug WebView inside the safe area so it never covers
                                     // the Android status bar (clock, battery, camera cutout) or nav bar.
-                                    modifier = Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing),
+                                    modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(),
                                     update = { container ->
                                         (container.tag as? Button)?.visibility =
                                             if (debugWebViewVisible) View.VISIBLE else View.GONE
