@@ -1034,7 +1034,8 @@ fun AccountCard(
                         Text(
                             "Автоматические задачи",
                             style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
                         )
                         Spacer(Modifier.width(8.dp))
                         Surface(
@@ -1186,11 +1187,11 @@ fun TaskSwitchRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, modifier = Modifier.weight(1f))
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = Color.White, maxLines = 1, modifier = Modifier.weight(1f))
         Text(
             dailyStat,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline,
+            color = Color.White,
             maxLines = 1
         )
         Spacer(Modifier.width(8.dp))
