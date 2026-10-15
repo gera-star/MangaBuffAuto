@@ -9901,15 +9901,8 @@ class MangaBuffAutomation(
         account: MangaBuffAccount,
         webView: WebView
     ): Int {
-        val remainingDaily = (COMMENT_DAILY_LIMIT - dailyStats.comments).coerceAtLeast(0)
-        if (remainingDaily <= 0) {
-            log(
-                account.username,
-                "COMMENT: DECK_DAILY_LIMIT_REACHED used=" +
-                    dailyStats.comments + "/" + COMMENT_DAILY_LIMIT
-            )
-            return 0
-        }
+        // Deck comments are a separate activity from the profile's regular
+        // comment quest (4/13). Never gate deck comments on dailyStats.comments.
 
         // Persist per-account/per-day deck attempts so rerunning the task cannot
         // post multiple comments to the same deck. Reserve before clicking Send:
@@ -10109,24 +10102,15 @@ class MangaBuffAutomation(
         }
         // This task is intentionally eight decks per run; the page may expose
         // more links, but a single Start run must not comment on more than eight.
-        val targetDecks = unattemptedDecks.take(minOf(remainingDaily, 8))
+        val targetDecks = unattemptedDecks.take(8)
         log(
             account.username,
-            "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} gapSec=40"
+            "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} perRunLimit=8 gapSec=40"
         )
         var sentCount = 0
 
         for ((index, deck) in targetDecks.withIndex()) {
             coroutineContext.ensureActive()
-
-            if (dailyStats.comments >= COMMENT_DAILY_LIMIT) {
-                log(
-                    account.username,
-                    "COMMENT: DECK_DAILY_LIMIT_STOP used=" +
-                        dailyStats.comments + "/" + COMMENT_DAILY_LIMIT
-                )
-                break
-            }
 
             val deckUrl = deck["url"].orEmpty()
             val deckName = deck["name"].orEmpty()
@@ -10365,18 +10349,10 @@ class MangaBuffAutomation(
 
             if (confirmed) {
                 sentCount++
-                addDaily(account) { stats ->
-                    stats.copy(
-                        comments = (stats.comments + 1)
-                            .coerceAtMost(COMMENT_DAILY_LIMIT)
-                    )
-                }
-
                 log(
                     account.username,
                     "COMMENT: DECK_SUBMIT_CONFIRMED name='" +
-                        deckName + "' daily=" + dailyStats.comments +
-                        "/" + COMMENT_DAILY_LIMIT
+                        deckName + "' sentThisRun=" + sentCount
                 )
             } else {
                 log(
@@ -10389,10 +10365,7 @@ class MangaBuffAutomation(
 
             // No random short delay here: the next iteration's persistent
             // rate-limit gate enforces exactly 40 seconds between Send clicks.
-            if (
-                index + 1 < targetDecks.size &&
-                dailyStats.comments < COMMENT_DAILY_LIMIT
-            ) {
+            if (index + 1 < targetDecks.size) {
                 log(account.username, "COMMENT: DECK_NEXT_DELAY gapSec=40")
             }
         }
@@ -10400,8 +10373,7 @@ class MangaBuffAutomation(
         log(
             account.username,
             "TASK: DECK_COMMENT_END sent=" + sentCount +
-                " daily=" + dailyStats.comments +
-                "/" + COMMENT_DAILY_LIMIT
+                " (deck comments do not consume regular comment quest progress)"
         )
 
         return sentCount
