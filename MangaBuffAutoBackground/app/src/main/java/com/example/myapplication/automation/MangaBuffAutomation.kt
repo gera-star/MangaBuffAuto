@@ -22,6 +22,8 @@ import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.currentStatsDay
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,6 +35,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.onAwait
+import kotlinx.coroutines.selects.select
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -9996,32 +10000,66 @@ class MangaBuffAutomation(
 
         suspend fun evalJs(
             script: String,
-            requireDeckEnabled: Boolean = false
-        ): String? = suspendCancellableCoroutine { continuation ->
-                mainHandler.post {
-                    if (requireDeckEnabled && !deckCommentEnabledNow()) {
-                        logDeckDisabled("BEFORE_SUBMIT_DISPATCH")
-                        if (continuation.isActive) {
-                            continuation.resume(com.google.gson.Gson().toJson("DISABLED"))
-                        }
-                        return@post
-                    }
-                    try {
-                        webView.evaluateJavascript(script) { result ->
-                            if (continuation.isActive) {
-                                continuation.resume(result)
+            waitForResultAfterDispatch: Boolean = false
+        ): String? {
+            if (!deckCommentEnabledNow()) {
+                logDeckDisabled("BEFORE_WEBVIEW_EVAL")
+                return com.google.gson.Gson().toJson("DISABLED")
+            }
+
+            return coroutineScope {
+                val evaluation = async {
+                    suspendCancellableCoroutine<String?> { continuation ->
+                        mainHandler.post {
+                            // The toggle can change while this coroutine is queued on Main.
+                            if (!deckCommentEnabledNow()) {
+                                logDeckDisabled("BEFORE_WEBVIEW_EVAL_DISPATCH")
+                                if (continuation.isActive) {
+                                    continuation.resume(com.google.gson.Gson().toJson("DISABLED"))
+                                }
+                                return@post
+                            }
+                            try {
+                                webView.evaluateJavascript(script) { result ->
+                                    if (continuation.isActive) continuation.resume(result)
+                                }
+                            } catch (e: Exception) {
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_JS_ERROR error=" + e.message,
+                                    true
+                                )
+                                if (continuation.isActive) continuation.resume(null)
                             }
                         }
-                    } catch (e: Exception) {
-                        log(
-                            account.username,
-                            "COMMENT: DECK_JS_ERROR error=" + e.message,
-                            true
-                        )
-                        if (continuation.isActive) continuation.resume(null)
+                    }
+                }
+
+                if (waitForResultAfterDispatch) {
+                    // A Send script already dispatched while enabled is an in-flight action.
+                    // Keep its callback so the daily duplicate guard can record the outcome.
+                    evaluation.await()
+                } else {
+                    val disabled = async {
+                        deckToggleState.first {
+                            !it.enabled || it.disableVersion != deckToggleDisableVersion
+                        }
+                    }
+                    try {
+                        select<String?> {
+                            evaluation.onAwait { it }
+                            disabled.onAwait {
+                                logDeckDisabled("WEBVIEW_EVAL_INTERRUPTED")
+                                null
+                            }
+                        }
+                    } finally {
+                        evaluation.cancel()
+                        disabled.cancel()
                     }
                 }
             }
+        }
 
         suspend fun loadUrl(
             url: String,
@@ -10399,7 +10437,7 @@ class MangaBuffAutomation(
                                 }
                             })();
                             """.trimIndent(),
-                            requireDeckEnabled = true
+                            waitForResultAfterDispatch = true
                         )
                         val submitState = try {
                             com.google.gson.Gson().fromJson(
@@ -10485,7 +10523,12 @@ class MangaBuffAutomation(
                     }
                 }
 
-                if (attempt == 49 && !actionClicked && !toggleDisabledDuringDeck) {
+                if (
+                    attempt == 49 &&
+                    !actionClicked &&
+                    !toggleDisabledDuringDeck &&
+                    deckCommentEnabledNow()
+                ) {
                     log(
                         account.username,
                         if (buttonStillDisabledAfterInput) {
