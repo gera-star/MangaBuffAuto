@@ -5,20 +5,31 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.view.Gravity
 import android.view.View
-import android.widget.Button
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardReturn
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -29,10 +40,13 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.example.myapplication.automation.AutomationWebViewRegistry
@@ -214,41 +228,12 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             )
 
-                                            val returnButton = Button(this@MainActivity).apply {
-                                                text = "Вернуться в UI"
-                                                isAllCaps = false
-                                                setOnClickListener {
-                                                    viewModel.setDebugWebViewVisible(false)
-                                                }
-                                                visibility = if (debugWebViewVisible) {
-                                                    View.VISIBLE
-                                                } else {
-                                                    View.GONE
-                                                }
-                                            }
-
-                                            addView(
-                                                returnButton,
-                                                FrameLayout.LayoutParams(
-                                                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                                                    FrameLayout.LayoutParams.WRAP_CONTENT
-                                                ).apply {
-                                                    gravity = Gravity.TOP or Gravity.END
-                                                    topMargin = (64 * resources.displayMetrics.density).toInt()
-                                                    marginEnd = (12 * resources.displayMetrics.density).toInt()
-                                                }
-                                            )
-
-                                            tag = returnButton
                                         }
                                     },
                                     // Keep the debug WebView inside the safe area so it never covers
                                     // the Android status bar (clock, battery, camera cutout) or nav bar.
                                     modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(),
                                     update = { container ->
-                                        (container.tag as? Button)?.visibility =
-                                            if (debugWebViewVisible) View.VISIBLE else View.GONE
-
                                         webView.visibility =
                                             if (debugWebViewVisible) View.VISIBLE else View.INVISIBLE
                                     }
@@ -263,6 +248,13 @@ class MainActivity : ComponentActivity() {
                                 playbackFailed = splashPlaybackFailed,
                                 onPlaybackStarted = { splashPlaybackStarted = true },
                                 onPlaybackFailed = { splashPlaybackFailed = true }
+                            )
+                        }
+
+                        if (debugWebViewVisible && debugWebView != null) {
+                            WebViewReturnOverlay(
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                                onReturn = { viewModel.setDebugWebViewVisible(false) }
                             )
                         }
                     }
@@ -310,6 +302,61 @@ private fun LiquidGlassBackdrop() {
                     radius = size.maxDimension * 0.9f
                 )
             )
+        }
+    }
+}
+
+
+
+@Composable
+private fun WebViewReturnOverlay(
+    modifier: Modifier = Modifier,
+    onReturn: () -> Unit
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+            .border(
+                BorderStroke(
+                    1.dp,
+                    Brush.linearGradient(
+                        listOf(Color(0xFF43E8FF), Color(0xFFB85CFF))
+                    )
+                ),
+                RoundedCornerShape(18.dp)
+            ),
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xE6171A24),
+        tonalElevation = 0.dp,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .height(56.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            repeat(7) { index ->
+                if (index == 2) {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        IconButton(onClick = onReturn, modifier = Modifier.size(48.dp)) {
+                            Icon(
+                                Icons.Default.KeyboardReturn,
+                                contentDescription = "Вернуться в приложение",
+                                tint = Color(0xFF6CEBFF)
+                            )
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.weight(1f).fillMaxHeight())
+                }
+            }
         }
     }
 }
