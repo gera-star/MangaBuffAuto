@@ -81,6 +81,7 @@ fun MangaBuffAppUI(
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
             Column {
                 TopAppBar(
@@ -238,7 +239,10 @@ fun MangaBuffAppUI(
                     onOpenBalance = { account -> selectedBalanceAccount = account },
                     onOpenAddAccount = { viewModel.setShowAddAccountDialog(true) },
                     onChangeManga = { account -> viewModel.changeCurrentManga(account.id) },
-                    onUpdateTasks = { account, r, q, a, m, c, d, b -> viewModel.updateAccountTasks(account, r, q, a, m, c, d, b) }
+                    onUpdateTasks = { account, r, q, a, m, c, d, b -> viewModel.updateAccountTasks(account, r, q, a, m, c, d, b) },
+                    onToggleOffline = { account ->
+                        viewModel.setAccountOffline(account.id, !account.isOffline)
+                    }
                 )
                 1 -> TasksTab(
                     accounts = accounts,
@@ -765,7 +769,8 @@ fun AccountsTab(
     onOpenBalance: (MangaBuffAccount) -> Unit,
     onOpenAddAccount: () -> Unit,
     onChangeManga: (MangaBuffAccount) -> Unit,
-    onUpdateTasks: (MangaBuffAccount, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
+    onUpdateTasks: (MangaBuffAccount, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit,
+    onToggleOffline: (MangaBuffAccount) -> Unit
 ) {
     if (accounts.isEmpty()) {
         Box(
@@ -807,7 +812,8 @@ fun AccountsTab(
                     onRefresh = { onRefresh(account) },
                     onOpenBalance = { onOpenBalance(account) },
                     onChangeManga = { onChangeManga(account) },
-                    onUpdateTasks = { r, q, a, m, c, d, b -> onUpdateTasks(account, r, q, a, m, c, d, b) }
+                    onUpdateTasks = { r, q, a, m, c, d, b -> onUpdateTasks(account, r, q, a, m, c, d, b) },
+                    onToggleOffline = { onToggleOffline(account) }
                 )
             }
         }
@@ -824,7 +830,8 @@ fun AccountCard(
     onRefresh: () -> Unit,
     onOpenBalance: () -> Unit,
     onChangeManga: () -> Unit,
-    onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
+    onUpdateTasks: (Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit,
+    onToggleOffline: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showDeleteConfirmation by remember(account.id) { mutableStateOf(false) }
@@ -929,11 +936,31 @@ fun AccountCard(
                         horizontalArrangement = Arrangement.Start,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        TextButton(
+                            onClick = onToggleOffline,
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.height(30.dp),
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = if (account.isOffline) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                }
+                            )
+                        ) {
+                            Text(
+                                text = if (account.isOffline) "ONLINE" else "OFFLINE",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+
                         // 🎲 = сменить мангу: отметить текущую как "Прочитано"
                         // и продолжить обычный каталог с hide_read=1.
                         IconButton(
                             onClick = onChangeManga,
-                            enabled = account.isRunning,
+                            enabled = account.isRunning && !account.isOffline,
                             modifier = Modifier.size(30.dp)
                         ) {
                             Text(
@@ -947,6 +974,7 @@ fun AccountCard(
                                 if (account.isRunning) onStopAccount()
                                 else onRunTask(TaskType.ALL)
                             },
+                            enabled = !account.isOffline,
                             modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
@@ -963,6 +991,7 @@ fun AccountCard(
 
                         IconButton(
                             onClick = onRefresh,
+                            enabled = !account.isOffline,
                             modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
