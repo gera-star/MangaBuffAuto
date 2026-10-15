@@ -1703,6 +1703,16 @@ class MangaBuffAutomation(
                         log(account.username, "[READQUEST_DIAG] CHANGE before=$before after=$chapters delta=+0")
                     }
 
+                    // Sync stale local comment counters from the site progress (e.g. 4/13).
+                    val serverCommentCount = Regex("""(\\d+)\\s*/\\s*(\\d+)""").find(comments)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    if (serverCommentCount != null) {
+                        val serverCount = serverCommentCount.coerceIn(0, COMMENT_DAILY_LIMIT)
+                        if (dailyStats.comments != serverCount) {
+                            log(account.username, "COMMENT: DAILY_COUNTER_SYNC source=SITE old=" + dailyStats.comments + " new=" + serverCount + " raw='" + comments + "'")
+                            dailyStats = dailyStats.copy(day = currentStatsDay(), comments = serverCount)
+                            publishDailyStats(account)
+                        }
+                    }
                     log(account.username, "STAT: BALANCE_PARSED diamonds=$diamonds cards=$dropRaw chapters=$chapters comments=$comments")
 
                     val dropMatch = Regex("(\\d+)\\s+из\\s+(\\d+)").find(dropRaw)
