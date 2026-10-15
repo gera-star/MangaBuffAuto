@@ -9510,7 +9510,7 @@ class MangaBuffAutomation(
             when {
                 startUrl.isNotBlank() -> {
                     val url = startUrl.substringBefore('?').substringBefore('#')
-                    val valid = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+$").matches(url)
+                    val valid = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+(?:\\.\\d+)?$").matches(url)
 
                     if (!valid) {
                         log(account.username, "READER: INVALID_NEXT_CHAPTER_URL url=$url", true)
