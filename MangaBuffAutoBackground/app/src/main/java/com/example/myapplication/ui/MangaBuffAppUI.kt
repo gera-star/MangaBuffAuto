@@ -258,7 +258,7 @@ fun MangaBuffAppUI(
                     }
 
                     NavigationBar(
-                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
                         containerColor = Color.Transparent,
                         windowInsets = WindowInsets(0, 0, 0, 0)
                     ) {
