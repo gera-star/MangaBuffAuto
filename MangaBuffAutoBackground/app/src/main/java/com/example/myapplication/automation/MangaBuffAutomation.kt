@@ -1388,9 +1388,13 @@ class MangaBuffAutomation(
     private var lastFinishedMangaTitle = ""
     private var totalMangaChapters = 0
     private var giftsFound = 0
+    @Volatile
     private var pendingMangaMarkAsRead = false
+    @Volatile
     private var pendingTerminalChapterResult: ReaderResult.ChapterRead? = null
+    @Volatile
     private var pendingTerminalMarkReadAttempts = 0
+    @Volatile
     private var pendingMangaMarkReadGeneration = 0L
     private var currentSessionChaptersRead = 0
     private var currentSessionTarget = 0
@@ -6089,14 +6093,33 @@ class MangaBuffAutomation(
                                 pendingMangaMarkAsRead = false
                                 val terminalResult = pendingTerminalChapterResult
                                 if (terminalResult != null) {
-                                    pendingTerminalChapterResult = null
-                                    pendingTerminalMarkReadAttempts = 0
-                                    log(
-                                        account.username,
-                                        "READER: TERMINAL_MARK_READ_WATCHDOG_TIMEOUT -> CONTINUE_TO_CATALOG markReadConfirmed=false",
-                                        true
-                                    )
-                                    safeResume(terminalResult)
+                                    if (pendingTerminalMarkReadAttempts < TERMINAL_MARK_READ_MAX_ATTEMPTS) {
+                                        val nextAttempt = pendingTerminalMarkReadAttempts + 1
+                                        log(
+                                            account.username,
+                                            "READER: TERMINAL_MARK_READ_TIMEOUT_RETRY nextAttempt=$nextAttempt/$TERMINAL_MARK_READ_MAX_ATTEMPTS",
+                                            true
+                                        )
+                                        mainHandler.postDelayed({
+                                            if (
+                                                !resumed &&
+                                                continuation.isActive &&
+                                                pendingTerminalChapterResult === terminalResult
+                                            ) {
+                                                activeReaderMarkRead?.invoke()
+                                            }
+                                        }, TERMINAL_MARK_READ_RETRY_DELAY_MS)
+                                    } else {
+                                        pendingTerminalChapterResult = null
+                                        pendingTerminalMarkReadAttempts = 0
+                                        log(
+                                            account.username,
+                                            "READER: TERMINAL_MARK_READ_WATCHDOG_GIVE_UP attempts=$TERMINAL_MARK_READ_MAX_ATTEMPTS " +
+                                                "continueToCatalog=true markReadConfirmed=false",
+                                            true
+                                        )
+                                        safeResume(terminalResult)
+                                    }
                                 } else {
                                     log(
                                         account.username,
