@@ -35,6 +35,8 @@ data class MangaBuffAccount(
     val commentEnabled: Boolean = true,
     val deckCommentEnabled: Boolean = false,
     val battleEnabled: Boolean = false, // По умолчанию Карточные бои = ВЫКЛ
+    /** When true, all automation and automatic Tower restarts are disabled for this account. */
+    val isOffline: Boolean = false,
     val lastRunTime: Long = 0L,
     val statusMessage: String? = "Готов",
     val isRunning: Boolean = false,
