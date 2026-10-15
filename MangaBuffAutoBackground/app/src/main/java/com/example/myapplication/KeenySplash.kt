@@ -1,23 +1,31 @@
 package com.example.myapplication
 
-import android.media.MediaPlayer
-import android.net.Uri
-import android.widget.VideoView
+import android.util.Log
+import android.view.LayoutInflater
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.RawResourceDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+
+private const val SPLASH_TAG = "MangaBuffSplash"
 
 /**
- * Full-screen splash using the MP4 bundled in res/raw.
- * Playback does not depend on network access and shows no fallback image or text.
+ * Full-screen splash video bundled in res/raw. Playback is offline.
+ *
+ * The intro is considered started only after ExoPlayer reports the first
+ * rendered video frame, not merely when the media is prepared.
  */
 @Composable
 fun MangaBuffSplash(
@@ -26,14 +34,51 @@ fun MangaBuffSplash(
     onPlaybackStarted: () -> Unit,
     onPlaybackFailed: () -> Unit
 ) {
-    val context = LocalContext.current
-    val videoViewRef = remember { mutableStateOf<VideoView?>(null) }
-    val failureReported = remember { mutableStateOf(false) }
+    val appContext = LocalContext.current.applicationContext
+    val player = remember(appContext) {
+        ExoPlayer.Builder(appContext).build()
+    }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(player) {
+        var firstFrameReported = false
+        var failureReported = false
+
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                if (!firstFrameReported) {
+                    firstFrameReported = true
+                    Log.d(SPLASH_TAG, "First video frame rendered")
+                    onPlaybackStarted()
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                Log.e(
+                    SPLASH_TAG,
+                    "Bundled splash playback failed: ${error.errorCodeName}",
+                    error
+                )
+                if (!failureReported) {
+                    failureReported = true
+                    onPlaybackFailed()
+                }
+            }
+        }
+
+        player.addListener(listener)
+        player.repeatMode = Player.REPEAT_MODE_ONE
+        player.volume = 0f
+        player.setMediaItem(
+            MediaItem.fromUri(
+                RawResourceDataSource.buildRawResourceUri(R.raw.mangabuff_splash)
+            )
+        )
+        player.prepare()
+        player.playWhenReady = true
+
         onDispose {
-            videoViewRef.value?.let { view -> runCatching { view.stopPlayback() } }
-            videoViewRef.value = null
+            player.removeListener(listener)
+            player.release()
         }
     }
 
@@ -46,36 +91,15 @@ fun MangaBuffSplash(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
-                    VideoView(viewContext).apply {
-                        setBackgroundColor(android.graphics.Color.BLACK)
-                        setOnPreparedListener { player: MediaPlayer ->
-                            player.isLooping = true
-                            player.setVolume(0f, 0f)
-                            runCatching {
-                                player.setVideoScalingMode(
-                                    MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
-                                )
-                            }
-                            start()
-                            onPlaybackStarted()
-                        }
-                        setOnErrorListener { _, _, _ ->
-                            if (!failureReported.value) {
-                                failureReported.value = true
-                                onPlaybackFailed()
-                            }
-                            true
-                        }
-                        videoViewRef.value = this
-                        val videoUri = Uri.parse(
-                            "android.resource://${viewContext.packageName}/${R.raw.mangabuff_splash}"
-                        )
-                        setVideoURI(videoUri)
+                    (LayoutInflater.from(viewContext)
+                        .inflate(R.layout.splash_player_view, null, false) as PlayerView).apply {
+                        player = player
                     }
                 },
-                update = { view ->
-                    // Playback starts from onPrepared; don't restart while recomposing.
-                    if (view.tag == null) view.tag = true
+                update = { playerView ->
+                    if (playerView.player !== player) {
+                        playerView.player = player
+                    }
                 }
             )
         }
