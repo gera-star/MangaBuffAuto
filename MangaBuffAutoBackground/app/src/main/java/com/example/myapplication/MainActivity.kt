@@ -122,7 +122,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = true, dynamicColor = false) {
                 val settings by viewModel.settings.collectAsState()
                 val automationRunning by viewModel.isRunning.collectAsState()
 
