@@ -1380,6 +1380,19 @@ class MangaBuffAutomation(
     )
 
     private val recentCommentIndexes = mutableListOf<Int>()
+    // Deck comments use their own shuffle bag so all 40 phrases are random without
+    // repeating until the bag is exhausted. This is separate from chapter comments.
+    private val recentDeckCommentIndexes = mutableListOf<Int>()
+
+    private fun nextRandomDeckComment(): String {
+        if (recentDeckCommentIndexes.size >= deckCommentPhrases.size) {
+            recentDeckCommentIndexes.clear()
+        }
+        val available = deckCommentPhrases.indices.filterNot { it in recentDeckCommentIndexes }
+        val index = available.random()
+        recentDeckCommentIndexes += index
+        return deckCommentPhrases[index]
+    }
 
     private var currentMangaUrl = ""
     private var lastFinishedChapterUrl = ""
@@ -2279,15 +2292,18 @@ class MangaBuffAutomation(
             }
         }
 
-        // Deck comments have priority: once the account's stats/authentication
-        // check succeeds, go directly to /decks before battle, tower, ads, mine,
-        // or reader tasks. This makes the user's enabled-decks flow predictable.
-        // Run enabled deck comments before the potentially long reader task.
-        // Otherwise "Start all" can spend a long time reading chapters before the
-        // user sees any deck-comment activity in the logs.
-        if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) && account.deckCommentEnabled) {
+        // Deck comments are a START-task action, not a side effect of statistics refresh.
+        // fetchAndLogBalanceInfo() and the reader's periodic balance refresh never dispatch
+        // this task. Only an explicit "Start all" or "Comments" run can enter this block,
+        // and only when the per-account deck toggle is enabled.
+        val deckCommentsRequestedByStart =
+            taskType == TaskType.ALL || taskType == TaskType.COMMENT
+        if (deckCommentsRequestedByStart && account.deckCommentEnabled) {
             coroutineContext.ensureActive()
-            log(account.username, "TASK: DECK_COMMENT_DISPATCH taskType=${taskType.title}")
+            log(
+                account.username,
+                "TASK: DECK_COMMENT_DISPATCH source=EXPLICIT_START taskType=${taskType.title} enabled=true"
+            )
             val deckStart = SystemClock.elapsedRealtime()
             val deckSent = runDeckCommentTask(account, webView)
             log(
@@ -2296,8 +2312,17 @@ class MangaBuffAutomation(
                     (SystemClock.elapsedRealtime() - deckStart) + "ms"
             )
             fetchAndLogBalanceInfo(account, webView)
-        } else if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) && !account.deckCommentEnabled) {
-            log(account.username, "COMMENT: DECK_DISABLED taskType=${taskType.title}")
+        } else if (deckCommentsRequestedByStart) {
+            log(
+                account.username,
+                "COMMENT: DECK_SKIPPED reason=DISABLED_OR_NOT_REQUESTED " +
+                    "taskType=${taskType.title} enabled=${account.deckCommentEnabled}"
+            )
+        } else {
+            log(
+                account.username,
+                "COMMENT: DECK_SKIPPED reason=NOT_DECK_TASK taskType=${taskType.title}"
+            )
         }
 
         if (taskType == TaskType.ALL || taskType == TaskType.BATTLE) {
@@ -10110,7 +10135,7 @@ class MangaBuffAutomation(
                 delay(waitForGap)
             }
 
-            val commentText = deckCommentPhrases.random()
+            val commentText = nextRandomDeckComment()
             val commentJs = com.google.gson.Gson().toJson(commentText)
 
             log(
