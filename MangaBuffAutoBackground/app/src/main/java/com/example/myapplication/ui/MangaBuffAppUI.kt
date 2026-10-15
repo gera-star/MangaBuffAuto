@@ -843,11 +843,7 @@ fun AccountCard(
                         text = accountInitials,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = if (account.isRunning) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSecondaryContainer
-                        }
+                        color = Color.White
                     )
                 }
 
@@ -888,15 +884,15 @@ fun AccountCard(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = "💎 " + account.diamonds, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                                Text(text = "🃏 " + account.cardDrop, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                Text(text = "💎 " + account.diamonds, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, color = Color.White)
+                                Text(text = "🃏 " + account.cardDrop, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, color = Color.White)
                             }
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = "📖 " + account.chapterProgress, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                                Text(text = "💬 " + account.commentProgress, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                Text(text = "📖 " + account.chapterProgress, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, color = Color.White)
+                                Text(text = "💬 " + account.commentProgress, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, color = Color.White)
                             }
                         }
                     }
@@ -993,7 +989,8 @@ fun AccountCard(
                             Icon(
                                 if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                                 contentDescription = "Настройки",
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(18.dp),
+                                tint = Color.White
                             )
                         }
                     }
