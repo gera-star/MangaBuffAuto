@@ -8411,9 +8411,19 @@ class MangaBuffAutomation(
                                             } else {
                                                 waitReason = 'POST_PENDING';
                                             }
+                                        } else if (
+                                            readSend &&
+                                            containsCurrent &&
+                                            cclVal > 0 &&
+                                            pool.length >= cclVal
+                                        ) {
+                                            // The local queue has reached the site's batch threshold.
+                                            // Do not navigate away until the corresponding POST is observed
+                                            // and completes; otherwise the request can be aborted on navigation.
+                                            waitReason = 'WAITING_FOR_HISTORY_BATCH_POST';
                                         } else if (readSend && containsCurrent) {
-                                            // No request is active; MangaBuff has queued this chapter locally
-                                            // for its next CCL batch, so advancing is safe.
+                                            // The chapter is queued locally below the batch threshold, with
+                                            // no request in flight. It is safe to open the next chapter.
                                             confirmed = true;
                                             confirmSource = 'LOCAL_HISTORY_STATE';
                                             waitReason = 'ADDHISTORY_NOT_INTERCEPTED_BALANCE_WILL_VERIFY';
