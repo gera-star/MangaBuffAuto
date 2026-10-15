@@ -9959,15 +9959,61 @@ class MangaBuffAutomation(
         }
 
         fun logDeckDisabled(stage: String) {
+            val preSubmitStage = stage == "BEFORE_OPEN" ||
+                stage == "BEFORE_SUBMIT_DISPATCH" ||
+                stage == "BEFORE_NAVIGATION" ||
+                stage == "WAIT_DECK_LIST" ||
+                stage == "LIST_PAGE_SETTLE" ||
+                stage == "AFTER_DECK_LIST_READ" ||
+                stage == "RATE_LIMIT_WAIT" ||
+                stage == "BEFORE_OPEN_DECK" ||
+                stage == "WAIT_DECK_PAGE" ||
+                stage == "DECK_PAGE_SETTLE" ||
+                stage == "SEND_CONTROLS" ||
+                stage.startsWith("BEFORE_DECK_")
+
+            // A generic WebView-wait log may come before the caller reaches a stage
+            // that proves no Send was dispatched. Keep this diagnostic independent
+            // from the one-time end/latency record so the proven stage is not lost.
+            if (preSubmitStage) {
+                log(
+                    account.username,
+                    "COMMENT: DECK_TASK_CANCELLED_BEFORE_SUBMIT stage=$stage sent=$sentCount"
+                )
+            }
+
             if (!disableEndLogged.compareAndSet(false, true)) return
+            val stateAtStop = deckToggleState.value
+            val stopLatencyMs = if (
+                stateAtStop.disableVersion != deckToggleDisableVersion &&
+                stateAtStop.disabledAtElapsedRealtimeMs > 0L
+            ) {
+                (SystemClock.elapsedRealtime() - stateAtStop.disabledAtElapsedRealtimeMs)
+                    .coerceAtLeast(0L)
+            } else {
+                null
+            }
             log(
                 account.username,
                 "COMMENT: DECK_TASK_DISABLED_BY_USER stage=$stage sent=$sentCount"
             )
             log(
                 account.username,
-                "COMMENT: DECK_COMMENT_END reason=DISABLED sent=$sentCount"
+                "COMMENT: DECK_TASK_CANCELLED stage=$stage sent=$sentCount"
             )
+            val latencyLabel = stopLatencyMs?.toString() ?: "unknown"
+            log(
+                account.username,
+                "COMMENT: DECK_COMMENT_END reason=DISABLED sent=$sentCount " +
+                    "stopLatencyMs=$latencyLabel targetMs=1000 maxMs=2000"
+            )
+            if (stopLatencyMs != null && stopLatencyMs > 2_000L) {
+                log(
+                    account.username,
+                    "COMMENT: DECK_STOP_LATENCY_BREACH actualMs=$stopLatencyMs maxMs=2000",
+                    true
+                )
+            }
         }
 
         suspend fun stopIfDeckCommentsDisabled(stage: String): Boolean {
@@ -10004,7 +10050,9 @@ class MangaBuffAutomation(
             waitForResultAfterDispatch: Boolean = false
         ): String? {
             if (!deckCommentEnabledNow()) {
-                logDeckDisabled("BEFORE_WEBVIEW_EVAL")
+                logDeckDisabled(
+                    if (waitForResultAfterDispatch) "BEFORE_SUBMIT_DISPATCH" else "WEBVIEW_EVAL"
+                )
                 return com.google.gson.Gson().toJson("DISABLED")
             }
 
@@ -10016,7 +10064,13 @@ class MangaBuffAutomation(
                             if (!continuation.isActive) return@post
                             // The toggle can change while this coroutine is queued on Main.
                             if (!deckCommentEnabledNow()) {
-                                logDeckDisabled("BEFORE_WEBVIEW_EVAL_DISPATCH")
+                                logDeckDisabled(
+                                    if (waitForResultAfterDispatch) {
+                                        "BEFORE_SUBMIT_DISPATCH"
+                                    } else {
+                                        "BEFORE_WEBVIEW_EVAL_DISPATCH"
+                                    }
+                                )
                                 if (continuation.isActive) {
                                     continuation.resume(com.google.gson.Gson().toJson("DISABLED"))
                                 }
@@ -10564,7 +10618,7 @@ class MangaBuffAutomation(
             }
 
             if (toggleDisabledDuringDeck || !deckCommentEnabledNow()) {
-                logDeckDisabled("SEND_CONTROLS")
+                logDeckDisabled(if (actionClicked) "AFTER_SEND_CLICK" else "SEND_CONTROLS")
                 return sentCount
             }
             if (!actionClicked) continue
@@ -10658,7 +10712,7 @@ class MangaBuffAutomation(
         log(
             account.username,
             "TASK: DECK_COMMENT_END sent=" + sentCount +
-                " dailyAttempts=" + dailyDeckAttemptCount +
+                " reason=COMPLETED dailyAttempts=" + dailyDeckAttemptCount +
                 "/$DECK_COMMENT_DAILY_LIMIT (separate from regular comment quest)"
         )
 
