@@ -203,6 +203,9 @@ class MangaBuffAutomation(
         private const val ADS_DAILY_LIMIT = 3
         private const val ADS_DAILY_LIMIT_MESSAGE = "Нельзя смотреть рекламу больше 3 раз в сутки"
         private const val MINE_COMPLETION_DELAY_MS = 2000L
+        private const val TERMINAL_MARK_READ_MAX_ATTEMPTS = 3
+        private const val TERMINAL_MARK_READ_RETRY_DELAY_MS = 1_000L
+        private const val MARK_READ_WATCHDOG_MS = 15_000L
 
         private const val COMMENT_DELAY_MS = 4000L
         private const val COMMENT_DAILY_LIMIT = 13
@@ -1387,6 +1390,8 @@ class MangaBuffAutomation(
     private var giftsFound = 0
     private var pendingMangaMarkAsRead = false
     private var pendingTerminalChapterResult: ReaderResult.ChapterRead? = null
+    private var pendingTerminalMarkReadAttempts = 0
+    private var pendingMangaMarkReadGeneration = 0L
     private var currentSessionChaptersRead = 0
     private var currentSessionTarget = 0
     private var lastKnownReadQuest = "0/75"
@@ -6024,37 +6029,47 @@ class MangaBuffAutomation(
                     )
                 } catch (_: Exception) {}
 
+                if (pendingTerminalChapterResult != null) {
+                    pendingTerminalMarkReadAttempts++
+                }
                 pendingMangaMarkAsRead = true
+                pendingMangaMarkReadGeneration += 1L
+                val attemptGeneration = pendingMangaMarkReadGeneration
                 val markUrl = ensureCanonicalMangaUrl(
                     currentMangaUrl.ifBlank { activeChapterContext?.mangaUrl ?: "" }
                 )
                 if (markUrl.isBlank()) {
-                    log(account.username, "READER: MARK_READ_NO_MANGA_URL", true)
                     pendingMangaMarkAsRead = false
+                    val terminalResult = pendingTerminalChapterResult
+                    if (terminalResult != null) {
+                        pendingTerminalChapterResult = null
+                        pendingTerminalMarkReadAttempts = 0
+                        log(account.username, "READER: TERMINAL_MARK_READ_NO_MANGA_URL -> CONTINUE_TO_CATALOG", true)
+                        safeResume(terminalResult)
+                    } else {
+                        log(account.username, "READER: MARK_READ_NO_MANGA_URL -> SKIP_MANGA", true)
+                        safeResume(
+                            ReaderResult.MangaSkipped(
+                                mangaUrl = currentMangaUrl,
+                                title = cleanMangaTitle(lastFinishedMangaTitle)
+                            )
+                        )
+                    }
                 } else {
                     currentMangaUrl = markUrl
                     log(account.username, "READER: OPEN_MANGA_INFO_FOR_MANUAL_READ_MARK url=" + markUrl)
                     mainHandler.post {
-                        try { webView.loadUrl(markUrl) }
-                        catch (e: Exception) {
+                        try {
+                            webView.loadUrl(markUrl)
+                        } catch (e: Exception) {
                             pendingMangaMarkAsRead = false
                             log(account.username, "READER: MARK_READ_NAVIGATION_ERROR error=" + (e.message ?: "unknown"), true)
-                            safeResume(
-                                ReaderResult.MangaSkipped(
-                                    mangaUrl = markUrl,
-                                    title = cleanMangaTitle(lastFinishedMangaTitle)
-                                )
-                            )
-                        }
-
-                        mainHandler.postDelayed({
-                            if (!resumed && continuation.isActive && pendingMangaMarkAsRead) {
-                                pendingMangaMarkAsRead = false
-                                log(
-                                    account.username,
-                                    "READER: MARK_READ_WATCHDOG_TIMEOUT -> SKIP_MANGA",
-                                    true
-                                )
+                            val terminalResult = pendingTerminalChapterResult
+                            if (terminalResult != null) {
+                                pendingTerminalChapterResult = null
+                                pendingTerminalMarkReadAttempts = 0
+                                safeResume(terminalResult)
+                            } else {
                                 safeResume(
                                     ReaderResult.MangaSkipped(
                                         mangaUrl = markUrl,
@@ -6062,7 +6077,41 @@ class MangaBuffAutomation(
                                     )
                                 )
                             }
-                        }, 15_000L)
+                        }
+
+                        mainHandler.postDelayed({
+                            if (
+                                !resumed &&
+                                continuation.isActive &&
+                                pendingMangaMarkAsRead &&
+                                pendingMangaMarkReadGeneration == attemptGeneration
+                            ) {
+                                pendingMangaMarkAsRead = false
+                                val terminalResult = pendingTerminalChapterResult
+                                if (terminalResult != null) {
+                                    pendingTerminalChapterResult = null
+                                    pendingTerminalMarkReadAttempts = 0
+                                    log(
+                                        account.username,
+                                        "READER: TERMINAL_MARK_READ_WATCHDOG_TIMEOUT -> CONTINUE_TO_CATALOG markReadConfirmed=false",
+                                        true
+                                    )
+                                    safeResume(terminalResult)
+                                } else {
+                                    log(
+                                        account.username,
+                                        "READER: MARK_READ_WATCHDOG_TIMEOUT -> SKIP_MANGA",
+                                        true
+                                    )
+                                    safeResume(
+                                        ReaderResult.MangaSkipped(
+                                            mangaUrl = markUrl,
+                                            title = cleanMangaTitle(lastFinishedMangaTitle)
+                                        )
+                                    )
+                                }
+                            }
+                        }, MARK_READ_WATCHDOG_MS)
                     }
                 }
             }
@@ -6071,6 +6120,7 @@ class MangaBuffAutomation(
         giftsFound = 0
         pendingMangaMarkAsRead = false
         pendingTerminalChapterResult = null
+        pendingTerminalMarkReadAttempts = 0
 
         mainHandler.post {
 
@@ -6334,13 +6384,39 @@ class MangaBuffAutomation(
                 fun onMangaMarkedRead(title: String, found: Boolean = true) {
                     val terminalResult = pendingTerminalChapterResult
                     if (!found) {
-                        pendingMangaMarkAsRead = false
                         log(account.username, "READER: READ_ACTION_NOT_CONFIRMED folder-id=3", true)
                         if (terminalResult != null) {
-                            log(account.username, "READER: TERMINAL_CHAPTER_CONFIRMED_CONTINUE_WITHOUT_FOLDER_MARK", true)
-                            pendingTerminalChapterResult = null
-                            safeResume(terminalResult)
+                            if (pendingTerminalMarkReadAttempts < TERMINAL_MARK_READ_MAX_ATTEMPTS) {
+                                pendingMangaMarkAsRead = false
+                                val nextAttempt = pendingTerminalMarkReadAttempts + 1
+                                log(
+                                    account.username,
+                                    "READER: TERMINAL_MARK_READ_RETRY nextAttempt=$nextAttempt/$TERMINAL_MARK_READ_MAX_ATTEMPTS"
+                                )
+                                mainHandler.postDelayed({
+                                    if (
+                                        !resumed &&
+                                        continuation.isActive &&
+                                        pendingTerminalChapterResult === terminalResult
+                                    ) {
+                                        activeReaderMarkRead?.invoke()
+                                    }
+                                }, TERMINAL_MARK_READ_RETRY_DELAY_MS)
+                            } else {
+                                pendingMangaMarkAsRead = false
+                                pendingTerminalChapterResult = null
+                                pendingTerminalMarkReadAttempts = 0
+                                pendingMangaMarkReadGeneration += 1L
+                                log(
+                                    account.username,
+                                    "READER: TERMINAL_MARK_READ_GIVE_UP attempts=$TERMINAL_MARK_READ_MAX_ATTEMPTS " +
+                                        "continueToCatalog=true markReadConfirmed=false",
+                                    true
+                                )
+                                safeResume(terminalResult)
+                            }
                         } else {
+                            pendingMangaMarkAsRead = false
                             safeResume(
                                 ReaderResult.MangaSkipped(
                                     mangaUrl = currentMangaUrl,
@@ -6350,10 +6426,13 @@ class MangaBuffAutomation(
                         }
                         return
                     }
+
                     log(account.username, "READER: READ_ACTION_CONFIRMED folder-id=3 (Прочитано)")
                     pendingMangaMarkAsRead = false
+                    pendingMangaMarkReadGeneration += 1L
                     if (terminalResult != null) {
                         pendingTerminalChapterResult = null
+                        pendingTerminalMarkReadAttempts = 0
                         safeResume(terminalResult)
                     } else {
                         safeResume(ReaderResult.MangaCompleted("", title))
@@ -6647,8 +6726,9 @@ class MangaBuffAutomation(
                         if (markRead != null) {
                             markRead.invoke()
                         } else {
-                            log(account.username, "READER: TERMINAL_MARK_READ_HANDLER_MISSING -> CONTINUE", true)
+                            log(account.username, "READER: TERMINAL_MARK_READ_HANDLER_MISSING -> CONTINUE_TO_CATALOG", true)
                             pendingTerminalChapterResult = null
+                            pendingTerminalMarkReadAttempts = 0
                             safeResume(terminalResult)
                         }
                     } else {
