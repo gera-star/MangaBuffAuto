@@ -59,8 +59,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 MangaBuffForegroundService.EVENT_LOG -> {
                     addLog(
                         LogEntry(
+                            timestamp = intent?.getLongExtra(
+                                MangaBuffForegroundService.EXTRA_LOG_TIMESTAMP,
+                                System.currentTimeMillis()
+                            ) ?: System.currentTimeMillis(),
                             username = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_USERNAME).orEmpty(),
-                            component = "BG",
+                            component = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_COMPONENT)
+                                .orEmpty().ifBlank { "BG" },
                             message = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_MESSAGE).orEmpty(),
                             isError = intent?.getBooleanExtra(MangaBuffForegroundService.EXTRA_ERROR, false) ?: false
                         )
