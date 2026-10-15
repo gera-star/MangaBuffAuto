@@ -247,6 +247,8 @@ class MangaBuffForegroundService : Service() {
     // finish inline inside onStartCommand/startAllInternal before every account Job is registered.
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val accountJobs = ConcurrentHashMap<String, Job>()
+    // Pending delayed restarts are tracked so OFFLINE can cancel them immediately.
+    private val accountRecoveryRestartJobs = ConcurrentHashMap<String, Job>()
 
     // One account at a time; queue state is isolated in a small class with unit tests.
     private val accountExecutionQueue = AccountExecutionQueue()
@@ -452,6 +454,8 @@ class MangaBuffForegroundService : Service() {
         taskType: TaskType,
         promoCode: String? = null
     ) {
+        // A deliberate new start supersedes any delayed retry for this account.
+        accountRecoveryRestartJobs.remove(accountId)?.cancel()
         // A new user/background start opens a fresh recovery window.
         // A previous explicit "Stop all" must not permanently disable renderer recovery.
         stoppingExplicitly = false
@@ -629,16 +633,29 @@ class MangaBuffForegroundService : Service() {
                                 0f
                             )
 
-                            serviceScope.launch {
-                                delay(1_500L)
-                                if (
-                                    !stoppingExplicitly &&
-                                    !isAccountOffline(accountId) &&
-                                    readPersistedRuns()[accountId] == taskType
-                                ) {
-                                    startAccountInternal(accountId, taskType)
+                            accountRecoveryRestartJobs.remove(accountId)?.cancel()
+                            val restartJob = serviceScope.launch(start = CoroutineStart.LAZY) {
+                                val currentJob = coroutineContext[Job]
+                                try {
+                                    delay(1_500L)
+                                    if (
+                                        !stoppingExplicitly &&
+                                        !isAccountOffline(accountId) &&
+                                        readPersistedRuns()[accountId] == taskType
+                                    ) {
+                                        if (currentJob != null) {
+                                            accountRecoveryRestartJobs.remove(accountId, currentJob)
+                                        }
+                                        startAccountInternal(accountId, taskType)
+                                    }
+                                } finally {
+                                    if (currentJob != null) {
+                                        accountRecoveryRestartJobs.remove(accountId, currentJob)
+                                    }
                                 }
                             }
+                            accountRecoveryRestartJobs[accountId] = restartJob
+                            restartJob.start()
                         } else {
                             if (recoveryExhausted) {
                                 publishLog(
@@ -780,6 +797,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun stopAccountInternal(accountId: String) {
+        accountRecoveryRestartJobs.remove(accountId)?.cancel()
         cancelTowerCycle(accountId, clearPersisted = true)
         recoveryRequests.remove(accountId)
         missingWebViewSince.remove(accountId)
@@ -804,6 +822,9 @@ class MangaBuffForegroundService : Service() {
 
     private fun stopAllInternal(explicitUserStop: Boolean) {
         if (explicitUserStop) stoppingExplicitly = true
+
+        accountRecoveryRestartJobs.values.forEach { it.cancel() }
+        accountRecoveryRestartJobs.clear()
 
         (towerCycleEndsAt.keys + towerCycleJobs.keys + readPersistedTowerCycles().keys)
             .toSet()
@@ -1348,6 +1369,8 @@ class MangaBuffForegroundService : Service() {
         watchdogJob = null
         recoveryRequests.clear()
         missingWebViewSince.clear()
+        accountRecoveryRestartJobs.values.forEach { it.cancel() }
+        accountRecoveryRestartJobs.clear()
 
         try {
             if (screenRegistered) unregisterReceiver(screenReceiver)
