@@ -240,7 +240,9 @@ class MainActivity : ComponentActivity() {
                                             tag = returnButton
                                         }
                                     },
-                                    modifier = Modifier.fillMaxSize(),
+                                    // Keep the debug WebView inside the safe area so it never covers
+                                    // the Android status bar (clock, battery, camera cutout) or nav bar.
+                                    modifier = Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing),
                                     update = { container ->
                                         (container.tag as? Button)?.visibility =
                                             if (debugWebViewVisible) View.VISIBLE else View.GONE
