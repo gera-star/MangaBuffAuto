@@ -10178,9 +10178,15 @@ class MangaBuffAutomation(
                                 new Event("change", { bubbles: true })
                             );
 
-                            if (button.disabled) return "WAIT_BUTTON_AFTER_INPUT";
+                            // Re-query after input events: a reactive page can replace
+                            // the send button while enabling it.
+                            var activeButton = document.querySelector(
+                                'button.comments__send-btn'
+                            );
+                            if (!activeButton) return "WAIT_CONTROLS";
+                            if (activeButton.disabled) return "WAIT_BUTTON_AFTER_INPUT";
 
-                            button.click();
+                            activeButton.click();
                             return "CLICKED";
                         } catch (e) {
                             return "ERROR:" +
