@@ -5731,7 +5731,7 @@ class MangaBuffAutomation(
             parts.size >= 4 &&
             parts[0] == "manga" &&
             parts[parts.size - 2].all { it.isDigit() } &&
-            parts.last().all { it.isDigit() }
+            Regex("\\d+(?:\\.\\d+)?").matches(parts.last())
         ) {
             return Pair(true, "MANGA_PREFIX")
         }
@@ -9076,7 +9076,7 @@ class MangaBuffAutomation(
                                                     if (url.origin !== window.location.origin) return;
 
                                                     var chapterPath = (url.pathname || '').replace(/\/+$/, '');
-                                                    if (!/^\/manga\/[^/]+\/\d+\/\d+$/.test(chapterPath)) return;
+                                                    if (!/^\/manga\/[^/]+\/\d+\/\d+(?:\.\d+)?$/.test(chapterPath)) return;
 
                                                     uniqueChapterPaths.add(chapterPath);
                                                 } catch(ignoreLink) {}
@@ -9886,7 +9886,7 @@ class MangaBuffAutomation(
             ?: lastFinishedChapterUrl.ifBlank { null }
 
         val targetClean = targetUrl?.substringBefore('?')?.substringBefore('#').orEmpty()
-        val targetIsChapter = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+$").matches(targetClean)
+        val targetIsChapter = Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+(?:\.\d+)?$").matches(targetClean)
 
         if (!targetIsChapter) {
             val current = webView.url.orEmpty().substringBefore('?').substringBefore('#')
