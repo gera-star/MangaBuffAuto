@@ -18,6 +18,7 @@ import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.DailyStats
+import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.currentStatsDay
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
@@ -209,6 +210,8 @@ class MangaBuffAutomation(
 
         private const val COMMENT_DELAY_MS = 4000L
         private const val COMMENT_DAILY_LIMIT = 13
+        private const val DECK_COMMENT_DAILY_LIMIT = 13
+        private const val DECK_COMMENT_TOGGLE_POLL_MS = 1_000L
         private const val READER_MAX_CHAPTERS = 10
 
         private const val DECK_PAGE_SETTLE_MS = 2000L
@@ -9920,7 +9923,51 @@ class MangaBuffAutomation(
             .replace(Regex("[^a-z0-9._-]"), "_")
         val deckAttemptPrefix = "attempted_${deckCommentDay}_${deckAccountKey}_"
         val lastDeckCommentKey = "last_comment_at_${deckCommentDay}_${deckAccountKey}"
+        val dailyDeckAttemptCountKey = "attempt_count_${deckCommentDay}_${deckAccountKey}"
         val deckCommentGapMs = 40_000L
+        val accountRepository = AccountRepository(context)
+        var dailyDeckAttemptCount = deckCommentPrefs.getInt(dailyDeckAttemptCountKey, 0).coerceAtLeast(0)
+        val remainingDaily = (DECK_COMMENT_DAILY_LIMIT - dailyDeckAttemptCount).coerceAtLeast(0)
+
+        // Read the persisted toggle while a run is active. Once disabled, the current
+        // deck-comment routine exits instead of becoming active again mid-run.
+        var lastDeckToggleCheckAt = 0L
+        var cachedDeckCommentEnabled = account.deckCommentEnabled
+        suspend fun deckCommentEnabledNow(): Boolean {
+            if (!cachedDeckCommentEnabled) return false
+            val now = SystemClock.elapsedRealtime()
+            if (
+                lastDeckToggleCheckAt == 0L ||
+                now - lastDeckToggleCheckAt >= DECK_COMMENT_TOGGLE_POLL_MS
+            ) {
+                cachedDeckCommentEnabled = accountRepository.getAccounts()
+                    .firstOrNull { it.id == account.id }
+                    ?.deckCommentEnabled == true
+                lastDeckToggleCheckAt = now
+                if (!cachedDeckCommentEnabled) {
+                    log(account.username, "COMMENT: DECK_STOP_REQUESTED source=TOGGLE_DISABLED")
+                }
+            }
+            return cachedDeckCommentEnabled
+        }
+
+        suspend fun stopIfDeckCommentsDisabled(stage: String): Boolean {
+            if (deckCommentEnabledNow()) return false
+            log(
+                account.username,
+                "COMMENT: DECK_STOPPED reason=TOGGLE_DISABLED stage=$stage sent=$sentCount"
+            )
+            return true
+        }
+
+        if (remainingDaily <= 0) {
+            log(
+                account.username,
+                "COMMENT: DECK_DAILY_LIMIT_REACHED used=$dailyDeckAttemptCount/$DECK_COMMENT_DAILY_LIMIT"
+            )
+            return 0
+        }
+        if (stopIfDeckCommentsDisabled("BEFORE_OPEN")) return 0
 
         suspend fun evalJs(script: String): String? =
             suspendCancellableCoroutine { continuation ->
@@ -9967,6 +10014,7 @@ class MangaBuffAutomation(
 
                 while (!matched) {
                     coroutineContext.ensureActive()
+                    if (!deckCommentEnabledNow()) return@withTimeoutOrNull false
 
                     val raw = evalJs("location.href")
                     val current = try {
@@ -9994,6 +10042,7 @@ class MangaBuffAutomation(
         loadUrl("https://mangabuff.ru/decks")
 
         if (!waitForUrl("https://mangabuff.ru/decks", 20_000L)) {
+            if (stopIfDeckCommentsDisabled("WAIT_DECK_LIST")) return 0
             log(account.username, "COMMENT: DECK_LIST_FAILED reason=PAGE_TIMEOUT", true)
             return 0
         }
@@ -10081,8 +10130,8 @@ class MangaBuffAutomation(
         log(
             account.username,
             "COMMENT: DECK_LIST_READY found=" + decks.size +
-                " dailyUsed=" + dailyStats.comments +
-                "/" + COMMENT_DAILY_LIMIT
+                " dailyDeckAttempts=" + dailyDeckAttemptCount +
+                "/" + DECK_COMMENT_DAILY_LIMIT
         )
 
         decks.forEachIndexed { index, deck ->
@@ -10100,17 +10149,29 @@ class MangaBuffAutomation(
             deckId.isNotBlank() &&
                 !deckCommentPrefs.getBoolean(deckAttemptPrefix + deckId.hashCode(), false)
         }
-        // This task is intentionally eight decks per run; the page may expose
-        // more links, but a single Start run must not comment on more than eight.
-        val targetDecks = unattemptedDecks.take(8)
+        // At most eight deck comments per Start run, and at most thirteen
+        // send attempts per account/day, retained across app restarts.
+        val targetDecks = unattemptedDecks.take(minOf(remainingDaily, 8))
+        var sentCount = 0
         log(
             account.username,
-            "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} perRunLimit=8 gapSec=40"
+            "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} " +
+                "perRunLimit=8 dailyLimit=$DECK_COMMENT_DAILY_LIMIT dailyUsed=$dailyDeckAttemptCount gapSec=40"
         )
-        var sentCount = 0
 
         for ((index, deck) in targetDecks.withIndex()) {
             coroutineContext.ensureActive()
+            if (stopIfDeckCommentsDisabled("BEFORE_DECK_${index + 1}")) break
+
+            dailyDeckAttemptCount = deckCommentPrefs.getInt(dailyDeckAttemptCountKey, dailyDeckAttemptCount)
+                .coerceAtLeast(0)
+            if (dailyDeckAttemptCount >= DECK_COMMENT_DAILY_LIMIT) {
+                log(
+                    account.username,
+                    "COMMENT: DECK_DAILY_LIMIT_REACHED used=$dailyDeckAttemptCount/$DECK_COMMENT_DAILY_LIMIT"
+                )
+                break
+            }
 
             val deckUrl = deck["url"].orEmpty()
             val deckName = deck["name"].orEmpty()
@@ -10126,8 +10187,16 @@ class MangaBuffAutomation(
                     account.username,
                     "COMMENT: DECK_RATE_LIMIT_WAIT seconds=" + ((waitForGap + 999L) / 1000L)
                 )
-                delay(waitForGap)
+                var waitRemainingMs = waitForGap
+                while (waitRemainingMs > 0L) {
+                    coroutineContext.ensureActive()
+                    if (stopIfDeckCommentsDisabled("RATE_LIMIT_WAIT")) return sentCount
+                    val sliceMs = minOf(waitRemainingMs, DECK_COMMENT_TOGGLE_POLL_MS)
+                    delay(sliceMs)
+                    waitRemainingMs -= sliceMs
+                }
             }
+            if (stopIfDeckCommentsDisabled("BEFORE_OPEN_DECK")) return sentCount
 
             val commentText = nextRandomDeckComment()
             val commentJs = com.google.gson.Gson().toJson(commentText)
@@ -10142,6 +10211,7 @@ class MangaBuffAutomation(
             loadUrl(deckUrl)
 
             if (!waitForUrl(deckUrl, 20_000L)) {
+                if (stopIfDeckCommentsDisabled("WAIT_DECK_PAGE")) return sentCount
                 log(
                     account.username,
                     "COMMENT: DECK_PAGE_TIMEOUT name='" + deckName + "'",
@@ -10159,11 +10229,16 @@ class MangaBuffAutomation(
 
             var actionClicked = false
             var buttonStillDisabledAfterInput = false
+            var toggleDisabledDuringDeck = false
 
             repeat(50) { attempt ->
-                if (actionClicked) return@repeat
+                if (actionClicked || toggleDisabledDuringDeck) return@repeat
 
                 coroutineContext.ensureActive()
+                if (!deckCommentEnabledNow()) {
+                    toggleDisabledDuringDeck = true
+                    return@repeat
+                }
 
                 val rawState = evalJs(
                     """
@@ -10245,18 +10320,25 @@ class MangaBuffAutomation(
                         val deckId = deckUrl.substringBefore('?').trimEnd('/')
                         // Mark before confirmation so an uncertain response is never
                         // retried as a second comment on this deck.
+                        dailyDeckAttemptCount = (dailyDeckAttemptCount + 1)
+                            .coerceAtMost(DECK_COMMENT_DAILY_LIMIT)
                         deckCommentPrefs.edit()
                             .putBoolean(
                                 deckAttemptPrefix + deckId.hashCode(),
                                 true
                             )
                             .putLong(lastDeckCommentKey, System.currentTimeMillis())
+                            .putInt(dailyDeckAttemptCountKey, dailyDeckAttemptCount)
                             .apply()
 
                         log(
                             account.username,
                             "COMMENT: DECK_CONTROLS_FOUND name='" +
                                 deckName + "' attempt=" + attempt
+                        )
+                        log(
+                            account.username,
+                            "COMMENT: DECK_DAILY_ATTEMPT_RESERVED used=$dailyDeckAttemptCount/$DECK_COMMENT_DAILY_LIMIT"
                         )
                         log(
                             account.username,
@@ -10297,6 +10379,13 @@ class MangaBuffAutomation(
                 }
             }
 
+            if (toggleDisabledDuringDeck || stopIfDeckCommentsDisabled("BEFORE_SEND")) {
+                log(
+                    account.username,
+                    "COMMENT: DECK_STOPPED reason=TOGGLE_DISABLED stage=SEND_CONTROLS sent=$sentCount"
+                )
+                return sentCount
+            }
             if (!actionClicked) continue
 
             val confirmed = withTimeoutOrNull(7_000L) {
@@ -10373,7 +10462,8 @@ class MangaBuffAutomation(
         log(
             account.username,
             "TASK: DECK_COMMENT_END sent=" + sentCount +
-                " (deck comments do not consume regular comment quest progress)"
+                " dailyAttempts=" + dailyDeckAttemptCount +
+                "/$DECK_COMMENT_DAILY_LIMIT (separate from regular comment quest)"
         )
 
         return sentCount
