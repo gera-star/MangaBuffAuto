@@ -13,13 +13,12 @@ import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.TaskType
+import com.example.myapplication.data.appendLogEntry
 import com.example.myapplication.service.MangaBuffForegroundService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-
-private const val MAX_LOG_ENTRIES = 2000
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = AccountRepository(application)
@@ -519,14 +518,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun addLog(entry: LogEntry) {
-        _logs.update {
-            val next = ArrayList<LogEntry>(minOf(it.size + 1, MAX_LOG_ENTRIES))
-            next += entry
-            next += it
-            if (next.size > MAX_LOG_ENTRIES) {
-                next.subList(MAX_LOG_ENTRIES, next.size).clear()
-            }
-            next
-        }
+        _logs.update { appendLogEntry(it, entry) }
     }
 }
