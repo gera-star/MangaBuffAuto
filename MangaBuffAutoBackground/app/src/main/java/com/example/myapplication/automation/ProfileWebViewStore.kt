@@ -280,6 +280,21 @@ class ProfileWebViewStore(
         attachDeferreds.remove(accountId)
         webViewRunIds.remove(accountId)
         if (webView != null) {
+            // Flush the account's own persistent WebView profile before destroying its view.
+            // This preserves current login cookies and never clears the profile.
+            runCatching {
+                ProfileStore.getInstance().getProfile("mb_$accountId")?.cookieManager?.flush()
+            }.onFailure { error ->
+                onLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "PROFILE",
+                        message = "COOKIE_FLUSH_FAILED reason=${error.message}",
+                        isError = true
+                    )
+                )
+            }
+
             try {
                 onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "DESTROYED profile=mb_$accountId"))
                 webView.stopLoading()
