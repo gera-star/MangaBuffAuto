@@ -91,12 +91,12 @@ fun MangaBuffAppUI(
                 TopAppBar(
                     title = { Text("MB+", fontWeight = FontWeight.Bold) },
                     actions = {
-                        if (webViewAccountIds.isNotEmpty()) {
+                        if (webViewAccountIds.size > 1) {
                             Box {
                                 IconButton(onClick = { showWebViewAccountMenu = true }) {
                                     Icon(
-                                        Icons.Default.Language,
-                                        contentDescription = "Параметры WEB",
+                                        Icons.Default.People,
+                                        contentDescription = "Выбор аккаунта WEB",
                                         tint = Color(0xFF69E9FF)
                                     )
                                 }
@@ -104,42 +104,20 @@ fun MangaBuffAppUI(
                                     expanded = showWebViewAccountMenu,
                                     onDismissRequest = { showWebViewAccountMenu = false }
                                 ) {
-                                    if (webViewContainer != null) {
+                                    webViewAccountIds.forEach { accountId ->
+                                        val accountName = accounts.firstOrNull {
+                                            it.id == accountId
+                                        }?.username ?: accountId
                                         DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    if (debugWebViewVisible) {
-                                                        "Вернуться в приложение"
-                                                    } else {
-                                                        "Открыть WEB"
-                                                    }
-                                                )
-                                            },
+                                            text = { Text(accountName) },
                                             leadingIcon = {
-                                                Icon(Icons.Default.Language, contentDescription = null)
+                                                Icon(Icons.Default.People, contentDescription = null)
                                             },
                                             onClick = {
-                                                viewModel.setDebugWebViewVisible(!debugWebViewVisible)
+                                                onSelectWebViewAccount(accountId)
                                                 showWebViewAccountMenu = false
                                             }
                                         )
-                                    }
-                                    if (webViewAccountIds.size > 1) {
-                                        webViewAccountIds.forEach { accountId ->
-                                            val accountName = accounts.firstOrNull {
-                                                it.id == accountId
-                                            }?.username ?: accountId
-                                            DropdownMenuItem(
-                                                text = { Text(accountName) },
-                                                leadingIcon = {
-                                                    Icon(Icons.Default.People, contentDescription = null)
-                                                },
-                                                onClick = {
-                                                    onSelectWebViewAccount(accountId)
-                                                    showWebViewAccountMenu = false
-                                                }
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -153,16 +131,6 @@ fun MangaBuffAppUI(
                     )
                 )
 
-            }
-        },
-        floatingActionButton = {
-            if (activeTab == 0) {
-                FloatingActionButton(
-                    onClick = { viewModel.setShowAddAccountDialog(true) },
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Добавить аккаунт")
-                }
             }
         },
         bottomBar = {
@@ -221,22 +189,18 @@ fun MangaBuffAppUI(
                         colors = navColors
                     )
                     NavigationBarItem(
-                        selected = false,
-                        onClick = { showSupportDialog = true },
-                        icon = { Icon(Icons.Default.Favorite, contentDescription = "Поддержка") },
+                        selected = debugWebViewVisible,
+                        onClick = { viewModel.setDebugWebViewVisible(true) },
+                        enabled = webViewContainer != null,
+                        icon = { Icon(Icons.Default.Language, contentDescription = "Открыть WEB") },
                         label = null,
                         alwaysShowLabel = false,
                         colors = navColors
                     )
                     NavigationBarItem(
                         selected = false,
-                        onClick = { showBackgroundSettings = true },
-                        icon = {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = "Настройки фоновой работы"
-                            )
-                        },
+                        onClick = { showSupportDialog = true },
+                        icon = { Icon(Icons.Default.Favorite, contentDescription = "Поддержка") },
                         label = null,
                         alwaysShowLabel = false,
                         colors = navColors
@@ -248,6 +212,32 @@ fun MangaBuffAppUI(
                             Icon(
                                 Icons.Default.List,
                                 contentDescription = "Логи (${logs.size})"
+                            )
+                        },
+                        label = null,
+                        alwaysShowLabel = false,
+                        colors = navColors
+                    )
+                    NavigationBarItem(
+                        selected = false,
+                        onClick = { viewModel.setShowAddAccountDialog(true) },
+                        icon = {
+                            Icon(
+                                Icons.Default.PersonAdd,
+                                contentDescription = "Добавить аккаунт"
+                            )
+                        },
+                        label = null,
+                        alwaysShowLabel = false,
+                        colors = navColors
+                    )
+                    NavigationBarItem(
+                        selected = false,
+                        onClick = { showBackgroundSettings = true },
+                        icon = {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Настройки фоновой работы"
                             )
                         },
                         label = null,
@@ -1286,6 +1276,7 @@ fun TasksTab(
 
     var readerChapters by remember { mutableStateOf(settings.readerChapters.toString()) }
     var battleTarget by remember { mutableStateOf(settings.battleTargetCount.toString()) }
+    var showTowerUpgrades by remember { mutableStateOf(false) }
 
     val actionEnabled = !isRunning && accounts.isNotEmpty()
 
@@ -1503,7 +1494,14 @@ fun TasksTab(
                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { showTowerUpgrades = !showTowerUpgrades }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Icon(
                             Icons.Default.Shield,
                             contentDescription = null,
@@ -1523,8 +1521,20 @@ fun TasksTab(
                                 color = MaterialTheme.colorScheme.outline
                             )
                         }
+                        Icon(
+                            if (showTowerUpgrades) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (showTowerUpgrades) {
+                                "Свернуть настройки Башни Разлома"
+                            } else {
+                                "Открыть настройки Башни Разлома"
+                            },
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
 
+                    AnimatedVisibility(visible = showTowerUpgrades) {
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     val selectedUpgradeChipColors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = Color(0xFF2E7D32),
                         selectedLabelColor = Color.White,
@@ -1588,6 +1598,8 @@ fun TasksTab(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
+                        }
+                    }
                 }
             }
         }
