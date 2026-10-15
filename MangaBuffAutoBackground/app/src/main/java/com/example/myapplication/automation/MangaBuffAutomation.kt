@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -211,7 +212,6 @@ class MangaBuffAutomation(
         private const val COMMENT_DELAY_MS = 4000L
         private const val COMMENT_DAILY_LIMIT = 13
         private const val DECK_COMMENT_DAILY_LIMIT = 13
-        private const val DECK_COMMENT_TOGGLE_POLL_MS = 1_000L
         private const val READER_MAX_CHAPTERS = 10
 
         private const val DECK_PAGE_SETTLE_MS = 2000L
@@ -9926,9 +9926,6 @@ class MangaBuffAutomation(
         val lastDeckCommentKey = "last_comment_at_${deckCommentDay}_${deckAccountKey}"
         val dailyDeckAttemptCountKey = "attempt_count_${deckCommentDay}_${deckAccountKey}"
         val deckCommentGapMs = 40_000L
-        val accountRepository = AccountRepository(context)
-        // Migrate attempts already stored by the previous version today; each
-        // per-deck reservation represented a Send click even if confirmation failed.
         val previouslyReservedDeckAttempts = deckCommentPrefs.all.entries.count { entry ->
             entry.key.startsWith(deckAttemptPrefix) && entry.value == true
         }
@@ -9942,37 +9939,53 @@ class MangaBuffAutomation(
         val remainingDaily = (DECK_COMMENT_DAILY_LIMIT - dailyDeckAttemptCount).coerceAtLeast(0)
         var sentCount = 0
 
-        // Read the persisted toggle while a run is active. Once disabled, the current
-        // deck-comment routine exits instead of becoming active again mid-run.
-        var lastDeckToggleCheckAt = 0L
-        var cachedDeckCommentEnabled = account.deckCommentEnabled
-        suspend fun deckCommentEnabledNow(): Boolean {
-            if (!cachedDeckCommentEnabled) return false
-            val now = SystemClock.elapsedRealtime()
-            if (
-                lastDeckToggleCheckAt == 0L ||
-                now - lastDeckToggleCheckAt >= DECK_COMMENT_TOGGLE_POLL_MS
-            ) {
-                cachedDeckCommentEnabled = accountRepository.getAccounts()
-                    .firstOrNull { it.id == account.id }
-                    ?.deckCommentEnabled == true
-                lastDeckToggleCheckAt = now
-                if (!cachedDeckCommentEnabled) {
-                    log(account.username, "COMMENT: DECK_STOP_REQUESTED source=TOGGLE_DISABLED")
-                }
-            }
-            return cachedDeckCommentEnabled
+        // UI and automation share this process-local signal. disableVersion makes
+        // OFF a one-way cancellation for this run, even if the user switches ON again.
+        val deckToggleState = DeckCommentToggleState.stateFor(
+            account.id,
+            account.deckCommentEnabled
+        )
+        val deckToggleDisableVersion = deckToggleState.value.disableVersion
+        val disableEndLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun deckCommentEnabledNow(): Boolean {
+            val state = deckToggleState.value
+            return state.enabled && state.disableVersion == deckToggleDisableVersion
+        }
+
+        fun logDeckDisabled(stage: String) {
+            if (!disableEndLogged.compareAndSet(false, true)) return
+            log(
+                account.username,
+                "COMMENT: DECK_TASK_DISABLED_BY_USER stage=$stage sent=$sentCount"
+            )
+            log(
+                account.username,
+                "COMMENT: DECK_COMMENT_END reason=DISABLED sent=$sentCount"
+            )
         }
 
         suspend fun stopIfDeckCommentsDisabled(stage: String): Boolean {
             if (deckCommentEnabledNow()) return false
-            log(
-                account.username,
-                "COMMENT: DECK_STOPPED reason=TOGGLE_DISABLED stage=$stage sent=$sentCount"
-            )
+            logDeckDisabled(stage)
             return true
         }
 
+        // Waits (including the 40s inter-comment gap) wake immediately on OFF.
+        // A quick OFF -> ON still invalidates the running task by disableVersion.
+        suspend fun delayUnlessDisabled(durationMs: Long): Boolean {
+            if (!deckCommentEnabledNow()) return false
+            if (durationMs <= 0L) return deckCommentEnabledNow()
+            val disabled = withTimeoutOrNull(durationMs) {
+                deckToggleState.first {
+                    !it.enabled || it.disableVersion != deckToggleDisableVersion
+                }
+                true
+            }
+            return disabled != true && deckCommentEnabledNow()
+        }
+
+        if (stopIfDeckCommentsDisabled("BEFORE_OPEN")) return 0
         if (remainingDaily <= 0) {
             log(
                 account.username,
@@ -9980,11 +9993,19 @@ class MangaBuffAutomation(
             )
             return 0
         }
-        if (stopIfDeckCommentsDisabled("BEFORE_OPEN")) return 0
 
-        suspend fun evalJs(script: String): String? =
-            suspendCancellableCoroutine { continuation ->
+        suspend fun evalJs(
+            script: String,
+            requireDeckEnabled: Boolean = false
+        ): String? = suspendCancellableCoroutine { continuation ->
                 mainHandler.post {
+                    if (requireDeckEnabled && !deckCommentEnabledNow()) {
+                        logDeckDisabled("BEFORE_SUBMIT_DISPATCH")
+                        if (continuation.isActive) {
+                            continuation.resume(com.google.gson.Gson().toJson("DISABLED"))
+                        }
+                        return@post
+                    }
                     try {
                         webView.evaluateJavascript(script) { result ->
                             if (continuation.isActive) {
@@ -10002,8 +10023,15 @@ class MangaBuffAutomation(
                 }
             }
 
-        suspend fun loadUrl(url: String) {
+        suspend fun loadUrl(
+            url: String,
+            requireDeckEnabled: Boolean = false
+        ) {
             mainHandler.post {
+                if (requireDeckEnabled && !deckCommentEnabledNow()) {
+                    logDeckDisabled("BEFORE_NAVIGATION")
+                    return@post
+                }
                 try {
                     webView.loadUrl(url)
                 } catch (e: Exception) {
@@ -10044,7 +10072,9 @@ class MangaBuffAutomation(
                     if (normalizedCurrent == normalizedTarget) {
                         matched = true
                     } else {
-                        delay(250L)
+                        if (!delayUnlessDisabled(250L)) {
+                            return@withTimeoutOrNull false
+                        }
                     }
                 }
 
@@ -10052,7 +10082,7 @@ class MangaBuffAutomation(
             } ?: false
         }
 
-        loadUrl("https://mangabuff.ru/decks")
+        loadUrl("https://mangabuff.ru/decks", requireDeckEnabled = true)
 
         if (!waitForUrl("https://mangabuff.ru/decks", 20_000L)) {
             if (stopIfDeckCommentsDisabled("WAIT_DECK_LIST")) return 0
@@ -10060,7 +10090,10 @@ class MangaBuffAutomation(
             return 0
         }
 
-        delay(DECK_PAGE_SETTLE_MS)
+        if (!delayUnlessDisabled(DECK_PAGE_SETTLE_MS)) {
+            stopIfDeckCommentsDisabled("LIST_PAGE_SETTLE")
+            return sentCount
+        }
         log(
             account.username,
             "COMMENT: DECK_PAGE_SETTLE delayMs=" + DECK_PAGE_SETTLE_MS +
@@ -10113,6 +10146,8 @@ class MangaBuffAutomation(
             })();
             """.trimIndent()
         )
+
+        if (stopIfDeckCommentsDisabled("AFTER_DECK_LIST_READ")) return sentCount
 
         val deckJson = try {
             com.google.gson.Gson().fromJson(
@@ -10175,7 +10210,7 @@ class MangaBuffAutomation(
 
         for ((index, deck) in targetDecks.withIndex()) {
             coroutineContext.ensureActive()
-            if (stopIfDeckCommentsDisabled("BEFORE_DECK_${index + 1}")) break
+            if (stopIfDeckCommentsDisabled("BEFORE_DECK_${index + 1}")) return sentCount
 
             dailyDeckAttemptCount = deckCommentPrefs.getInt(dailyDeckAttemptCountKey, dailyDeckAttemptCount)
                 .coerceAtLeast(0)
@@ -10201,13 +10236,9 @@ class MangaBuffAutomation(
                     account.username,
                     "COMMENT: DECK_RATE_LIMIT_WAIT seconds=" + ((waitForGap + 999L) / 1000L)
                 )
-                var waitRemainingMs = waitForGap
-                while (waitRemainingMs > 0L) {
-                    coroutineContext.ensureActive()
-                    if (stopIfDeckCommentsDisabled("RATE_LIMIT_WAIT")) return sentCount
-                    val sliceMs = minOf(waitRemainingMs, DECK_COMMENT_TOGGLE_POLL_MS)
-                    delay(sliceMs)
-                    waitRemainingMs -= sliceMs
+                if (!delayUnlessDisabled(waitForGap)) {
+                    stopIfDeckCommentsDisabled("RATE_LIMIT_WAIT")
+                    return sentCount
                 }
             }
             if (stopIfDeckCommentsDisabled("BEFORE_OPEN_DECK")) return sentCount
@@ -10222,7 +10253,7 @@ class MangaBuffAutomation(
                     " name='" + deckName + "' text='" + commentText + "'"
             )
 
-            loadUrl(deckUrl)
+            loadUrl(deckUrl, requireDeckEnabled = true)
 
             if (!waitForUrl(deckUrl, 20_000L)) {
                 if (stopIfDeckCommentsDisabled("WAIT_DECK_PAGE")) return sentCount
@@ -10234,7 +10265,10 @@ class MangaBuffAutomation(
                 continue
             }
 
-            delay(DECK_PAGE_SETTLE_MS)
+            if (!delayUnlessDisabled(DECK_PAGE_SETTLE_MS)) {
+                stopIfDeckCommentsDisabled("DECK_PAGE_SETTLE")
+                return sentCount
+            }
             log(
                 account.username,
                 "COMMENT: DECK_PAGE_SETTLE delayMs=" + DECK_PAGE_SETTLE_MS +
@@ -10299,8 +10333,7 @@ class MangaBuffAutomation(
                             if (!activeButton) return "WAIT_CONTROLS";
                             if (activeButton.disabled) return "WAIT_BUTTON_AFTER_INPUT";
 
-                            activeButton.click();
-                            return "CLICKED";
+                            return "READY_TO_SEND";
                         } catch (e) {
                             return "ERROR:" +
                                 (e && e.message ? e.message : String(e));
@@ -10319,56 +10352,128 @@ class MangaBuffAutomation(
                 }
 
                 when {
-                    state == "WAIT_CONTROLS" -> delay(300L)
+                    state == "WAIT_CONTROLS" -> {
+                        if (!delayUnlessDisabled(300L)) {
+                            toggleDisabledDuringDeck = true
+                            return@repeat
+                        }
+                    }
                     state == "WAIT_BUTTON_AFTER_INPUT" -> {
                         buttonStillDisabledAfterInput = true
-                        delay(300L)
+                        if (!delayUnlessDisabled(300L)) {
+                            toggleDisabledDuringDeck = true
+                            return@repeat
+                        }
                     }
                     // Backward-compatible while older injected JS callbacks are still in flight.
                     state == "WAIT_BUTTON" -> {
                         buttonStillDisabledAfterInput = true
-                        delay(300L)
+                        if (!delayUnlessDisabled(300L)) {
+                            toggleDisabledDuringDeck = true
+                            return@repeat
+                        }
                     }
-                    state == "CLICKED" -> {
-                        actionClicked = true
-                        val deckId = deckUrl.substringBefore('?').trimEnd('/')
-                        // Mark before confirmation so an uncertain response is never
-                        // retried as a second comment on this deck.
-                        dailyDeckAttemptCount = (dailyDeckAttemptCount + 1)
-                            .coerceAtMost(DECK_COMMENT_DAILY_LIMIT)
-                        deckCommentPrefs.edit()
-                            .putBoolean(
-                                deckAttemptPrefix + deckId.hashCode(),
-                                true
-                            )
-                            .putLong(lastDeckCommentKey, System.currentTimeMillis())
-                            .putInt(dailyDeckAttemptCountKey, dailyDeckAttemptCount)
-                            .apply()
+                    state == "READY_TO_SEND" -> {
+                        // Fill/enable the composer first, then dispatch Send as a separate
+                        // guarded WebView operation. The main-thread guard prevents a queued
+                        // submit from starting after the user has switched decks OFF.
+                        val submitRawState = evalJs(
+                            """
+                            (function() {
+                                try {
+                                    var textarea = document.querySelector(
+                                        'textarea[placeholder="Напишите что нибудь..."]'
+                                    );
+                                    var activeButton = document.querySelector(
+                                        'button.comments__send-btn'
+                                    );
+                                    if (!textarea || !activeButton) return "WAIT_CONTROLS";
+                                    if (activeButton.disabled || textarea.value.trim() === "") {
+                                        return "WAIT_BUTTON_AFTER_INPUT";
+                                    }
+                                    activeButton.click();
+                                    return "CLICKED";
+                                } catch (e) {
+                                    return "ERROR:" +
+                                        (e && e.message ? e.message : String(e));
+                                }
+                            })();
+                            """.trimIndent(),
+                            requireDeckEnabled = true
+                        )
+                        val submitState = try {
+                            com.google.gson.Gson().fromJson(
+                                submitRawState,
+                                String::class.java
+                            ).orEmpty()
+                        } catch (_: Exception) {
+                            submitRawState.orEmpty()
+                        }
 
-                        log(
-                            account.username,
-                            "COMMENT: DECK_CONTROLS_FOUND name='" +
-                                deckName + "' attempt=" + attempt
-                        )
-                        log(
-                            account.username,
-                            "COMMENT: DECK_DAILY_ATTEMPT_RESERVED used=$dailyDeckAttemptCount/$DECK_COMMENT_DAILY_LIMIT"
-                        )
-                        log(
-                            account.username,
-                            "COMMENT: DECK_TEXTAREA_DOUBLE_CLICKED name='" +
-                                deckName + "'"
-                        )
-                        log(
-                            account.username,
-                            "COMMENT: DECK_TEXT_SET name='" +
-                                deckName + "' length=" + commentText.length
-                        )
-                        log(
-                            account.username,
-                            "COMMENT: DECK_SEND_CLICKED name='" +
-                                deckName + "'"
-                        )
+                        when {
+                            submitState == "DISABLED" -> {
+                                toggleDisabledDuringDeck = true
+                            }
+                            submitState == "WAIT_CONTROLS" ||
+                                submitState == "WAIT_BUTTON_AFTER_INPUT" -> {
+                                if (submitState == "WAIT_BUTTON_AFTER_INPUT") {
+                                    buttonStillDisabledAfterInput = true
+                                }
+                                if (!delayUnlessDisabled(300L)) {
+                                    toggleDisabledDuringDeck = true
+                                    return@repeat
+                                }
+                            }
+                            submitState == "CLICKED" -> {
+                                actionClicked = true
+                                val deckId = deckUrl.substringBefore('?').trimEnd('/')
+                                // Reserve before confirmation: an uncertain response must not
+                                // trigger a duplicate comment on this deck.
+                                dailyDeckAttemptCount = (dailyDeckAttemptCount + 1)
+                                    .coerceAtMost(DECK_COMMENT_DAILY_LIMIT)
+                                deckCommentPrefs.edit()
+                                    .putBoolean(
+                                        deckAttemptPrefix + deckId.hashCode(),
+                                        true
+                                    )
+                                    .putLong(lastDeckCommentKey, System.currentTimeMillis())
+                                    .putInt(dailyDeckAttemptCountKey, dailyDeckAttemptCount)
+                                    .apply()
+
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_CONTROLS_FOUND name='" +
+                                        deckName + "' attempt=" + attempt
+                                )
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_DAILY_ATTEMPT_RESERVED used=$dailyDeckAttemptCount/$DECK_COMMENT_DAILY_LIMIT"
+                                )
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_TEXTAREA_DOUBLE_CLICKED name='" +
+                                        deckName + "'"
+                                )
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_TEXT_SET name='" +
+                                        deckName + "' length=" + commentText.length
+                                )
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_SEND_CLICKED name='" +
+                                        deckName + "'"
+                                )
+                            }
+                            submitState.startsWith("ERROR:") -> {
+                                log(
+                                    account.username,
+                                    "COMMENT: DECK_ACTION_ERROR name='" +
+                                        deckName + "' " + submitState,
+                                    true
+                                )
+                            }
+                        }
                     }
                     state.startsWith("ERROR:") -> {
                         log(
@@ -10380,7 +10485,7 @@ class MangaBuffAutomation(
                     }
                 }
 
-                if (attempt == 49 && !actionClicked) {
+                if (attempt == 49 && !actionClicked && !toggleDisabledDuringDeck) {
                     log(
                         account.username,
                         if (buttonStillDisabledAfterInput) {
@@ -10393,15 +10498,13 @@ class MangaBuffAutomation(
                 }
             }
 
-            if (toggleDisabledDuringDeck || stopIfDeckCommentsDisabled("BEFORE_SEND")) {
-                log(
-                    account.username,
-                    "COMMENT: DECK_STOPPED reason=TOGGLE_DISABLED stage=SEND_CONTROLS sent=$sentCount"
-                )
+            if (toggleDisabledDuringDeck || !deckCommentEnabledNow()) {
+                logDeckDisabled("SEND_CONTROLS")
                 return sentCount
             }
             if (!actionClicked) continue
 
+            var disabledDuringConfirmation = false
             val confirmed = withTimeoutOrNull(7_000L) {
                 var submitted = false
 
@@ -10442,8 +10545,9 @@ class MangaBuffAutomation(
 
                     if (state == "CONFIRMED") {
                         submitted = true
-                    } else {
-                        delay(300L)
+                    } else if (!delayUnlessDisabled(300L)) {
+                        disabledDuringConfirmation = true
+                        break
                     }
                 }
 
@@ -10466,12 +10570,19 @@ class MangaBuffAutomation(
                 )
             }
 
+            if (disabledDuringConfirmation || !deckCommentEnabledNow()) {
+                logDeckDisabled("SUBMIT_CONFIRMATION")
+                return sentCount
+            }
+
             // No random short delay here: the next iteration's persistent
             // rate-limit gate enforces exactly 40 seconds between Send clicks.
             if (index + 1 < targetDecks.size) {
                 log(account.username, "COMMENT: DECK_NEXT_DELAY gapSec=40")
             }
         }
+
+        if (stopIfDeckCommentsDisabled("TASK_END")) return sentCount
 
         log(
             account.username,
