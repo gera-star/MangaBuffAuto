@@ -9881,7 +9881,10 @@ class MangaBuffAutomation(
             Context.MODE_PRIVATE
         )
         val deckCommentDay = java.time.LocalDate.now().toString()
-        val deckAccountKey = account.username
+        // Use the stable account ID instead of the username. Cyrillic usernames
+        // were all normalized to "_" by the previous ASCII-only sanitizer, causing
+        // different accounts to share the same per-day deck-comment guard.
+        val deckAccountKey = account.id
             .lowercase()
             .replace(Regex("[^a-z0-9._-]"), "_")
         val deckAttemptPrefix = "attempted_${deckCommentDay}_${deckAccountKey}_"
@@ -10149,10 +10152,11 @@ class MangaBuffAutomation(
                             );
 
                             if (!textarea || !button) return "WAIT_CONTROLS";
-                            if (button.disabled) return "WAIT_BUTTON";
 
-                            textarea.click();
-                            textarea.click();
+                            // The site's send button is disabled while the field is empty.
+                            // Populate the textarea and dispatch input/change first, then
+                            // check the enabled state. Checking button.disabled before setting
+                            // the value caused the script to wait forever without ever typing.
                             textarea.focus();
 
                             var setter = Object.getOwnPropertyDescriptor(
@@ -10172,6 +10176,8 @@ class MangaBuffAutomation(
                             textarea.dispatchEvent(
                                 new Event("change", { bubbles: true })
                             );
+
+                            if (button.disabled) return "WAIT_BUTTON_AFTER_INPUT";
 
                             button.click();
                             return "CLICKED";
@@ -10194,6 +10200,8 @@ class MangaBuffAutomation(
 
                 when {
                     state == "WAIT_CONTROLS" -> delay(300L)
+                    state == "WAIT_BUTTON_AFTER_INPUT" -> delay(300L)
+                    // Backward-compatible while older injected JS callbacks are still in flight.
                     state == "WAIT_BUTTON" -> delay(300L)
                     state == "CLICKED" -> {
                         actionClicked = true
