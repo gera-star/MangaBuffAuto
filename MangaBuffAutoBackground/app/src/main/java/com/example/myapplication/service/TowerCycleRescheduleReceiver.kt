@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import com.example.myapplication.data.AccountRepository
 
 /**
  * AlarmManager alarms are removed by Android on reboot. Re-arm persisted Tower deadlines
@@ -26,6 +27,8 @@ class TowerCycleRescheduleReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences(PREFS_RUNTIME, Context.MODE_PRIVATE)
         val entries = prefs.getStringSet(KEY_TOWER_CYCLE_ENDS, emptySet()).orEmpty()
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val accountsById = AccountRepository(context).getAccounts().associateBy { it.id }
+        val retainedEntries = entries.toMutableSet()
         val canUseExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             alarmManager.canScheduleExactAlarms()
 
@@ -35,6 +38,16 @@ class TowerCycleRescheduleReceiver : BroadcastReceiver() {
             val accountId = entry.substring(0, separator)
             val endsAt = entry.substring(separator + 1).toLongOrNull() ?: return@forEach
             if (accountId.isBlank() || endsAt <= 0L) return@forEach
+
+            val account = accountsById[accountId]
+            if (account == null || account.isOffline) {
+                runCatching {
+                    alarmManager.cancel(TowerCycleAlarmReceiver.pendingIntent(context, accountId))
+                }
+                retainedEntries.remove(entry)
+                Log.i(TAG, "Skipped Tower alarm for missing/OFFLINE accountId=$accountId")
+                return@forEach
+            }
 
             val pending = TowerCycleAlarmReceiver.pendingIntent(context, accountId, endsAt)
             try {
@@ -53,6 +66,10 @@ class TowerCycleRescheduleReceiver : BroadcastReceiver() {
             } catch (e: Exception) {
                 Log.e(TAG, "Could not restore Tower alarm for accountId=$accountId", e)
             }
+        }
+
+        if (retainedEntries != entries) {
+            prefs.edit().putStringSet(KEY_TOWER_CYCLE_ENDS, retainedEntries).apply()
         }
     }
 
