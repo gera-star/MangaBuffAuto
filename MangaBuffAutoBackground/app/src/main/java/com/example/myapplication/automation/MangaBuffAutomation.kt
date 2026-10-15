@@ -1388,14 +1388,19 @@ class MangaBuffAutomation(
     private var lastFinishedMangaTitle = ""
     private var totalMangaChapters = 0
     private var giftsFound = 0
-    @Volatile
-    private var pendingMangaMarkAsRead = false
+    // The outcome of one mark-read attempt is claimed atomically: the site callback arrives
+    // on the WebView JS-bridge thread and the watchdog runs on the main thread, and they
+    // must never both act on the same attempt (that created two retry sequences).
+    private val markReadGate = MarkReadAttemptGate()
+    private var pendingMangaMarkAsRead: Boolean
+        get() = markReadGate.isInFlight
+        set(value) {
+            if (value) markReadGate.begin() else markReadGate.clear()
+        }
     @Volatile
     private var pendingTerminalChapterResult: ReaderResult.ChapterRead? = null
     @Volatile
     private var pendingTerminalMarkReadAttempts = 0
-    @Volatile
-    private var pendingMangaMarkReadGeneration = 0L
     private var currentSessionChaptersRead = 0
     private var currentSessionTarget = 0
     private var lastKnownReadQuest = "0/75"
@@ -6026,19 +6031,22 @@ class MangaBuffAutomation(
         activeReaderMarkRead = {
             if (!resumed && continuation.isActive) {
                 log(account.username, "READER: MARK_READ_EXECUTED title='" + cleanMangaTitle(lastFinishedMangaTitle) + "' url='" + currentMangaUrl + "'")
-                try {
-                    webView.evaluateJavascript(
-                        "try{window.__mbNativeFingerRunning=false;if(window.__mbNativeFingerTimer){clearTimeout(window.__mbNativeFingerTimer);window.__mbNativeFingerTimer=null;}}catch(e){}",
-                        null
-                    )
-                } catch (_: Exception) {}
+                // This lambda can be invoked from the WebView JS-bridge thread (terminal chapter
+                // callback). WebView methods belong on the main thread, so post the JS there;
+                // the loadUrl below is posted afterwards and keeps the same order.
+                mainHandler.post {
+                    try {
+                        webView.evaluateJavascript(
+                            "try{window.__mbNativeFingerRunning=false;if(window.__mbNativeFingerTimer){clearTimeout(window.__mbNativeFingerTimer);window.__mbNativeFingerTimer=null;}}catch(e){}",
+                            null
+                        )
+                    } catch (_: Exception) {}
+                }
 
                 if (pendingTerminalChapterResult != null) {
                     pendingTerminalMarkReadAttempts++
                 }
-                pendingMangaMarkAsRead = true
-                pendingMangaMarkReadGeneration += 1L
-                val attemptGeneration = pendingMangaMarkReadGeneration
+                val attemptGeneration = markReadGate.begin()
                 val markUrl = ensureCanonicalMangaUrl(
                     currentMangaUrl.ifBlank { activeChapterContext?.mangaUrl ?: "" }
                 )
@@ -6087,10 +6095,8 @@ class MangaBuffAutomation(
                             if (
                                 !resumed &&
                                 continuation.isActive &&
-                                pendingMangaMarkAsRead &&
-                                pendingMangaMarkReadGeneration == attemptGeneration
+                                markReadGate.consumeTimeout(attemptGeneration)
                             ) {
-                                pendingMangaMarkAsRead = false
                                 val terminalResult = pendingTerminalChapterResult
                                 if (terminalResult != null) {
                                     if (pendingTerminalMarkReadAttempts < TERMINAL_MARK_READ_MAX_ATTEMPTS) {
@@ -6104,6 +6110,7 @@ class MangaBuffAutomation(
                                             if (
                                                 !resumed &&
                                                 continuation.isActive &&
+                                                !markReadGate.isInFlight &&
                                                 pendingTerminalChapterResult === terminalResult
                                             ) {
                                                 activeReaderMarkRead?.invoke()
@@ -6407,10 +6414,19 @@ class MangaBuffAutomation(
                 fun onMangaMarkedRead(title: String, found: Boolean = true) {
                     val terminalResult = pendingTerminalChapterResult
                     if (!found) {
+                        // A failure for an attempt that already has an outcome (the watchdog got
+                        // there first, or the page script ran twice) must not start another
+                        // retry sequence.
+                        if (!markReadGate.consumeResult()) {
+                            log(
+                                account.username,
+                                "READER: READ_ACTION_RESULT_IGNORED found=false reason=NO_ATTEMPT_IN_FLIGHT"
+                            )
+                            return
+                        }
                         log(account.username, "READER: READ_ACTION_NOT_CONFIRMED folder-id=3", true)
                         if (terminalResult != null) {
                             if (pendingTerminalMarkReadAttempts < TERMINAL_MARK_READ_MAX_ATTEMPTS) {
-                                pendingMangaMarkAsRead = false
                                 val nextAttempt = pendingTerminalMarkReadAttempts + 1
                                 log(
                                     account.username,
@@ -6420,16 +6436,15 @@ class MangaBuffAutomation(
                                     if (
                                         !resumed &&
                                         continuation.isActive &&
+                                        !markReadGate.isInFlight &&
                                         pendingTerminalChapterResult === terminalResult
                                     ) {
                                         activeReaderMarkRead?.invoke()
                                     }
                                 }, TERMINAL_MARK_READ_RETRY_DELAY_MS)
                             } else {
-                                pendingMangaMarkAsRead = false
                                 pendingTerminalChapterResult = null
                                 pendingTerminalMarkReadAttempts = 0
-                                pendingMangaMarkReadGeneration += 1L
                                 log(
                                     account.username,
                                     "READER: TERMINAL_MARK_READ_GIVE_UP attempts=$TERMINAL_MARK_READ_MAX_ATTEMPTS " +
@@ -6450,9 +6465,18 @@ class MangaBuffAutomation(
                         return
                     }
 
+                    // A late success for a terminal chapter is still valid evidence even if the
+                    // watchdog already consumed that attempt. With no terminal result pending and
+                    // no attempt in flight the callback is stale and must not end a different manga.
+                    val consumed = markReadGate.consumeResult()
+                    if (!consumed && terminalResult == null) {
+                        log(
+                            account.username,
+                            "READER: READ_ACTION_RESULT_IGNORED found=true reason=NO_ATTEMPT_IN_FLIGHT"
+                        )
+                        return
+                    }
                     log(account.username, "READER: READ_ACTION_CONFIRMED folder-id=3 (Прочитано)")
-                    pendingMangaMarkAsRead = false
-                    pendingMangaMarkReadGeneration += 1L
                     if (terminalResult != null) {
                         pendingTerminalChapterResult = null
                         pendingTerminalMarkReadAttempts = 0
