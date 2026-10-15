@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -47,6 +48,7 @@ fun MangaBuffSplash(
     onPlaybackFailed: () -> Unit
 ) {
     val videoViewRef = remember { mutableStateOf<VideoView?>(null) }
+    val videoVisible = remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -62,13 +64,22 @@ fun MangaBuffSplash(
             .fillMaxSize()
             .background(Color(0xFF08070B))
     ) {
+        // Keep a local image visible while the network video is preparing or has failed.
+        // VideoView otherwise shows an opaque black SurfaceView during buffering.
+        if (!videoVisible.value || playbackFailed) {
+            KeenySplash(modifier = Modifier.fillMaxSize())
+        }
+
         if (!playbackFailed) {
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (videoVisible.value && !playbackFailed) 1f else 0f),
                 factory = { context ->
                     VideoView(context).apply {
                         setBackgroundColor(android.graphics.Color.BLACK)
                         setOnPreparedListener { player: MediaPlayer ->
+                            videoVisible.value = true
                             player.isLooping = true
                             player.setVolume(0f, 0f)
                             runCatching {
@@ -80,6 +91,7 @@ fun MangaBuffSplash(
                             onPlaybackStarted()
                         }
                         setOnErrorListener { _, _, _ ->
+                            videoVisible.value = false
                             onPlaybackFailed()
                             true
                         }
