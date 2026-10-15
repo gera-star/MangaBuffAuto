@@ -1,5 +1,7 @@
 package com.example.myapplication
 
+import android.content.ContentResolver
+import android.net.Uri
 import android.util.Log
 import android.view.LayoutInflater
 import androidx.compose.foundation.background
@@ -15,7 +17,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.RawResourceDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 
@@ -65,14 +66,16 @@ fun MangaBuffSplash(
             }
         }
 
+        val videoUri = Uri.Builder()
+            .scheme(ContentResolver.SCHEME_ANDROID_RESOURCE)
+            .authority(appContext.packageName)
+            .path(R.raw.mangabuff_splash.toString())
+            .build()
+
         player.addListener(listener)
         player.repeatMode = Player.REPEAT_MODE_ONE
         player.volume = 0f
-        player.setMediaItem(
-            MediaItem.fromUri(
-                RawResourceDataSource.buildRawResourceUri(R.raw.mangabuff_splash)
-            )
-        )
+        player.setMediaItem(MediaItem.fromUri(videoUri))
         player.prepare()
         player.playWhenReady = true
 
