@@ -43,6 +43,10 @@ class MultiAccountAutomationRunner(
         onLog(LogEntry(username = account.username, component = "RUNNER", message = "START accountId=${account.id}"))
         onLog(LogEntry(username = account.username, component = "RUNNER", message = "PREPARE accountId=${account.id}"))
 
+        // Seed from persistence, but preserve a toggle change made while this account
+        // was queued and before its automation coroutine started.
+        DeckCommentToggleRegistry.initializeIfAbsent(account.id, account.deckCommentEnabled)
+
         val accountRuntime = runtime.prepareAccount(account)
 
         onLog(LogEntry(username = account.username, component = "RUNNER", message = "READY accountId=${account.id} profile=${accountRuntime.profileName}"))
