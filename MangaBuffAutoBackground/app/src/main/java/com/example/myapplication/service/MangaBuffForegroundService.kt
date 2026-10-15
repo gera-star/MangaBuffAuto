@@ -394,23 +394,31 @@ class MangaBuffForegroundService : Service() {
             ACTION_RELOAD_ACCOUNT -> {
                 val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
                 if (accountId.isNotBlank()) {
-                    automationRunner.reloadAccount(
-                        repository.getAccounts().firstOrNull { it.id == accountId }
-                            ?: return START_STICKY
-                    )
+                    val account = repository.getAccounts().firstOrNull { it.id == accountId }
+                    if (account != null && !account.isOffline) {
+                        automationRunner.reloadAccount(account)
+                    } else {
+                        publishLog(
+                            LogEntry(
+                                username = accountId,
+                                component = "OFFLINE",
+                                message = "RELOAD_REJECTED account is OFFLINE"
+                            )
+                        )
+                    }
                 }
             }
 
             ACTION_SKIP_MANGA -> {
                 val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
-                if (accountId.isNotBlank()) {
+                if (accountId.isNotBlank() && !isAccountOffline(accountId)) {
                     automationRunner.skipCurrentManga(accountId)
                 }
             }
 
             ACTION_MARK_READ -> {
                 val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
-                if (accountId.isNotBlank()) {
+                if (accountId.isNotBlank() && !isAccountOffline(accountId)) {
                     automationRunner.markCurrentMangaAsRead(accountId)
                 }
             }
@@ -460,6 +468,32 @@ class MangaBuffForegroundService : Service() {
                 )
             )
             removePersistedRun(accountId)
+            return
+        }
+
+        if (account.isOffline) {
+            // OFFLINE survives process restarts and blocks queued/stale start intents too.
+            cancelTowerCycle(accountId, clearPersisted = true)
+            removePersistedRun(accountId)
+            accountJobs.remove(accountId)?.cancel()
+            automationRunner.stopAccount(accountId)
+            runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
+            publishStatus(
+                accountId,
+                "OFFLINE — задачи остановлены, авторизация сохранена",
+                false,
+                "",
+                0f
+            )
+            releaseWakeLockIfIdle()
+            stopSelfIfIdle()
+            publishLog(
+                LogEntry(
+                    username = account.username,
+                    component = "OFFLINE",
+                    message = "START_REJECTED account is OFFLINE; saved profile retained"
+                )
+            )
             return
         }
 
@@ -597,7 +631,11 @@ class MangaBuffForegroundService : Service() {
 
                             serviceScope.launch {
                                 delay(1_500L)
-                                if (!stoppingExplicitly && readPersistedRuns()[accountId] == taskType) {
+                                if (
+                                    !stoppingExplicitly &&
+                                    !isAccountOffline(accountId) &&
+                                    readPersistedRuns()[accountId] == taskType
+                                ) {
                                     startAccountInternal(accountId, taskType)
                                 }
                             }
@@ -642,7 +680,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun requestAccountRecovery(accountId: String) {
-        if (stoppingExplicitly) return
+        if (stoppingExplicitly || isAccountOffline(accountId)) return
         if (recoveryRequests.add(accountId)) {
             publishLog(
                 LogEntry(
@@ -674,6 +712,11 @@ class MangaBuffForegroundService : Service() {
                     .forEach { missingWebViewSince.remove(it) }
 
                 for (accountId in activeIds) {
+                    if (isAccountOffline(accountId)) {
+                        recoveryRequests.remove(accountId)
+                        missingWebViewSince.remove(accountId)
+                        continue
+                    }
                     // Queued jobs intentionally do not own a WebView yet; starting
                     // recovery for them would cancel/restart a healthy queue entry.
                     val accountJob = accountJobs[accountId]
@@ -717,8 +760,9 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun startAllInternal(taskType: TaskType, promoCode: String? = null) {
-        val accounts = repository.getAccounts()
+        val accounts = repository.getAccounts().filterNot { it.isOffline }
         if (accounts.isEmpty()) {
+            publishLog(LogEntry(component = "OFFLINE", message = "START_ALL_IGNORED no_online_accounts"))
             stopSelfIfIdle()
             return
         }
@@ -743,7 +787,17 @@ class MangaBuffForegroundService : Service() {
         runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
         accountJobs.remove(accountId)?.cancel()
         automationRunner.stopAccount(accountId)
-        publishStatus(accountId, "Остановлено пользователем", false, "", 0f)
+        publishStatus(
+            accountId,
+            if (isAccountOffline(accountId)) {
+                "OFFLINE — задачи остановлены, авторизация сохранена"
+            } else {
+                "Остановлено пользователем"
+            },
+            false,
+            "",
+            0f
+        )
         releaseWakeLockIfIdle()
         stopSelfIfIdle()
     }
@@ -1016,7 +1070,21 @@ class MangaBuffForegroundService : Service() {
      * Other tasks can finish normally; when the expedition expires, the next pass
      * claims the reward and sends a new squad through the existing Tower DOM flow.
      */
+    private fun isAccountOffline(accountId: String): Boolean =
+        repository.getAccounts().firstOrNull { it.id == accountId }?.isOffline == true
+
     private fun scheduleTowerCycle(accountId: String, endsAtMillis: Long) {
+        if (isAccountOffline(accountId)) {
+            cancelTowerCycle(accountId, clearPersisted = true)
+            publishLog(
+                LogEntry(
+                    username = accountId,
+                    component = "OFFLINE",
+                    message = "TOWER_SCHEDULE_REJECTED account is OFFLINE"
+                )
+            )
+            return
+        }
         if (stoppingExplicitly || endsAtMillis <= System.currentTimeMillis()) return
         val oldEnd = towerCycleEndsAt[accountId]
         if (oldEnd == endsAtMillis && towerCycleJobs[accountId]?.isActive == true) return
@@ -1201,6 +1269,19 @@ class MangaBuffForegroundService : Service() {
             return
         }
 
+        if (account.isOffline) {
+            publishStatus(
+                accountId,
+                "OFFLINE — задачи остановлены, авторизация сохранена",
+                false,
+                "",
+                0f
+            )
+            releaseWakeLockIfIdle()
+            stopSelfIfIdle()
+            return
+        }
+
         val persistedTask = readPersistedRuns()[accountId]
         if (persistedTask != null || accountJobs[accountId]?.isActive == true) {
             // Never start a second WebView task concurrently; retry less aggressively to
@@ -1231,9 +1312,11 @@ class MangaBuffForegroundService : Service() {
     private fun restoreTowerCycles(skipAccountId: String? = null) {
         val entries = readPersistedTowerCycles()
         val now = System.currentTimeMillis()
+        val accountsById = repository.getAccounts().associateBy { it.id }
         entries.forEach { (accountId, endsAt) ->
             if (accountId == skipAccountId) return@forEach
-            if (repository.getAccounts().none { it.id == accountId }) {
+            val account = accountsById[accountId]
+            if (account == null || account.isOffline) {
                 cancelTowerCycle(accountId, clearPersisted = true)
             } else {
                 scheduleTowerCycle(accountId, maxOf(endsAt, now + 1_000L))
