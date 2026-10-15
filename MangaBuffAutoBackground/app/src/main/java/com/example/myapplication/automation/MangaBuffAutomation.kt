@@ -35,7 +35,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.selects.onAwait
 import kotlinx.coroutines.selects.select
 import okhttp3.FormBody
 import okhttp3.Headers
