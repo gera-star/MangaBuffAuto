@@ -132,4 +132,8 @@ data class GlobalSettings(
     val towerUpgradeSupply: Boolean = true,
     val keepScreenOn: Boolean = false,
     val readerSiteAutoscroll: Boolean = true
-)
+) {
+    companion object {
+        const val MAX_READER_CHAPTERS = 100
+    }
+}
