@@ -164,7 +164,7 @@ class TradeAutomation(context: Context) {
         if (account.getSafeCookiesJson().isBlank()) {
             clearActiveMonitor()
             addLog("У аккаунта нет сохранённых Cookie. Авторизуй аккаунт обычным способом.", true, account.id)
-            MangaBuffForegroundService.setTradeMonitorActive(appContext, false, session.account.id)
+            MangaBuffForegroundService.setTradeMonitorActive(appContext, false, account.id)
             return
         }
         val coefficient = if (profitCoefficient.isFinite()) profitCoefficient.coerceIn(1.0, 10.0) else 1.5
@@ -228,7 +228,7 @@ class TradeAutomation(context: Context) {
                     _activeAccountId.value = null
                     if (activeSession === session) activeSession = null
                     clearActiveMonitor(session.account.id)
-                    MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
+                    MangaBuffForegroundService.setTradeMonitorActive(appContext, false, session.account.id)
                 }
             }
         }
