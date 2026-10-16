@@ -1265,13 +1265,37 @@ class MangaBuffAutomation(
         onDailyStatsUpdate(account.id, dailyStats)
     }
 
+    /**
+     * Start a fresh daily bucket when MangaBuff's calendar day changes.
+     * Do not merely change the day label: that would carry yesterday's counters forward.
+     */
+    private fun dailyStatsForToday(): DailyStats {
+        val today = currentStatsDay()
+        if (dailyStats.day != today) {
+            log(
+                "SYSTEM",
+                "DAILY_STATS: RESET oldDay=${dailyStats.day} newDay=$today"
+            )
+            dailyStats = DailyStats(day = today)
+        }
+        return dailyStats
+    }
+
     private fun publishDailyStats(account: MangaBuffAccount) {
-        dailyStats = dailyStats.copy(day = currentStatsDay())
+        dailyStatsForToday()
         onDailyStatsUpdate(account.id, dailyStats)
     }
 
     private fun addDaily(account: MangaBuffAccount, update: (DailyStats) -> DailyStats) {
-        dailyStats = update(dailyStats).copy(day = currentStatsDay())
+        val today = currentStatsDay()
+        val current = if (dailyStats.day == today) dailyStats else {
+            log(
+                "SYSTEM",
+                "DAILY_STATS: RESET oldDay=${dailyStats.day} newDay=$today"
+            )
+            DailyStats(day = today)
+        }
+        dailyStats = update(current).copy(day = today)
         publishDailyStats(account)
     }
 
@@ -1713,7 +1737,7 @@ class MangaBuffAutomation(
                         val serverCount = serverCommentCount.coerceIn(0, COMMENT_DAILY_LIMIT)
                         if (dailyStats.comments != serverCount) {
                             log(account.username, "COMMENT: DAILY_COUNTER_SYNC source=SITE old=" + dailyStats.comments + " new=" + serverCount + " raw='" + comments + "'")
-                            dailyStats = dailyStats.copy(day = currentStatsDay(), comments = serverCount)
+                            dailyStats = dailyStatsForToday().copy(comments = serverCount)
                             publishDailyStats(account)
                         }
                     }
