@@ -176,8 +176,10 @@ class TradeAutomation(context: Context) {
             }
             val doc = Jsoup.parse(detail, detailUrl)
             if (doc.selectFirst(".trade__accepted-btn") == null) {
-                // It may have been accepted/cancelled elsewhere; remember it to avoid repeated logs.
-                markProcessed(tradeId)
+                // Fail closed: a changed page layout must not silently mark a live offer as handled.
+                if (skippedLogged.add(tradeId)) {
+                    addLog("Обмен #$tradeId: кнопка принятия не найдена; автоматическое действие пропущено.")
+                }
                 continue
             }
 
