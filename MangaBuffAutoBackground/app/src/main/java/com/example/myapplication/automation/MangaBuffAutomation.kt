@@ -2306,36 +2306,10 @@ class MangaBuffAutomation(
             }
         }
 
-        // Deck comments are a START-task action, not a side effect of statistics refresh.
-        // fetchAndLogBalanceInfo() and the reader's periodic balance refresh never dispatch
-        // this task. Only an explicit "Start all" or "Comments" run can enter this block,
-        // and only when the per-account deck toggle is enabled.
-        val deckCommentsRequestedByStart =
-            taskType == TaskType.ALL || taskType == TaskType.COMMENT
-        if (deckCommentsRequestedByStart && account.deckCommentEnabled) {
-            coroutineContext.ensureActive()
+        if (taskType == TaskType.ALL) {
             log(
                 account.username,
-                "TASK: DECK_COMMENT_DISPATCH source=EXPLICIT_START taskType=${taskType.title} enabled=true"
-            )
-            val deckStart = SystemClock.elapsedRealtime()
-            val deckSent = runDeckCommentTask(account, webView)
-            log(
-                account.username,
-                "TASK: DECK_COMMENT_END sent=$deckSent elapsed=" +
-                    (SystemClock.elapsedRealtime() - deckStart) + "ms"
-            )
-            fetchAndLogBalanceInfo(account, webView)
-        } else if (deckCommentsRequestedByStart) {
-            log(
-                account.username,
-                "COMMENT: DECK_SKIPPED reason=DISABLED_OR_NOT_REQUESTED " +
-                    "taskType=${taskType.title} enabled=${account.deckCommentEnabled}"
-            )
-        } else {
-            log(
-                account.username,
-                "COMMENT: DECK_SKIPPED reason=NOT_DECK_TASK taskType=${taskType.title}"
+                "TASK: ACCOUNT_SEQUENCE order=BATTLE>TOWER>ADS>MINE>READER>DECK_COMMENT>COMMENT>FINAL_BALANCE"
             )
         }
 
@@ -2418,6 +2392,39 @@ class MangaBuffAutomation(
                 log(account.username, "TASK: READER_END elapsed=${SystemClock.elapsedRealtime() - start}ms")
                 fetchAndLogBalanceInfo(account, webView)
             }
+        }
+
+        // Deck comments are a START-task action, not a side effect of statistics refresh.
+        // fetchAndLogBalanceInfo() and the reader's periodic balance refresh never dispatch
+        // this task. Only an explicit "Start all" or "Comments" run can enter this block,
+        // and only when the per-account deck toggle is enabled.
+        val deckCommentsRequestedByStart =
+            taskType == TaskType.ALL || taskType == TaskType.COMMENT
+        if (deckCommentsRequestedByStart && account.deckCommentEnabled) {
+            coroutineContext.ensureActive()
+            log(
+                account.username,
+                "TASK: DECK_COMMENT_DISPATCH source=EXPLICIT_START taskType=${taskType.title} enabled=true"
+            )
+            val deckStart = SystemClock.elapsedRealtime()
+            val deckSent = runDeckCommentTask(account, webView)
+            log(
+                account.username,
+                "TASK: DECK_COMMENT_END sent=$deckSent elapsed=" +
+                    (SystemClock.elapsedRealtime() - deckStart) + "ms"
+            )
+            fetchAndLogBalanceInfo(account, webView)
+        } else if (deckCommentsRequestedByStart) {
+            log(
+                account.username,
+                "COMMENT: DECK_SKIPPED reason=DISABLED_OR_NOT_REQUESTED " +
+                    "taskType=${taskType.title} enabled=${account.deckCommentEnabled}"
+            )
+        } else {
+            log(
+                account.username,
+                "COMMENT: DECK_SKIPPED reason=NOT_DECK_TASK taskType=${taskType.title}"
+            )
         }
 
         if (taskType == TaskType.ALL || taskType == TaskType.COMMENT) {
