@@ -6128,6 +6128,17 @@ class MangaBuffAutomation(
             }
         }
 
+        val pendingHistoryIds = completedChapterIds
+            .filter { it.isNotBlank() && it !in historyServerAcceptedChapterIds }
+        if (pendingHistoryIds.isNotEmpty()) {
+            log(
+                account.username,
+                "READER: FINAL_CCL_BATCH_PENDING count=${pendingHistoryIds.size} " +
+                    "chapterIds=${pendingHistoryIds.joinToString(",")} " +
+                    "serverAccepted=false policy=KEEP_SITE_CCL_NO_SYNTHETIC_POST",
+                true
+            )
+        }
         activeChapterContext = null
         activeReaderSkip = null
         log(account.username, "READER: STOP_CLEANUP_COMPLETE")
@@ -6861,11 +6872,28 @@ class MangaBuffAutomation(
                     confirmationSource: String
                 ) {
                     val ctx = activeChapterContext
-                    if (ctx != null && ctx.completionProcessed) {
+                    val callbackUrl = chapterUrl.substringBefore('?').substringBefore('#').trimEnd('/')
+                    val contextUrl = ctx?.actualChapterUrl.orEmpty()
+                        .substringBefore('?').substringBefore('#').trimEnd('/')
+                    val sameChapterId = ctx?.chapterId?.isNotBlank() == true &&
+                        chapterId.isNotBlank() && ctx.chapterId == chapterId
+                    val sameChapterUrl = contextUrl.isNotBlank() && callbackUrl.isNotBlank() &&
+                        contextUrl == callbackUrl
+                    if (ctx == null || ctx.accountId != account.id || (!sameChapterId && !sameChapterUrl)) {
+                        log(
+                            account.username,
+                            "READER: STALE_CHAPTER_CALLBACK_IGNORED callbackChapterId=$chapterId " +
+                                "contextChapterId=${ctx?.chapterId.orEmpty()} callbackUrl=$callbackUrl " +
+                                "contextUrl=$contextUrl",
+                            true
+                        )
+                        return
+                    }
+                    if (ctx.completionProcessed) {
                         log(account.username, "READER: COMPLETION_DUPLICATE_IGNORED chapterId=$chapterId")
                         return
                     }
-                    ctx?.completionProcessed = true
+                    ctx.completionProcessed = true
 
                     lastFinishedChapterUrl = chapterUrl
                     lastFinishedChapterNumber = number
@@ -6901,7 +6929,7 @@ class MangaBuffAutomation(
                     if (historyAccepted) {
                         log(account.username, "READER: CHAPTER_HISTORY_SERVER_ACCEPTED chapterId=$chapterId source=ADD_HISTORY_2XX")
                     } else {
-                        log(account.username, "READER: CHAPTER_HISTORY_CONFIRMED_LOCAL chapterId=$chapterId source=$confirmation questBefore=$questBefore")
+                        log(account.username, "READER: CHAPTER_HISTORY_PENDING_SERVER_ACCEPTANCE chapterId=$chapterId source=$confirmation questBefore=$questBefore")
                     }
 
                     if (isRealLastChapter) {
@@ -8501,6 +8529,8 @@ class MangaBuffAutomation(
 
                                         var confirmed = false;
                                         var confirmSource = '';
+                                        var readyToNavigate = false;
+                                        var readySource = '';
                                         var waitReason = '';
                                         var postOk = postStatus !== null && postStatus >= 200 && postStatus < 300;
 
@@ -8535,11 +8565,12 @@ class MangaBuffAutomation(
                                             // and completes; otherwise the request can be aborted on navigation.
                                             waitReason = 'WAITING_FOR_HISTORY_BATCH_POST';
                                         } else if (readSend && containsCurrent) {
-                                            // The chapter is queued locally below the batch threshold, with
-                                            // no request in flight. It is safe to open the next chapter.
-                                            confirmed = true;
-                                            confirmSource = 'LOCAL_HISTORY_STATE';
-                                            waitReason = 'ADDHISTORY_NOT_INTERCEPTED_BALANCE_WILL_VERIFY';
+                                            // The site has only queued this chapter locally. Under CCL=2,
+                                            // moving on is required to let the next chapter trigger the site's
+                                            // batch POST; this is NOT server acceptance of the current chapter.
+                                            readyToNavigate = true;
+                                            readySource = 'LOCAL_HISTORY_QUEUE';
+                                            waitReason = 'LOCAL_HISTORY_QUEUE_BELOW_CCL';
                                         } else {
                                             waitReason = readSend
                                                 ? 'WAITING_FOR_HISTORY_POOL_CURRENT'
@@ -8561,6 +8592,8 @@ class MangaBuffAutomation(
                                             chapterId: currentChId,
                                             confirmed: confirmed,
                                             confirmSource: confirmSource,
+                                            readyToNavigate: readyToNavigate,
+                                            readySource: readySource,
                                             waitReason: waitReason
                                         };
                                     }
@@ -8637,6 +8670,8 @@ class MangaBuffAutomation(
 
                                         if (state.confirmed) {
                                             AndroidReaderBridge.onLogStep('READER: MB_HISTORY_CONFIRMATION_SUCCESS chapterId=' + state.chapterId + ' source=' + state.confirmSource);
+                                        } else if (state.readyToNavigate) {
+                                            AndroidReaderBridge.onLogStep('READER: MB_HISTORY_LOCAL_QUEUE_READY chapterId=' + state.chapterId + ' source=' + state.readySource + ' serverAccepted=false');
                                         } else {
                                             if (state.postStatus && state.postStatus !== 200) {
                                                 AndroidReaderBridge.onLogStep('READER: MB_HISTORY_CONFIRMATION_FAILED chapterId=' + state.chapterId + ' reason=' + state.waitReason);
@@ -8766,6 +8801,16 @@ class MangaBuffAutomation(
                                                 ' source=' + state.confirmSource
                                             );
                                             onSuccess(state.confirmSource || 'UNKNOWN');
+                                            return;
+                                        }
+
+                                        if (state.readyToNavigate) {
+                                            cancelReaderContinuation();
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: MB_READ_LOCAL_QUEUE_READY chapterId=' + state.chapterId +
+                                                ' source=' + state.readySource + ' serverAccepted=false'
+                                            );
+                                            onSuccess(state.readySource || 'LOCAL_HISTORY_QUEUE');
                                             return;
                                         }
 
