@@ -559,21 +559,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun stopAllTasksState() {
+        val visibleStatusById = _accounts.value.associate { it.id to it.statusMessage }
         _accounts.update { list ->
             list.map { acc ->
                 acc.copy(
                     isRunning = false,
                     taskProgress = 0f,
                     currentTask = "",
-                    statusMessage = if (acc.statusMessage?.contains("Завершено") == true) {
-                        acc.statusMessage
+                    statusMessage = if (visibleStatusById[acc.id]?.contains("Завершено") == true) {
+                        visibleStatusById[acc.id]
                     } else {
                         "Остановка запрошена…"
                     }
                 )
             }
         }
-        repository.saveAccounts(_accounts.value)
+
+        // Never write the stale UI list over the repository: service callbacks may have
+        // persisted fresh stats, reader position, cookies, or other account fields meanwhile.
+        // Apply only the stop-state fields to each account's latest stored record.
+        _accounts.value.map { it.id }.forEach { accountId ->
+            val visibleStatus = visibleStatusById[accountId]
+            repository.updateAccount(accountId) { stored ->
+                stored.copy(
+                    isRunning = false,
+                    taskProgress = 0f,
+                    currentTask = "",
+                    statusMessage = if (visibleStatus?.contains("Завершено") == true) {
+                        visibleStatus
+                    } else {
+                        "Остановка запрошена…"
+                    }
+                )
+            }
+        }
     }
 
     /**

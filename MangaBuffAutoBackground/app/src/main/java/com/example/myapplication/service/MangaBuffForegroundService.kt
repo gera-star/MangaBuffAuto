@@ -566,7 +566,6 @@ class MangaBuffForegroundService : Service() {
 
                 accountExecutionQueue.acquire()
                 hasExecutionPermit = true
-                if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
 
                 publishLog(
                     LogEntry(
@@ -584,6 +583,9 @@ class MangaBuffForegroundService : Service() {
                 )
                 publishStatus(accountId, "Ожидание освобождения общего слота...", true, taskType.title, 0f)
                 exclusiveExecutionPermit = AccountExecutionGate.acquire()
+                // Keep this job marked as queued while it waits for the shared Gate.
+                // The watchdog must not mistake a healthy Gate wait for a missing-WebView hang.
+                if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
                 publishLog(
                     LogEntry(
                         username = account.username,
