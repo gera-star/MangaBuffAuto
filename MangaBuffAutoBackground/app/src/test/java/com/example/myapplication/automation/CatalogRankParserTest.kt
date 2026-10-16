@@ -78,6 +78,31 @@ class CatalogRankParserTest {
     }
 
     @Test
+    fun readsOnlyRankFiltersFromOwnerCardTabsInSiteOrder() {
+        val doc = Jsoup.parse(
+            """
+            <div class="tabs__nav">
+              <a href="https://mangabuff.ru/users/1539681/cards">Все</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?type=x">X</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?type=s">S</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?type=a">A</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?type=e">E</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?is_animated=1">GIF</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?is_fragment=1">A+</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?is_enchant=1">Заточенные</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?lock=1">Замок</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?sort=new">Новые</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?duplicates=1">Дубли</a>
+              <a href="https://mangabuff.ru/users/1539681/cards?type=w">W</a>
+            </div>
+            """.trimIndent(),
+            "https://mangabuff.ru/users/1539681/cards"
+        )
+
+        assertEquals(listOf("X", "S", "A", "E", "W"), CatalogRankParser.userCardRankFilters(doc))
+    }
+
+    @Test
     fun acceptsKnownSpecialRanksWhenExplicitlyPresent() {
         val doc = Jsoup.parse(
             """<div class="manga-cards__item-wrapper" data-rank="H">

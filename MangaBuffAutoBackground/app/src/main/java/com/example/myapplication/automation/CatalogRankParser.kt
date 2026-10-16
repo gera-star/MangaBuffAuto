@@ -70,6 +70,21 @@ internal object CatalogRankParser {
                 node.attr("data-id").trim() == wantedId
         }
 
+    /**
+     * Read rank filter names from the owner's real tabs. Ignore non-rank filters
+     * such as animated, fragment, enchantment, lock, unlock, recent and duplicates.
+     */
+    fun userCardRankFilters(doc: Document): List<String> =
+        doc.select(".tabs__nav a[href*='type=']")
+            .mapNotNull { anchor ->
+                USER_CARD_TYPE_REGEX.find(anchor.attr("href"))?.groupValues?.getOrNull(1)
+                    ?.uppercase()
+                    ?.takeIf { it in TradePolicy.STANDARD_RANKS || it in TradePolicy.SPECIAL_RANKS }
+            }
+            .distinct()
+
+    private val USER_CARD_TYPE_REGEX = Regex("(?:[?&])type=([a-z])(?:&|$)", RegexOption.IGNORE_CASE)
+
     private fun normalizeKnownRank(value: String): String? {
         val rank = value.trim().uppercase()
         return rank.takeIf {

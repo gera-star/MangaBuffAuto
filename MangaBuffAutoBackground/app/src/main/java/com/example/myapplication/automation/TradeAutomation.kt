@@ -568,16 +568,9 @@ class TradeAutomation(context: Context) {
 
         rankForCardInDocument(doc, cardId)?.let { return it }
 
-        val rankFilters = doc.select(".tabs__nav a[href*='type=']")
-            .mapNotNull { anchor ->
-                val type = USER_CARD_TYPE_REGEX.find(anchor.attr("href"))?.groupValues?.getOrNull(1)
-                    ?.uppercase()
-                type?.takeIf { it in TradePolicy.STANDARD_RANKS || it in TradePolicy.SPECIAL_RANKS }
-            }
-            .distinct()
-            .ifEmpty {
-                listOf("X") + TradePolicy.STANDARD_ORDER.reversed() + listOf("H", "N", "V", "Q", "L", "K", "W")
-            }
+        val rankFilters = CatalogRankParser.userCardRankFilters(doc).ifEmpty {
+            listOf("X") + TradePolicy.STANDARD_ORDER.reversed() + listOf("H", "N", "V", "Q", "L", "K", "W")
+        }
 
         for (rank in rankFilters) {
             if (session.cancelled || !isAccountAvailable(session.account.id)) return null
@@ -825,6 +818,5 @@ class TradeAutomation(context: Context) {
         private val MANGA_PATH_REGEX = Regex("/manga/([^/?#]+)")
         private val CARD_USER_ID_REGEX = Regex("(?:[?&])card_user_id=(\\d+)")
         private val USER_PROFILE_REGEX = Regex("/users/(\\d+)(?:/cards)?(?:[/?#]|$)", RegexOption.IGNORE_CASE)
-        private val USER_CARD_TYPE_REGEX = Regex("(?:[?&])type=([a-z])(?:&|$)", RegexOption.IGNORE_CASE)
     }
 }
