@@ -24,6 +24,11 @@ data class DeckCommentToggleSnapshot(
  * this registry lets an already-running deck coroutine react without polling disk.
  */
 object DeckCommentToggleRegistry {
+    // Injected clock keeps the transition logic deterministic in local JVM unit tests,
+    // where Android's SystemClock is not provided by the mockable android.jar.
+    @Volatile
+    internal var elapsedRealtimeClock: () -> Long = { SystemClock.elapsedRealtime() }
+
     private val enabledByAccount =
         ConcurrentHashMap<String, MutableStateFlow<DeckCommentToggleSnapshot>>()
 
@@ -70,7 +75,7 @@ object DeckCommentToggleRegistry {
                 enabled = enabled,
                 disableVersion = nextDisableVersion,
                 disabledAtElapsedRealtimeMs = if (disablingNow) {
-                    SystemClock.elapsedRealtime()
+                    elapsedRealtimeClock()
                 } else {
                     // Preserve the last disable timestamp through a quick OFF -> ON.
                     previous.disabledAtElapsedRealtimeMs

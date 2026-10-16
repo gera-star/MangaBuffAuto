@@ -44,7 +44,11 @@ internal object CatalogRankParser {
         // A single-card detail/users page may expose only a rank badge. Use it only
         // when the page URL itself identifies the requested catalogue card; never
         // take the first badge from an unrelated listing or trade page.
-        val path = doc.location().substringBefore('?').substringBefore('#').trimEnd('/')
+        // Document.location() is an absolute URL (for example https://mangabuff.ru/cards/222),
+        // so compare the URL path rather than comparing the full URL to a path literal.
+        val path = runCatching {
+            java.net.URI(doc.location()).path.orEmpty().trimEnd('/')
+        }.getOrDefault("")
         if (path == "/cards/$wantedId" || path == "/cards/$wantedId/users") {
             val badge = doc.selectFirst(RANK_BADGE_SELECTORS)
             normalizeKnownRank(badge?.text().orEmpty())?.let { return it }

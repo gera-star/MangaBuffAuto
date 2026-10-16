@@ -11,6 +11,8 @@ class DeckCommentToggleRegistryTest {
     @Test
     fun disablingInvalidatesActiveRunEvenAfterReenable() {
         val accountId = "deck-toggle-test-${UUID.randomUUID()}"
+        val previousClock = DeckCommentToggleRegistry.elapsedRealtimeClock
+        DeckCommentToggleRegistry.elapsedRealtimeClock = { 1_234L }
         try {
             DeckCommentToggleRegistry.initializeIfAbsent(accountId, true)
             val activeRunState = DeckCommentToggleRegistry.stateFor(accountId, false)
@@ -38,6 +40,7 @@ class DeckCommentToggleRegistryTest {
                     activeRunState.value.disableVersion == runDisableVersion
             )
         } finally {
+            DeckCommentToggleRegistry.elapsedRealtimeClock = previousClock
             DeckCommentToggleRegistry.remove(accountId)
         }
     }
