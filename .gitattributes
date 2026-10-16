@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Keep Kotlin source files consistent across Windows and Unix checkouts.
+*.kt text eol=lf
+*.kts text eol=lf
