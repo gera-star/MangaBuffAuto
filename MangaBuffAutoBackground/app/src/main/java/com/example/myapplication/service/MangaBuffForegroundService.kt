@@ -397,12 +397,16 @@ class MangaBuffForegroundService : Service() {
             )
         }
 
-        // START_STICKY can recreate the service with a null intent after process death.
-        // Restore the saved trade monitor exactly once, but never restart it when handling
-        // an explicit stop or account deletion command.
-        if (intent == null && !tradeMonitorRestoreChecked) {
+        // START_STICKY can recreate the service with a null intent or the last delivered
+        // intent after process death. Restore the saved trade monitor on any non-stop command,
+        // not only when intent == null, so unrelated account actions do not strand the monitor.
+        if (!tradeMonitorRestoreChecked) {
             tradeMonitorRestoreChecked = true
-            TradeAutomation.getInstance(applicationContext).restoreActiveMonitoring()
+            val explicitStop = action == ACTION_STOP || action == ACTION_STOP_ALL ||
+                action == ACTION_TRADE_MONITOR_STOP
+            if (!explicitStop) {
+                TradeAutomation.getInstance(applicationContext).restoreActiveMonitoring()
+            }
         }
 
         when (action) {
