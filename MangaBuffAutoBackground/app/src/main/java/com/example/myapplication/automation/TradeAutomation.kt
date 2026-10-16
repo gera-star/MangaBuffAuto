@@ -519,13 +519,42 @@ class TradeAutomation(context: Context) {
             addLog("Обмен #$tradeId: сервер вернул HTTP ${response.code} при принятии (${response.url.substringAfter(BASE_URL)}).", true)
             return false
         }
+        // The observed MangaBuff response is JSON:
+        // {"message":"Вы приняли обмен","trade_status":"accepted"}.
+        // Prefer an explicit server status over inferring success from an absent button.
+        val json = runCatching { JSONObject(response.body) }.getOrNull()
+        if (json != null) {
+            val tradeStatus = json.optString("trade_status").trim()
+            if (tradeStatus.isNotBlank()) {
+                return tradeStatus.equals("accepted", ignoreCase = true)
+            }
+            val message = json.optString("message").lowercase()
+            if (message.contains("вы приняли обмен") ||
+                message.contains("обмен успешно принят") ||
+                message.contains("trade accepted")
+            ) {
+                return true
+            }
+            if (json.has("success")) return json.optBoolean("success", false)
+            return false
+        }
+
         val responseDoc = Jsoup.parse(response.body, response.url)
         val bodyText = responseDoc.text().lowercase()
         val stillHasAcceptButton = responseDoc.selectFirst(".trade__accepted-btn") != null
-        val explicitSuccess = listOf("обмен принят", "обмен успешно принят", "успешно принят", "trade accepted")
-            .any { bodyText.contains(it) } ||
-            response.body.contains("\"success\":true", ignoreCase = true)
-        return explicitSuccess || (!stillHasAcceptButton && !response.url.contains("/login"))
+        val explicitSuccess = listOf(
+            "вы приняли обмен",
+            "обмен принят",
+            "обмен успешно принят",
+            "успешно принят",
+            "trade accepted"
+        ).any { bodyText.contains(it) }
+        return explicitSuccess || (
+            response.url != detailUrl &&
+            !response.url.contains("/login") &&
+            !stillHasAcceptButton &&
+            responseDoc.selectFirst(".trade__controls") == null
+        )
     }
 
     private fun refreshCsrf() {
