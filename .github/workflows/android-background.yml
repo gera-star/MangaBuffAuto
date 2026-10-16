@@ -1,0 +1,39 @@
+name: Android background build
+
+on:
+  push:
+    branches:
+      - background-rebuild
+  pull_request:
+    branches:
+      - background-rebuild
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            MangaBuffAutoBackground/gradle/libs.versions.toml
+            MangaBuffAutoBackground/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install compile SDK
+        run: sdkmanager --install "platforms;android-37" "platform-tools"
+
+      - name: Run unit tests and assemble debug APK
+        working-directory: MangaBuffAutoBackground
+        run: ./gradlew --no-daemon -Pandroid.builder.sdkDownload=true testDebugUnitTest assembleDebug
