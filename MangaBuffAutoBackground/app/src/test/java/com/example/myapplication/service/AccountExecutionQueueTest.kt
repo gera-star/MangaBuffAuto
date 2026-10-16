@@ -7,6 +7,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import com.example.myapplication.automation.AccountExecutionGate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -45,6 +46,43 @@ class AccountExecutionQueueTest {
         secondEntered.await()
         firstJob.join()
         secondJob.join()
+    }
+
+    @Test
+    fun watchdogCanSeeJobWhileItWaitsForSharedGate() = runBlocking {
+        val queue = AccountExecutionQueue()
+        val firstGatePermit = AccountExecutionGate.acquire()
+        val localPermitAcquired = CompletableDeferred<Unit>()
+        lateinit var queuedJob: Job
+
+        queuedJob = launch {
+            val currentJob = coroutineContext[Job]!!
+            queue.markQueued("account-waiting", currentJob)
+            queue.acquire()
+            try {
+                localPermitAcquired.complete(Unit)
+                val gatePermit = AccountExecutionGate.acquire()
+                try {
+                    queue.markAcquired("account-waiting", currentJob)
+                } finally {
+                    gatePermit.release()
+                }
+            } finally {
+                queue.forget("account-waiting", currentJob)
+                queue.release()
+            }
+        }
+
+        localPermitAcquired.await()
+        yield()
+        assertTrue(
+            "watchdog must treat an account waiting for the shared Gate as queued",
+            queue.isQueued("account-waiting", queuedJob)
+        )
+
+        firstGatePermit.release()
+        queuedJob.join()
+        assertFalse(queue.isQueued("account-waiting", queuedJob))
     }
 
     @Test
