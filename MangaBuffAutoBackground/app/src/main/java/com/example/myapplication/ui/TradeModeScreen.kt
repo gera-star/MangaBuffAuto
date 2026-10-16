@@ -243,22 +243,26 @@ fun TradeModeScreen(
                         if (ruleMode == TradeRuleMode.STRICT) {
                             Button(
                                 onClick = { ruleMode = TradeRuleMode.STRICT; engine.saveMode(ruleMode) },
+                                enabled = !isRunning,
                                 modifier = Modifier.weight(1f)
                             ) { Text("Строгий", fontSize = 12.sp) }
                         } else {
                             OutlinedButton(
                                 onClick = { ruleMode = TradeRuleMode.STRICT; engine.saveMode(ruleMode) },
+                                enabled = !isRunning,
                                 modifier = Modifier.weight(1f)
                             ) { Text("Строгий", fontSize = 12.sp) }
                         }
                         if (ruleMode == TradeRuleMode.VALUE) {
                             Button(
                                 onClick = { ruleMode = TradeRuleMode.VALUE; engine.saveMode(ruleMode) },
+                                enabled = !isRunning,
                                 modifier = Modifier.weight(1f)
                             ) { Text("По сумме", fontSize = 12.sp) }
                         } else {
                             OutlinedButton(
                                 onClick = { ruleMode = TradeRuleMode.VALUE; engine.saveMode(ruleMode) },
+                                enabled = !isRunning,
                                 modifier = Modifier.weight(1f)
                             ) { Text("По сумме", fontSize = 12.sp) }
                         }
@@ -279,6 +283,7 @@ fun TradeModeScreen(
                                     engine.saveProfitCoefficient(coefficientText)
                                 },
                                 modifier = Modifier.width(92.dp),
+                                enabled = !isRunning,
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
