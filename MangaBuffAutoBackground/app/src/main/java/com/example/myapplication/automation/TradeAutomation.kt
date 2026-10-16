@@ -159,7 +159,6 @@ class TradeAutomation(context: Context) {
                 id to name
             }
             .distinctBy { it.first }
-            .take(MAX_OFFERS_PER_SCAN)
 
         if (offers.isEmpty()) {
             addLog("Новых предложений на странице не найдено.")
@@ -223,6 +222,9 @@ class TradeAutomation(context: Context) {
         mode: TradeRuleMode,
         coefficient: Double
     ): TradeAnalysis {
+        if (doc.selectFirst(".trade__block, .card-show__owner-icon--trade-lock") != null) {
+            return TradeAnalysis(false, "на странице отмечено ограничение обменов у собеседника")
+        }
         var giveBlock: Element? = null
         var receiveBlock: Element? = null
 
@@ -538,7 +540,6 @@ class TradeAutomation(context: Context) {
         private const val NO_RANK = "__unknown__"
         private const val POLL_INTERVAL_MS = 45_000L
         private const val NEGATIVE_RANK_TTL_MS = 30 * 60 * 1000L
-        private const val MAX_OFFERS_PER_SCAN = 8
         private const val MAX_CATALOG_PAGES = 30
         private const val MAX_LOGS = 120
         private const val MAX_PROCESSED_IDS = 400
