@@ -156,15 +156,15 @@ class TradeAutomation(context: Context) {
     fun start(account: MangaBuffAccount, mode: TradeRuleMode, profitCoefficient: Double) {
         stopInternal(notifyService = false, clearPersisted = false)
         if (account.isOffline || !isAccountAvailable(account.id)) {
-            clearActiveMonitor(account.id)
+            clearActiveMonitor()
             addLog("Мониторинг не запущен: аккаунт удалён или находится в OFFLINE.", true, account.id)
-            MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
+            MangaBuffForegroundService.setTradeMonitorActive(appContext, false, account.id)
             return
         }
         if (account.getSafeCookiesJson().isBlank()) {
-            clearActiveMonitor(account.id)
+            clearActiveMonitor()
             addLog("У аккаунта нет сохранённых Cookie. Авторизуй аккаунт обычным способом.", true, account.id)
-            MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
+            MangaBuffForegroundService.setTradeMonitorActive(appContext, false, session.account.id)
             return
         }
         val coefficient = if (profitCoefficient.isFinite()) profitCoefficient.coerceIn(1.0, 10.0) else 1.5
@@ -178,8 +178,8 @@ class TradeAutomation(context: Context) {
         selectLogAccount(account.id)
         addLog("Мониторинг запущен для «${account.username}».", accountId = account.id)
         prefs.edit().putString(KEY_ACTIVE_MONITOR_ACCOUNT, account.id).apply()
-        if (!MangaBuffForegroundService.setTradeMonitorActive(appContext, true)) {
-            clearActiveMonitor(account.id)
+        if (!MangaBuffForegroundService.setTradeMonitorActive(appContext, true, account.id)) {
+            clearActiveMonitor()
             session.cancel()
             activeSession = null
             _isRunning.value = false
@@ -247,6 +247,7 @@ class TradeAutomation(context: Context) {
     private fun stopInternal(notifyService: Boolean, clearPersisted: Boolean) {
         synchronized(this) { generation += 1L }
         val old = activeSession
+        val monitorId = old?.account?.id ?: prefs.getString(KEY_ACTIVE_MONITOR_ACCOUNT, null)
         activeSession = null
         old?.cancel()
         worker?.cancel()
@@ -254,11 +255,8 @@ class TradeAutomation(context: Context) {
         _isRunning.value = false
         _waitingForExecution.value = false
         _activeAccountId.value = null
-        if (clearPersisted) {
-            val monitorId = old?.account?.id ?: prefs.getString(KEY_ACTIVE_MONITOR_ACCOUNT, null)
-            if (monitorId != null) clearActiveMonitor(monitorId)
-        }
-        if (notifyService) MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
+        if (clearPersisted && monitorId != null) clearActiveMonitor(monitorId)
+        if (notifyService) MangaBuffForegroundService.setTradeMonitorActive(appContext, false, monitorId)
     }
 
     private fun clearActiveMonitor(accountId: String? = null) {
@@ -304,8 +302,12 @@ class TradeAutomation(context: Context) {
                 _logs.value = emptyList()
             }
         }
-        skippedLogged.removeAll { it.startsWith("$accountId:") }
-        suitableLogged.removeAll { it.startsWith("$accountId:") }
+        synchronized(skippedLogged) {
+            skippedLogged.removeAll { it.startsWith("$accountId:") }
+        }
+        synchronized(suitableLogged) {
+            suitableLogged.removeAll { it.startsWith("$accountId:") }
+        }
     }
 
     fun close() {

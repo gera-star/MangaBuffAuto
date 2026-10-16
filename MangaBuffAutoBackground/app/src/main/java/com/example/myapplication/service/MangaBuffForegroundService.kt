@@ -128,13 +128,14 @@ class MangaBuffForegroundService : Service() {
         private var tradeMonitorKeepaliveRequested = false
 
         /** Keep the foreground service alive while the process-scoped trade monitor is active. */
-        fun setTradeMonitorActive(context: Context, active: Boolean): Boolean {
+        fun setTradeMonitorActive(context: Context, active: Boolean, accountId: String? = null): Boolean {
             val wasActive = tradeMonitorKeepaliveRequested
             if (!active && !wasActive) return true
             tradeMonitorKeepaliveRequested = active
             val ok = startCommand(
                 context,
                 if (active) ACTION_TRADE_MONITOR_START else ACTION_TRADE_MONITOR_STOP,
+                accountId = accountId,
                 startAsForeground = active
             )
             if (active && !ok) tradeMonitorKeepaliveRequested = false
@@ -412,6 +413,9 @@ class MangaBuffForegroundService : Service() {
 
             ACTION_TRADE_MONITOR_START -> {
                 tradeMonitorKeepaliveRequested = true
+                tradeMonitorRestoreChecked = true
+                // This also handles a sticky-service restart that re-delivers the start intent.
+                TradeAutomation.getInstance(applicationContext).restoreActiveMonitoring()
             }
 
             ACTION_TRADE_MONITOR_STOP -> {
