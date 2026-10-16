@@ -332,14 +332,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         currentTask: String,
         progress: Float
     ) {
+        val repositoryOffline = repository.getAccounts()
+            .firstOrNull { it.id == accountId }?.isOffline == true
         _accounts.update { list ->
             list.map { acc ->
                 if (acc.id == accountId) {
+                    val offline = acc.isOffline || repositoryOffline
                     acc.copy(
-                        statusMessage = statusMessage,
-                        isRunning = isRunning,
-                        currentTask = currentTask,
-                        taskProgress = progress,
+                        statusMessage = if (offline) {
+                            "OFFLINE — задачи остановлены, авторизация сохранена"
+                        } else statusMessage,
+                        isRunning = isRunning && !offline,
+                        currentTask = if (offline) "" else currentTask,
+                        taskProgress = if (offline) 0f else progress,
                         lastRunTime = if (!isRunning) System.currentTimeMillis() else acc.lastRunTime
                     )
                 } else acc

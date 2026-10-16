@@ -42,6 +42,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
@@ -1461,8 +1462,8 @@ class MangaBuffAutomation(
     private var lastItemCount = 0
 
     /** Chapters actually included in successful /addHistory 2xx batches. */
-    private val historyServerAcceptedChapterIds = mutableSetOf<String>()
-    private val currentHistoryPostChapterIds = mutableSetOf<String>()
+    private val historyServerAcceptedChapterIds = ConcurrentHashMap.newKeySet<String>()
+    private val currentHistoryPostChapterIds = ConcurrentHashMap.newKeySet<String>()
 
     fun getCurrentMangaUrl(): String = currentMangaUrl
     fun getLastFinishedChapterId(): String = lastFinishedChapterId
@@ -6875,8 +6876,9 @@ class MangaBuffAutomation(
                     val callbackUrl = chapterUrl.substringBefore('?').substringBefore('#').trimEnd('/')
                     val contextUrl = ctx?.actualChapterUrl.orEmpty()
                         .substringBefore('?').substringBefore('#').trimEnd('/')
-                    val sameChapterId = ctx?.chapterId?.isNotBlank() == true &&
-                        chapterId.isNotBlank() && ctx.chapterId == chapterId
+                    val contextChapterId = ctx?.chapterId.orEmpty()
+                    val sameChapterId = contextChapterId.isNotBlank() &&
+                        chapterId.isNotBlank() && contextChapterId == chapterId
                     val sameChapterUrl = contextUrl.isNotBlank() && callbackUrl.isNotBlank() &&
                         contextUrl == callbackUrl
                     if (ctx == null || ctx.accountId != account.id || (!sameChapterId && !sameChapterUrl)) {
@@ -6935,8 +6937,9 @@ class MangaBuffAutomation(
                     if (isRealLastChapter) {
                         log(account.username, "READER: LAST_CHAPTER_REACHED historyAccepted=$historyAccepted")
 
-                        // The final chapter is already confirmed in MangaBuff's read history.
-                        // Also mark the manga itself as "Прочитано" before returning to catalog.
+                        // This is the terminal chapter of the manga. The local reading state may be
+                        // queued under CCL=2 without a successful /addHistory yet; do not manufacture
+                        // a server confirmation here. Mark the manga read and report any pending batch.
                         val chapterCanonical = ensureCanonicalMangaUrl(chapterUrl)
                         val slug = chapterCanonical.substringAfter("/manga/").substringBefore("/")
                         currentMangaUrl = if (slug.isNotBlank()) {

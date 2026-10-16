@@ -771,8 +771,10 @@ class MangaBuffForegroundService : Service() {
                     }
                 } finally {
                     if (currentJob != null) accountExecutionQueue.forget(accountId, currentJob)
-                    if (hasExecutionPermit) accountExecutionQueue.release()
+                    // Release the shared gate before waking the next local-queue waiter, so a
+                    // newly admitted account cannot jump ahead of trades already waiting on Gate.
                     exclusiveExecutionPermit?.release()
+                    if (hasExecutionPermit) accountExecutionQueue.release()
                 }
             }
         }
