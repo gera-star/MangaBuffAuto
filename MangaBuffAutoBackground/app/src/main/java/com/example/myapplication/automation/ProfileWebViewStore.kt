@@ -260,10 +260,12 @@ class ProfileWebViewStore(
     }
 
     private fun parseCookieHeader(raw: String): List<String> {
-        val text = raw.trim()
-            .removePrefix("Cookie:")
-            .removePrefix("cookie:")
-            .trim()
+        val header = raw.trim()
+        val text = if (header.startsWith("Cookie:", ignoreCase = true)) {
+            header.substringAfter(':').trim()
+        } else {
+            header
+        }
         if (text.isEmpty()) return emptyList()
 
         // Older versions sometimes stored the browser cookies as JSON. Accept that format
@@ -296,7 +298,7 @@ class ProfileWebViewStore(
             }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
         }
 
-        return text.split(';').map(String::trim).filter { it.isNotEmpty() && it.indexOf('=') > 0 }
+        return text.split(';').map { it.trim() }.filter { it.isNotEmpty() && it.indexOf('=') > 0 }
     }
 
     suspend fun awaitAttached(accountId: String, webView: WebView) {

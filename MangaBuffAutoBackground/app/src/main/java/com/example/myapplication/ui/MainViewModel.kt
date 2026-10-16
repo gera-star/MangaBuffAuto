@@ -569,13 +569,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val visibleStatusById = _accounts.value.associate { it.id to it.statusMessage }
         _accounts.update { list ->
             list.map { acc ->
+                val visibleStatus = visibleStatusById[acc.id]
                 acc.copy(
                     isRunning = false,
                     taskProgress = 0f,
                     currentTask = "",
                     statusMessage = when {
                         acc.isOffline -> "OFFLINE — задачи остановлены, авторизация сохранена"
-                        visibleStatusById[acc.id]?.contains("Завершено") == true -> visibleStatusById[acc.id]
+                        visibleStatus?.contains("Завершено") == true -> visibleStatus
                         else -> "Остановка запрошена…"
                     }
                 )
