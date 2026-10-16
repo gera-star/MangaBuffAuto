@@ -4756,6 +4756,28 @@ class MangaBuffAutomation(
                                     var tapX = exact.left + exact.width / 2;
                                     var tapY = exact.top + exact.height / 2;
 
+                                    /*
+                                     * The measured manual close tap is at the top-right:
+                                     * xCss≈353.94, yCss≈23.71 on a 384x810 viewport.
+                                     * A DOM rect around y≈771 is a nested-frame coordinate
+                                     * that was not translated correctly; never tap near the
+                                     * bottom of the WebView and mistake it for the X.
+                                     */
+                                    if (
+                                        tapX < width * 0.65 ||
+                                        tapY < 0 ||
+                                        tapY > Math.min(120, height * 0.25)
+                                    ) {
+                                        AndroidAds.onStateLog(
+                                            "NATIVE_CLOSE_RECT_REJECTED",
+                                            "x=" + tapX +
+                                                " y=" + tapY +
+                                                " viewport=" + width + "x" + height +
+                                                " reason=outside_top_right_close_zone"
+                                        );
+                                        return false;
+                                    }
+
                                     AndroidAds.onStateLog(
                                         "NATIVE_CLOSE_AUTO_TAP",
                                         "x=" + tapX +
@@ -4964,7 +4986,7 @@ class MangaBuffAutomation(
                                         : (window.innerWidth || 384);
                                 var VERIFIED_CLOSE_FALLBACK_X =
                                     Math.max(20.0, verifiedViewportWidth - 30.0);
-                                var VERIFIED_CLOSE_FALLBACK_Y = 64.0;
+                                var VERIFIED_CLOSE_FALLBACK_Y = 24.0;
                                 var verifiedFallbackRequested = false;
 
                                 function verifyAfterNativeClose() {
