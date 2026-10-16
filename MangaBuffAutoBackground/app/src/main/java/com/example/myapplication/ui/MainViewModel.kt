@@ -332,12 +332,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         currentTask: String,
         progress: Float
     ) {
-        val repositoryOffline = repository.getAccounts()
-            .firstOrNull { it.id == accountId }?.isOffline == true
         _accounts.update { list ->
             list.map { acc ->
                 if (acc.id == accountId) {
-                    val offline = acc.isOffline || repositoryOffline
+                    val offline = acc.isOffline
                     acc.copy(
                         statusMessage = if (offline) {
                             "OFFLINE — задачи остановлены, авторизация сохранена"
@@ -575,10 +573,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isRunning = false,
                     taskProgress = 0f,
                     currentTask = "",
-                    statusMessage = if (visibleStatusById[acc.id]?.contains("Завершено") == true) {
-                        visibleStatusById[acc.id]
-                    } else {
-                        "Остановка запрошена…"
+                    statusMessage = when {
+                        acc.isOffline -> "OFFLINE — задачи остановлены, авторизация сохранена"
+                        visibleStatusById[acc.id]?.contains("Завершено") == true -> visibleStatusById[acc.id]
+                        else -> "Остановка запрошена…"
                     }
                 )
             }
@@ -594,10 +592,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isRunning = false,
                     taskProgress = 0f,
                     currentTask = "",
-                    statusMessage = if (visibleStatus?.contains("Завершено") == true) {
-                        visibleStatus
-                    } else {
-                        "Остановка запрошена…"
+                    statusMessage = when {
+                        stored.isOffline -> "OFFLINE — задачи остановлены, авторизация сохранена"
+                        visibleStatus?.contains("Завершено") == true -> visibleStatus
+                        else -> "Остановка запрошена…"
                     }
                 )
             }
