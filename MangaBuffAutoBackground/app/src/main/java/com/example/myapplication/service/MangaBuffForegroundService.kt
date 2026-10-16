@@ -997,7 +997,13 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun stopAllInternal(explicitUserStop: Boolean) {
-        if (explicitUserStop) stoppingExplicitly = true
+        if (explicitUserStop) {
+            stoppingExplicitly = true
+            // A manual global stop must stop the process-scoped trade worker too. Otherwise its
+            // coroutine could keep sending requests after this service drops foreground status.
+            TradeAutomation.getInstance(applicationContext).stopFromService()
+            tradeMonitorKeepaliveRequested = false
+        }
 
         accountRecoveryRestartJobs.values.forEach { it.cancel() }
         accountRecoveryRestartJobs.clear()

@@ -244,6 +244,10 @@ class TradeAutomation(context: Context) {
     @Synchronized
     fun stop() = stopInternal(notifyService = true, clearPersisted = true)
 
+    /** Called by the foreground service during an explicit global stop; avoid enqueuing another service command. */
+    @Synchronized
+    fun stopFromService() = stopInternal(notifyService = false, clearPersisted = true)
+
     private fun stopInternal(notifyService: Boolean, clearPersisted: Boolean) {
         synchronized(this) { generation += 1L }
         val old = activeSession
