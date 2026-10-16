@@ -353,7 +353,7 @@ class TradeAutomation(context: Context) {
             val direct = rankForCardInDocument(doc, cardId)
             if (direct != null) return rememberRank(cardId, direct)
 
-            val mangaHref = doc.select("a[href*="/manga/"]").firstOrNull()?.attr("href").orEmpty()
+            val mangaHref = doc.select("a[href*='/manga/']").firstOrNull()?.attr("href").orEmpty()
             mangaId = MANGA_PATH_REGEX.find(mangaHref)?.groupValues?.getOrNull(1)
                 ?: doc.selectFirst("[data-manga-id]")?.attr("data-manga-id")
             if (mangaId != null) break
@@ -513,7 +513,7 @@ class TradeAutomation(context: Context) {
 
     private fun looksLikeLogin(docOrHtml: String): Boolean {
         val doc = Jsoup.parse(docOrHtml, BASE_URL)
-        return doc.selectFirst("form[action*="/login"], input[name="email"], input[name="password"]") != null ||
+        return doc.selectFirst("form[action*='/login'], input[name='email'], input[name='password']") != null ||
             doc.title().contains("Войти", ignoreCase = true) ||
             doc.location().contains("/login")
     }
