@@ -143,25 +143,39 @@ class TradeAutomation(context: Context) {
         mode: TradeRuleMode,
         coefficient: Double
     ) {
-        val page = requestHtml(BASE_URL + "/trades") ?: run {
-            addLog("Не удалось загрузить список предложений. Проверю повторно.", true)
-            return
-        }
-        if (looksLikeLogin(page)) {
-            addLog("Сессия аккаунта не авторизована или истекла. Перезайди через существующее меню аккаунтов.", true)
-            return
-        }
-
-        val offers = page.select("a.trade__list-item[href]")
-            .mapNotNull { element ->
+        val offersById = linkedMapOf<String, String>()
+        var pageNumber = 1
+        var maxPageNumber = 1
+        while (pageNumber <= maxPageNumber && pageNumber <= MAX_TRADE_PAGES) {
+            val listUrl = if (pageNumber == 1) {
+                "$BASE_URL/trades"
+            } else {
+                "$BASE_URL/trades?page=$pageNumber"
+            }
+            val page = requestHtml(listUrl) ?: run {
+                addLog("Не удалось загрузить список предложений (страница $pageNumber). Проверю повторно.", true)
+                break
+            }
+            if (looksLikeLogin(page)) {
+                addLog("Сессия аккаунта не авторизована или истекла. Перезайди через существующее меню аккаунтов.", true)
+                return
+            }
+            val doc = Jsoup.parse(page, listUrl)
+            doc.select("a.trade__list-item[href]").forEach { element ->
                 val href = element.attr("href")
-                val match = TRADE_PATH_REGEX.find(href) ?: return@mapNotNull null
+                val match = TRADE_PATH_REGEX.find(href) ?: return@forEach
                 val id = match.groupValues[1]
                 val name = element.selectFirst(".trade__list-name")?.text()?.trim().orEmpty()
-                id to name
+                offersById.putIfAbsent(id, name)
             }
-            .distinctBy { it.first }
+            val linkedMaxPage = doc.select(".pagination__button a[href]")
+                .mapNotNull { link -> Regex("[?&]page=(\\d+)").find(link.attr("href"))?.groupValues?.getOrNull(1)?.toIntOrNull() }
+                .maxOrNull() ?: pageNumber
+            if (linkedMaxPage > maxPageNumber) maxPageNumber = linkedMaxPage
+            pageNumber++
+        }
 
+        val offers = offersById.entries.map { it.key to it.value }
         if (offers.isEmpty()) {
             addLog("Новых предложений на странице не найдено.")
             return
@@ -578,6 +592,7 @@ class TradeAutomation(context: Context) {
         private const val POLL_INTERVAL_MS = 45_000L
         private const val NEGATIVE_RANK_TTL_MS = 30 * 60 * 1000L
         private const val MAX_CATALOG_PAGES = 30
+        private const val MAX_TRADE_PAGES = 20
         private const val MAX_LOGS = 120
         private const val MAX_PROCESSED_IDS = 400
         private const val DEFAULT_USER_AGENT =
