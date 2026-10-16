@@ -152,7 +152,8 @@ class TradeAutomation(context: Context) {
             } else {
                 "$BASE_URL/trades?page=$pageNumber"
             }
-            val page = requestHtml(listUrl) ?: run {
+            val page = requestHtml(listUrl)
+            if (page == null) {
                 addLog("Не удалось загрузить список предложений (страница $pageNumber). Проверю повторно.", true)
                 break
             }
