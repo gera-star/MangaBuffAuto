@@ -23,6 +23,7 @@ import okhttp3.RequestBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 enum class TradeRuleMode(val title: String) {
@@ -365,6 +366,9 @@ class TradeAutomation(context: Context) {
         }
 
         if (mangaId != null) {
+            val ajaxRank = rankFromMangaCatalog(mangaId, cardId)
+            if (ajaxRank != null) return rememberRank(cardId, ajaxRank)
+
             var url: String? = "$BASE_URL/manga/$mangaId/cards"
             var pages = 0
             val visited = HashSet<String>()
@@ -384,6 +388,36 @@ class TradeAutomation(context: Context) {
         // A negative cache has a short TTL, so a new site layout can recover after restart.
         prefs.edit().putString(RANK_CACHE_PREFIX + cardId, NO_RANK)
             .putLong(RANK_CACHE_PREFIX + cardId + "_time", System.currentTimeMillis()).apply()
+        return null
+    }
+
+    /**
+     * MangaBuff's card catalogue is loaded through POST /manga/{id}/cards
+     * with sort=asc. Its JSON response contains the catalogue HTML and
+     * next_page_url; inspect data-rank on the matching catalogue wrapper.
+     */
+    private fun rankFromMangaCatalog(mangaId: String, cardId: String): String? {
+        var url = "$BASE_URL/manga/$mangaId/cards"
+        val visited = HashSet<String>()
+        var pages = 0
+        while (pages < MAX_CATALOG_PAGES && visited.add(url)) {
+            val body = FormBody.Builder().add("sort", "asc").build()
+            val response = request(url, "POST", body, "$BASE_URL/manga/$mangaId") ?: return null
+            if (response.code !in 200..299) return null
+            val json = runCatching { JSONObject(response.body) }.getOrNull()
+            val html = json?.optString("content")?.takeIf { it.isNotBlank() } ?: response.body
+            val doc = Jsoup.parse(html, response.url)
+            val rank = rankForCardInDocument(doc, cardId)
+            if (rank != null) return rank
+
+            val next = json?.optString("next_page_url").orEmpty()
+            url = when {
+                next.startsWith("$BASE_URL/") -> next
+                next.startsWith("/") -> BASE_URL + next
+                else -> return null
+            }
+            pages++
+        }
         return null
     }
 
