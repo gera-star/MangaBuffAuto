@@ -366,7 +366,7 @@ class TradeAutomation(context: Context) {
             prefs.edit().remove(cacheKey).remove(cacheKey + "_time").apply()
         }
 
-        var mangaId: String? = null
+        val mangaCandidates = linkedSetOf<String>()
         val detailUrls = listOf("$BASE_URL/cards/$cardId", "$BASE_URL/cards/$cardId/users")
         for (url in detailUrls) {
             val html = requestHtml(url) ?: continue
@@ -374,13 +374,19 @@ class TradeAutomation(context: Context) {
             val direct = rankForCardInDocument(doc, cardId)
             if (direct != null) return rememberRank(cardId, direct)
 
-            val mangaHref = doc.select("a[href*='/manga/']").firstOrNull()?.attr("href").orEmpty()
-            mangaId = MANGA_PATH_REGEX.find(mangaHref)?.groupValues?.getOrNull(1)
-                ?: doc.selectFirst("[data-manga-id]")?.attr("data-manga-id")
-            if (mangaId != null) break
+            // Try card-related manga links from the page; a page may also contain
+            // navigation links to unrelated manga, so verify every candidate by
+            // searching that catalogue for the exact catalog card ID.
+            doc.select("a[href*='/manga/']").take(MAX_MANGA_CANDIDATES).forEach { link ->
+                MANGA_PATH_REGEX.find(link.attr("href"))?.groupValues?.getOrNull(1)
+                    ?.let(mangaCandidates::add)
+            }
+            doc.selectFirst("[data-manga-id]")?.attr("data-manga-id")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(mangaCandidates::add)
         }
 
-        if (mangaId != null) {
+        for (mangaId in mangaCandidates.take(MAX_MANGA_CANDIDATES)) {
             val ajaxRank = rankFromMangaCatalog(mangaId, cardId)
             if (ajaxRank != null) return rememberRank(cardId, ajaxRank)
 
@@ -600,6 +606,7 @@ class TradeAutomation(context: Context) {
         private const val POLL_INTERVAL_MS = 45_000L
         private const val NEGATIVE_RANK_TTL_MS = 30 * 60 * 1000L
         private const val MAX_CATALOG_PAGES = 30
+        private const val MAX_MANGA_CANDIDATES = 12
         private const val MAX_TRADE_PAGES = 20
         private const val MAX_LOGS = 120
         private const val MAX_PROCESSED_IDS = 400
@@ -610,7 +617,7 @@ class TradeAutomation(context: Context) {
         private val RANK_ORDER = listOf("E", "D", "C", "B", "G", "P", "A", "S")
         private val TRADE_PATH_REGEX = Regex("/trades/(\\d+)")
         private val CARD_PATH_REGEX = Regex("/cards/(\\d+)")
-        private val MANGA_PATH_REGEX = Regex("/manga/(\\d+)")
+        private val MANGA_PATH_REGEX = Regex("/manga/([^/?#]+)")
         private fun rankValue(rank: String): Int = RANK_ORDER.indexOf(rank).let { if (it < 0) 0 else it + 1 }
     }
 }
