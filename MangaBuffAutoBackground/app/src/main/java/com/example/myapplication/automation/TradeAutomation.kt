@@ -152,14 +152,17 @@ class TradeAutomation(context: Context) {
         return result
     }
 
+    @Synchronized
     fun start(account: MangaBuffAccount, mode: TradeRuleMode, profitCoefficient: Double) {
-        stopInternal(notifyService = false)
+        stopInternal(notifyService = false, clearPersisted = false)
         if (account.isOffline || !isAccountAvailable(account.id)) {
+            clearActiveMonitor(account.id)
             addLog("Мониторинг не запущен: аккаунт удалён или находится в OFFLINE.", true, account.id)
             MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
             return
         }
         if (account.getSafeCookiesJson().isBlank()) {
+            clearActiveMonitor(account.id)
             addLog("У аккаунта нет сохранённых Cookie. Авторизуй аккаунт обычным способом.", true, account.id)
             MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
             return
@@ -174,7 +177,9 @@ class TradeAutomation(context: Context) {
         saveProfitCoefficient(account.id, coefficient.toString())
         selectLogAccount(account.id)
         addLog("Мониторинг запущен для «${account.username}».", accountId = account.id)
+        prefs.edit().putString(KEY_ACTIVE_MONITOR_ACCOUNT, account.id).apply()
         if (!MangaBuffForegroundService.setTradeMonitorActive(appContext, true)) {
+            clearActiveMonitor(account.id)
             session.cancel()
             activeSession = null
             _isRunning.value = false
@@ -222,6 +227,7 @@ class TradeAutomation(context: Context) {
                     _waitingForExecution.value = false
                     _activeAccountId.value = null
                     if (activeSession === session) activeSession = null
+                    clearActiveMonitor(session.account.id)
                     MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
                 }
             }
@@ -235,9 +241,10 @@ class TradeAutomation(context: Context) {
     private fun canRun(session: TradeSession, runId: Long) =
         !session.cancelled && activeSession === session && generation == runId && isAccountAvailable(session.account.id)
 
-    fun stop() = stopInternal(notifyService = true)
+    @Synchronized
+    fun stop() = stopInternal(notifyService = true, clearPersisted = true)
 
-    private fun stopInternal(notifyService: Boolean) {
+    private fun stopInternal(notifyService: Boolean, clearPersisted: Boolean) {
         synchronized(this) { generation += 1L }
         val old = activeSession
         activeSession = null
@@ -247,15 +254,41 @@ class TradeAutomation(context: Context) {
         _isRunning.value = false
         _waitingForExecution.value = false
         _activeAccountId.value = null
+        if (clearPersisted) {
+            val monitorId = old?.account?.id ?: prefs.getString(KEY_ACTIVE_MONITOR_ACCOUNT, null)
+            if (monitorId != null) clearActiveMonitor(monitorId)
+        }
         if (notifyService) MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
     }
 
+    private fun clearActiveMonitor(accountId: String? = null) {
+        val current = prefs.getString(KEY_ACTIVE_MONITOR_ACCOUNT, null) ?: return
+        if (accountId == null || current == accountId) {
+            prefs.edit().remove(KEY_ACTIVE_MONITOR_ACCOUNT).apply()
+        }
+    }
+
+    /** Rebuild the persisted monitor after Android restarts a sticky foreground service. */
+    fun restoreActiveMonitoring() {
+        val accountId = prefs.getString(KEY_ACTIVE_MONITOR_ACCOUNT, null) ?: return
+        val account = accountRepository.getAccounts().firstOrNull { it.id == accountId && !it.isOffline }
+        if (account == null || account.getSafeCookiesJson().isBlank()) {
+            clearActiveMonitor(accountId)
+            addLog("Сохранённый мониторинг не восстановлен: аккаунт удалён/OFFLINE или отсутствуют cookies.", true, accountId)
+            return
+        }
+        if (_isRunning.value && activeSession?.account?.id == accountId) return
+        addLog("Восстанавливаю мониторинг после перезапуска сервиса.", accountId = accountId)
+        start(account, savedMode(accountId), savedProfitCoefficient(accountId).toDoubleOrNull() ?: 1.5)
+    }
+
     fun stopForAccount(accountId: String) {
-        if (activeSession?.account?.id == accountId) stop()
+        if (activeSession?.account?.id == accountId || prefs.getString(KEY_ACTIVE_MONITOR_ACCOUNT, null) == accountId) stop()
     }
 
     fun forgetAccount(accountId: String) {
         stopForAccount(accountId)
+        clearActiveMonitor(accountId)
         prefs.edit()
             .remove(scopedKey(KEY_MODE, accountId))
             .remove(scopedKey(KEY_PROFIT, accountId))
@@ -667,6 +700,7 @@ class TradeAutomation(context: Context) {
             }
 
         private const val BASE_URL = "https://mangabuff.ru"
+        private const val KEY_ACTIVE_MONITOR_ACCOUNT = "active_monitor_account_id"
         private const val KEY_MODE = "rule_mode"
         private const val KEY_PROFIT = "profit_coefficient"
         private const val KEY_PROCESSED = "processed_trade_ids"

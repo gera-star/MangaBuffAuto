@@ -25,6 +25,7 @@ import com.example.myapplication.R
 import com.example.myapplication.automation.BackgroundExecutionState
 import com.example.myapplication.automation.AccountExecutionGate
 import com.example.myapplication.automation.MultiAccountAutomationRunner
+import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.DailyStats
@@ -306,6 +307,7 @@ class MangaBuffForegroundService : Service() {
 
     private var screenRegistered = false
     private var restoredPersistedRuns = false
+    private var tradeMonitorRestoreChecked = false
     private var stoppingExplicitly = false
 
     private val screenReceiver = object : BroadcastReceiver() {
@@ -392,6 +394,14 @@ class MangaBuffForegroundService : Service() {
             restoreTowerCycles(
                 skipAccountId = towerDueAccountId.takeIf { action == ACTION_TOWER_CYCLE_DUE }
             )
+        }
+
+        // START_STICKY can recreate the service with a null intent after process death.
+        // Restore the saved trade monitor exactly once, but never restart it when handling
+        // an explicit stop or account deletion command.
+        if (intent == null && !tradeMonitorRestoreChecked) {
+            tradeMonitorRestoreChecked = true
+            TradeAutomation.getInstance(applicationContext).restoreActiveMonitoring()
         }
 
         when (action) {
