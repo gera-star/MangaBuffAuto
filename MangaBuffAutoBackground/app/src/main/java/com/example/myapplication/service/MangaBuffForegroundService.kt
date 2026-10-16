@@ -18,6 +18,8 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.webkit.ProfileStore
+import androidx.webkit.WebViewFeature
 import com.example.myapplication.MainActivity
 import com.example.myapplication.R
 import com.example.myapplication.automation.BackgroundExecutionState
@@ -56,6 +58,9 @@ class MangaBuffForegroundService : Service() {
         const val ACTION_START_ACCOUNT = "ACTION_START_ACCOUNT"
         const val ACTION_START_ALL = "ACTION_START_ALL"
         const val ACTION_STOP_ACCOUNT = "ACTION_STOP_ACCOUNT"
+        const val ACTION_DELETE_ACCOUNT = "ACTION_DELETE_ACCOUNT"
+        const val ACTION_TRADE_MONITOR_START = "ACTION_TRADE_MONITOR_START"
+        const val ACTION_TRADE_MONITOR_STOP = "ACTION_TRADE_MONITOR_STOP"
         const val ACTION_STOP_ALL = "ACTION_STOP_ALL"
         const val ACTION_RELOAD_ACCOUNT = "ACTION_RELOAD_ACCOUNT"
         const val ACTION_SKIP_MANGA = "ACTION_SKIP_MANGA"
@@ -109,6 +114,7 @@ class MangaBuffForegroundService : Service() {
         private const val PREFS_RUNTIME = "mangabuff_runtime"
         private const val KEY_ACTIVE_RUNS = "active_runs"
         private const val KEY_TOWER_CYCLE_ENDS = "tower_cycle_ends"
+        private const val KEY_PENDING_PROFILE_DELETES = "pending_profile_deletes"
         private const val WATCHDOG_INTERVAL_MS = 15_000L
         private const val WATCHDOG_MISSING_WEBVIEW_GRACE_MS = 30_000L
 
@@ -116,6 +122,28 @@ class MangaBuffForegroundService : Service() {
         // safe stopped state with a clear log entry instead of restarting forever.
         private const val RECOVERY_MAX_PER_WINDOW = 3
         private const val RECOVERY_WINDOW_MS = 10 * 60_000L
+
+        @Volatile
+        private var tradeMonitorKeepaliveRequested = false
+
+        /** Keep the foreground service alive while the process-scoped trade monitor is active. */
+        fun setTradeMonitorActive(context: Context, active: Boolean): Boolean {
+            val wasActive = tradeMonitorKeepaliveRequested
+            if (!active && !wasActive) return true
+            tradeMonitorKeepaliveRequested = active
+            val ok = startCommand(
+                context,
+                if (active) ACTION_TRADE_MONITOR_START else ACTION_TRADE_MONITOR_STOP,
+                startAsForeground = active
+            )
+            if (active && !ok) tradeMonitorKeepaliveRequested = false
+            return ok
+        }
+
+        fun deleteAccountData(context: Context, accountId: String) {
+            if (accountId.isBlank()) return
+            startCommand(context, ACTION_DELETE_ACCOUNT, accountId = accountId, startAsForeground = true)
+        }
 
         fun startService(
             context: Context,
@@ -225,6 +253,12 @@ class MangaBuffForegroundService : Service() {
                     if (accountId != null) putExtra(EXTRA_ACCOUNT_ID, accountId)
                     if (taskType != null) putExtra(EXTRA_TASK_TYPE, taskType.name)
                     if (promoCode != null) putExtra(EXTRA_PROMO_CODE, promoCode)
+                    if (action == ACTION_TRADE_MONITOR_START) {
+                        putExtra(EXTRA_STATUS, "Мониторинг обменов активен")
+                    }
+                    if (action == ACTION_DELETE_ACCOUNT) {
+                        putExtra(EXTRA_STATUS, "Удаление данных аккаунта…")
+                    }
                 }
                 if (startAsForeground && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -288,6 +322,8 @@ class MangaBuffForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        // Run deferred WebView-profile deletions before any account can load a Profile handle.
+        cleanupPendingProfileDeletes()
 
         automationRunner = MultiAccountAutomationRunner(
             context = applicationContext,
@@ -364,6 +400,15 @@ class MangaBuffForegroundService : Service() {
                 // Notification only; actual automation is controlled by explicit account actions.
             }
 
+            ACTION_TRADE_MONITOR_START -> {
+                tradeMonitorKeepaliveRequested = true
+            }
+
+            ACTION_TRADE_MONITOR_STOP -> {
+                tradeMonitorKeepaliveRequested = false
+                stopSelfIfIdle()
+            }
+
             ACTION_START_ACCOUNT -> {
                 val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
                 val taskTypeName = intent?.getStringExtra(EXTRA_TASK_TYPE).orEmpty()
@@ -390,6 +435,11 @@ class MangaBuffForegroundService : Service() {
                 if (accountId.isNotBlank()) {
                     stopAccountInternal(accountId)
                 }
+            }
+
+            ACTION_DELETE_ACCOUNT -> {
+                val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
+                if (accountId.isNotBlank()) deleteAccountInternal(accountId)
             }
 
             ACTION_STOP_ALL -> stopAllInternal(explicitUserStop = true)
@@ -817,6 +867,95 @@ class MangaBuffForegroundService : Service() {
         }
     }
 
+    private fun deleteAccountInternal(accountId: String) {
+        // stopAccountInternal synchronously tears down the WebView before profile deletion.
+        stopAccountInternal(accountId)
+        deleteWebViewProfile(accountId)
+        publishLog(
+            LogEntry(
+                username = accountId,
+                component = "PROFILE",
+                message = "ACCOUNT_PROFILE_CLEANUP_REQUESTED accountId=$accountId"
+            )
+        )
+        stopSelfIfIdle()
+    }
+
+    private fun deleteWebViewProfile(accountId: String) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            publishLog(LogEntry(username = accountId, component = "PROFILE", message = "PROFILE_DELETE_SKIPPED multi_profile_unsupported"))
+            return
+        }
+        try {
+            // A previously-used Profile handle cannot be deleted in this process. In that case
+            // persist a non-secret marker and retry before Profiles are loaded at next startup.
+            val deleted = ProfileStore.getInstance().deleteProfile("mb_$accountId")
+            removePendingProfileDelete(accountId)
+            publishLog(
+                LogEntry(
+                    username = accountId,
+                    component = "PROFILE",
+                    message = "PROFILE_DELETE_RESULT profile=mb_$accountId deleted=$deleted"
+                )
+            )
+        } catch (e: Exception) {
+            addPendingProfileDelete(accountId)
+            publishLog(
+                LogEntry(
+                    username = accountId,
+                    component = "PROFILE",
+                    message = "PROFILE_DELETE_DEFERRED profile=mb_$accountId retryOnNextProcess=true reason=\${e.message}",
+                    isError = true
+                )
+            )
+        }
+    }
+
+    private fun cleanupPendingProfileDeletes() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) return
+        val pending = runtimePrefs.getStringSet(KEY_PENDING_PROFILE_DELETES, emptySet()).orEmpty().toSet()
+        if (pending.isEmpty()) return
+        val remaining = mutableSetOf<String>()
+        for (accountId in pending) {
+            try {
+                val deleted = ProfileStore.getInstance().deleteProfile("mb_$accountId")
+                publishLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "PROFILE",
+                        message = "PROFILE_DELETE_RETRY_RESULT profile=mb_$accountId deleted=$deleted"
+                    )
+                )
+            } catch (e: Exception) {
+                remaining.add(accountId)
+                publishLog(
+                    LogEntry(
+                        username = accountId,
+                        component = "PROFILE",
+                        message = "PROFILE_DELETE_RETRY_FAILED profile=mb_$accountId reason=\${e.message}",
+                        isError = true
+                    )
+                )
+            }
+        }
+        if (remaining.isEmpty()) runtimePrefs.edit().remove(KEY_PENDING_PROFILE_DELETES).apply()
+        else runtimePrefs.edit().putStringSet(KEY_PENDING_PROFILE_DELETES, remaining).apply()
+    }
+
+    private fun addPendingProfileDelete(accountId: String) {
+        val pending = runtimePrefs.getStringSet(KEY_PENDING_PROFILE_DELETES, emptySet()).orEmpty().toMutableSet()
+        pending.add(accountId)
+        runtimePrefs.edit().putStringSet(KEY_PENDING_PROFILE_DELETES, pending).apply()
+    }
+
+    private fun removePendingProfileDelete(accountId: String) {
+        val pending = runtimePrefs.getStringSet(KEY_PENDING_PROFILE_DELETES, emptySet()).orEmpty().toMutableSet()
+        if (pending.remove(accountId)) {
+            if (pending.isEmpty()) runtimePrefs.edit().remove(KEY_PENDING_PROFILE_DELETES).apply()
+            else runtimePrefs.edit().putStringSet(KEY_PENDING_PROFILE_DELETES, pending).apply()
+        }
+    }
+
     private fun stopAccountInternal(accountId: String) {
         accountRecoveryRestartJobs.remove(accountId)?.cancel()
         cancelTowerCycle(accountId, clearPersisted = true)
@@ -934,7 +1073,7 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun stopSelfIfIdle() {
-        if (accountJobs.isNotEmpty() || towerCycleJobs.isNotEmpty() || readPersistedRuns().isNotEmpty() || recoveryRequests.isNotEmpty()) return
+        if (tradeMonitorKeepaliveRequested || accountJobs.isNotEmpty() || towerCycleJobs.isNotEmpty() || readPersistedRuns().isNotEmpty() || recoveryRequests.isNotEmpty()) return
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {

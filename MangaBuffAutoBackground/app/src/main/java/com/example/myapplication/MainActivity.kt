@@ -154,15 +154,11 @@ class MainActivity : ComponentActivity() {
             MyApplicationTheme(darkTheme = true, dynamicColor = false) {
                 val settings by viewModel.settings.collectAsState()
                 val automationRunning by viewModel.isRunning.collectAsState()
-                val tradeAutomation = remember { TradeAutomation(applicationContext) }
+                val tradeAutomation = remember { TradeAutomation.getInstance(applicationContext) }
                 var tradingModeOpen by remember { mutableStateOf(false) }
                 var showTradePasswordDialog by remember { mutableStateOf(false) }
                 var tradePassword by remember { mutableStateOf("") }
                 var tradePasswordError by remember { mutableStateOf(false) }
-
-                DisposableEffect(tradeAutomation) {
-                    onDispose { tradeAutomation.close() }
-                }
 
                 DisposableEffect(settings.keepScreenOn, automationRunning) {
                     if (settings.keepScreenOn && automationRunning) {

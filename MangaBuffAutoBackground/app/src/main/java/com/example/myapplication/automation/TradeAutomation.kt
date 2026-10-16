@@ -1,7 +1,9 @@
 package com.example.myapplication.automation
 
 import android.content.Context
+import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.service.MangaBuffForegroundService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +47,7 @@ data class TradeLogEntry(
  */
 class TradeAutomation(context: Context) {
     private val appContext = context.applicationContext
+    private val accountRepository = AccountRepository(appContext)
     private val prefs = appContext.getSharedPreferences("mangabuff_trade_mode", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     // Mirrors the browser plugin's serialized MangaBuff queue. The whole request
@@ -55,6 +58,7 @@ class TradeAutomation(context: Context) {
     private val _logs = MutableStateFlow<List<TradeLogEntry>>(emptyList())
     val logs: StateFlow<List<TradeLogEntry>> = _logs.asStateFlow()
     private val logsLock = Any()
+    private val processedLock = Any()
     private val logsByAccount = mutableMapOf<String, List<TradeLogEntry>>()
     @Volatile private var visibleLogAccountId: String? = null
 
@@ -149,9 +153,15 @@ class TradeAutomation(context: Context) {
     }
 
     fun start(account: MangaBuffAccount, mode: TradeRuleMode, profitCoefficient: Double) {
-        stop()
+        stopInternal(notifyService = false)
+        if (account.isOffline || !isAccountAvailable(account.id)) {
+            addLog("Мониторинг не запущен: аккаунт удалён или находится в OFFLINE.", true, account.id)
+            MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
+            return
+        }
         if (account.getSafeCookiesJson().isBlank()) {
             addLog("У аккаунта нет сохранённых Cookie. Авторизуй аккаунт обычным способом.", true, account.id)
+            MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
             return
         }
         val coefficient = if (profitCoefficient.isFinite()) profitCoefficient.coerceIn(1.0, 10.0) else 1.5
@@ -164,6 +174,15 @@ class TradeAutomation(context: Context) {
         saveProfitCoefficient(account.id, coefficient.toString())
         selectLogAccount(account.id)
         addLog("Мониторинг запущен для «${account.username}».", accountId = account.id)
+        if (!MangaBuffForegroundService.setTradeMonitorActive(appContext, true)) {
+            session.cancel()
+            activeSession = null
+            _isRunning.value = false
+            _waitingForExecution.value = false
+            _activeAccountId.value = null
+            addLog("Не удалось запустить foreground-сервис; мониторинг обменов остановлен.", true, account.id)
+            return
+        }
         val runId = synchronized(this) { generation += 1L; generation }
         worker = scope.launch {
             var csrfInitialized = false
@@ -203,13 +222,22 @@ class TradeAutomation(context: Context) {
                     _waitingForExecution.value = false
                     _activeAccountId.value = null
                     if (activeSession === session) activeSession = null
+                    MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
                 }
             }
         }
     }
+
+    private fun isAccountAvailable(accountId: String): Boolean = runCatching {
+        accountRepository.getAccounts().any { it.id == accountId && !it.isOffline }
+    }.getOrDefault(false)
+
     private fun canRun(session: TradeSession, runId: Long) =
-        !session.cancelled && activeSession === session && generation == runId
-    fun stop() {
+        !session.cancelled && activeSession === session && generation == runId && isAccountAvailable(session.account.id)
+
+    fun stop() = stopInternal(notifyService = true)
+
+    private fun stopInternal(notifyService: Boolean) {
         synchronized(this) { generation += 1L }
         val old = activeSession
         activeSession = null
@@ -219,6 +247,32 @@ class TradeAutomation(context: Context) {
         _isRunning.value = false
         _waitingForExecution.value = false
         _activeAccountId.value = null
+        if (notifyService) MangaBuffForegroundService.setTradeMonitorActive(appContext, false)
+    }
+
+    fun stopForAccount(accountId: String) {
+        if (activeSession?.account?.id == accountId) stop()
+    }
+
+    fun forgetAccount(accountId: String) {
+        stopForAccount(accountId)
+        prefs.edit()
+            .remove(scopedKey(KEY_MODE, accountId))
+            .remove(scopedKey(KEY_PROFIT, accountId))
+            .remove(scopedKey(KEY_AUTO_ACCEPT, accountId))
+            .remove(scopedKey(KEY_SPECIAL_INSTANCE_WEIGHTS, accountId))
+            .remove(scopedKey(KEY_PROCESSED, accountId))
+            .remove(scopedKey(KEY_PROCESSED_TTL, accountId))
+            .apply()
+        synchronized(logsLock) {
+            logsByAccount.remove(accountId)
+            if (visibleLogAccountId == accountId) {
+                visibleLogAccountId = null
+                _logs.value = emptyList()
+            }
+        }
+        skippedLogged.removeAll { it.startsWith("$accountId:") }
+        suitableLogged.removeAll { it.startsWith("$accountId:") }
     }
 
     fun close() {
@@ -445,7 +499,7 @@ class TradeAutomation(context: Context) {
     }
 
     private fun acceptTrade(session: TradeSession, detailUrl: String, tradeId: String): AcceptResult {
-        if (session.cancelled) return AcceptResult.CANCELLED
+        if (session.cancelled || !isAccountAvailable(session.account.id)) return AcceptResult.CANCELLED
         if (session.csrfToken.isBlank()) refreshCsrf(session)
         if (session.cancelled) return AcceptResult.CANCELLED
         if (session.csrfToken.isBlank()) {
@@ -487,7 +541,7 @@ class TradeAutomation(context: Context) {
         referer: String,
         csrfHeaderOnly: Boolean = false
     ): HttpResult? = synchronized(requestQueueLock) {
-        if (session.cancelled) return@synchronized null
+        if (session.cancelled || !isAccountAvailable(session.account.id)) return@synchronized null
         try {
             // At least 500 ms between finished MangaBuff requests, like the plugin queue.
             val elapsed = System.currentTimeMillis() - lastRequestFinishedAt
@@ -495,7 +549,7 @@ class TradeAutomation(context: Context) {
             if (lastRequestFinishedAt > 0L && waitMs > 0L) {
                 Thread.sleep(waitMs)
             }
-            if (session.cancelled || Thread.currentThread().isInterrupted) {
+            if (session.cancelled || !isAccountAvailable(session.account.id) || Thread.currentThread().isInterrupted) {
                 return@synchronized null
             }
 
@@ -512,7 +566,7 @@ class TradeAutomation(context: Context) {
             session.activeCall.set(call)
             try {
                 // stop() can happen while waiting for a request slot.
-                if (session.cancelled) {
+                if (session.cancelled || !isAccountAvailable(session.account.id)) {
                     call.cancel()
                     return@synchronized null
                 }
@@ -559,23 +613,66 @@ class TradeAutomation(context: Context) {
             doc.location().contains("/login")
     }
 
-    private fun isProcessed(accountId: String, tradeId: String): Boolean =
-        prefs.getStringSet(scopedKey(KEY_PROCESSED, accountId), emptySet())?.contains(tradeId) == true
+    private fun isProcessed(accountId: String, tradeId: String): Boolean = synchronized(processedLock) {
+        loadProcessedRecordsLocked(accountId, System.currentTimeMillis()).containsKey(tradeId)
+    }
 
-    private fun markProcessed(accountId: String, tradeId: String) {
-        val key = scopedKey(KEY_PROCESSED, accountId)
-        val copy = prefs.getStringSet(key, emptySet())?.toMutableSet() ?: mutableSetOf()
-        copy.add(tradeId)
-        // Keep the at-most-once marker private to this account.
-        val bounded = copy.toList().takeLast(MAX_PROCESSED_IDS).toSet()
-        prefs.edit().putStringSet(key, bounded).apply()
+    private fun markProcessed(accountId: String, tradeId: String) = synchronized(processedLock) {
+        val now = System.currentTimeMillis()
+        val records = loadProcessedRecordsLocked(accountId, now)
+        records[tradeId] = now
+        storeProcessedRecordsLocked(accountId, records)
+    }
+
+    /** Durable per-account markers survive restarts and use a TTL instead of evicting by recency. */
+    private fun loadProcessedRecordsLocked(accountId: String, now: Long): MutableMap<String, Long> {
+        val key = scopedKey(KEY_PROCESSED_TTL, accountId)
+        val stored = prefs.getStringSet(key, null)
+        val cutoff = now - PROCESSED_TTL_MS
+        val records = linkedMapOf<String, Long>()
+        stored.orEmpty().forEach { item ->
+            val separator = item.lastIndexOf('|')
+            if (separator <= 0 || separator >= item.lastIndex) return@forEach
+            val id = item.substring(0, separator)
+            val timestamp = item.substring(separator + 1).toLongOrNull() ?: return@forEach
+            if (id.isNotBlank() && timestamp in cutoff..now) records[id] = timestamp
+        }
+
+        var mustStore = stored != null && records.size != stored.size
+        val legacyKey = scopedKey(KEY_PROCESSED, accountId)
+        val legacy = prefs.getStringSet(legacyKey, null)
+        if (legacy != null) {
+            legacy.filter { it.isNotBlank() && it.all(Char::isDigit) }
+                .forEach { id -> if (!records.containsKey(id)) records[id] = now }
+            prefs.edit().remove(legacyKey).apply()
+            mustStore = true
+        }
+        if (mustStore) storeProcessedRecordsLocked(accountId, records)
+        return records
+    }
+
+    private fun storeProcessedRecordsLocked(accountId: String, records: Map<String, Long>) {
+        val bounded = records.entries
+            .sortedByDescending { it.value }
+            .take(MAX_PROCESSED_IDS)
+            .map { (id, timestamp) -> "\${id}|\${timestamp}" }
+            .toSet()
+        prefs.edit().putStringSet(scopedKey(KEY_PROCESSED_TTL, accountId), bounded).apply()
     }
 
     companion object {
+        @Volatile private var singleton: TradeAutomation? = null
+
+        fun getInstance(context: Context): TradeAutomation =
+            singleton ?: synchronized(this) {
+                singleton ?: TradeAutomation(context.applicationContext).also { singleton = it }
+            }
+
         private const val BASE_URL = "https://mangabuff.ru"
         private const val KEY_MODE = "rule_mode"
         private const val KEY_PROFIT = "profit_coefficient"
         private const val KEY_PROCESSED = "processed_trade_ids"
+        private const val KEY_PROCESSED_TTL = "processed_trade_markers_v2"
         private const val KEY_AUTO_ACCEPT = "auto_accept_enabled"
         private const val KEY_SPECIAL_INSTANCE_WEIGHTS = "special_instance_weights"
         private const val RANK_CACHE_PREFIX = "catalog_rank_"
@@ -588,7 +685,8 @@ class TradeAutomation(context: Context) {
         private const val MAX_TRADE_PAGES = 20
         private const val MAX_LOGS = 120
         private const val MAX_POLICY_TEXT_LENGTH = 8000
-        private const val MAX_PROCESSED_IDS = 400
+        private const val MAX_PROCESSED_IDS = 10_000
+        private const val PROCESSED_TTL_MS = 90L * 24 * 60 * 60 * 1000
         private const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
         private val TRADE_PATH_REGEX = Regex("/trades/(\\d+)")

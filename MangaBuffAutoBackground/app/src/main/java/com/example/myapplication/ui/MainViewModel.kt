@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.automation.DeckCommentToggleRegistry
+import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
@@ -209,7 +210,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteAccount(accountId: String) {
-        stopAccountTask(accountId)
+        // Stop trade HTTP activity first, then let the service destroy the WebView and
+        // remove/defer deletion of this account's isolated profile before process exit.
+        TradeAutomation.getInstance(getApplication()).forgetAccount(accountId)
+        MangaBuffForegroundService.deleteAccountData(getApplication(), accountId)
         repository.deleteAccount(accountId)
         DeckCommentToggleRegistry.remove(accountId)
         loadData()
@@ -619,7 +623,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (offline) {
-            // Persist OFFLINE first, then stop the current run and cancel scheduled activity.
+            // The repository state is already OFFLINE, so trade rejects any further requests.
+            TradeAutomation.getInstance(getApplication()).stopForAccount(accountId)
             MangaBuffForegroundService.stopAccount(getApplication(), accountId)
         }
 
