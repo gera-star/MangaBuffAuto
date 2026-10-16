@@ -54,6 +54,11 @@ class TradeAutomation(context: Context) {
         .followRedirects(true)
         .build()
 
+    // Mirrors the browser plugin's serialized MangaBuff queue. The whole request
+    // is inside the lock so quick consecutive catalogue lookups cannot overlap.
+    private val requestQueueLock = Any()
+    @Volatile private var lastRequestFinishedAt = 0L
+
     private val _logs = MutableStateFlow<List<TradeLogEntry>>(emptyList())
     val logs: StateFlow<List<TradeLogEntry>> = _logs.asStateFlow()
 
@@ -426,24 +431,65 @@ class TradeAutomation(context: Context) {
     private data class HttpResult(val code: Int, val url: String, val body: String)
     private fun requestHtml(session: TradeSession, url: String): String? =
         request(session, url, "GET", null, BASE_URL)?.takeIf { it.code in 200..399 }?.body
-    private fun request(session: TradeSession, url: String, method: String, body: RequestBody?,
-        referer: String, csrfHeaderOnly: Boolean = false): HttpResult? {
-        if (session.cancelled) return null
-        return try {
-            val builder = Request.Builder().url(url).headers(baseHeaders(session, referer, csrfHeaderOnly))
-            if (method == "POST") builder.post(body ?: ByteArray(0).toRequestBody(null)) else builder.get()
+    private fun request(
+        session: TradeSession,
+        url: String,
+        method: String,
+        body: RequestBody?,
+        referer: String,
+        csrfHeaderOnly: Boolean = false
+    ): HttpResult? = synchronized(requestQueueLock) {
+        if (session.cancelled) return@synchronized null
+        try {
+            // At least 500 ms between finished MangaBuff requests, like the plugin queue.
+            val elapsed = System.currentTimeMillis() - lastRequestFinishedAt
+            val waitMs = REQUEST_DELAY_MS - elapsed
+            if (lastRequestFinishedAt > 0L && waitMs > 0L) {
+                Thread.sleep(waitMs)
+            }
+            if (session.cancelled || Thread.currentThread().isInterrupted) {
+                return@synchronized null
+            }
+
+            val builder = Request.Builder()
+                .url(url)
+                .headers(baseHeaders(session, referer, csrfHeaderOnly))
+            if (method == "POST") {
+                builder.post(body ?: ByteArray(0).toRequestBody(null))
+            } else {
+                builder.get()
+            }
+
             val call = client.newCall(builder.build())
             session.activeCall.set(call)
             try {
-                if (session.cancelled) { call.cancel(); return null }
-                call.execute().use { response ->
-                    HttpResult(response.code, response.request.url.toString(), response.body?.string().orEmpty())
+                // stop() can happen while waiting for a request slot.
+                if (session.cancelled) {
+                    call.cancel()
+                    return@synchronized null
                 }
-            } finally { session.activeCall.compareAndSet(call, null) }
+                call.execute().use { response ->
+                    HttpResult(
+                        response.code,
+                        response.request.url.toString(),
+                        response.body?.string().orEmpty()
+                    )
+                }
+            } finally {
+                session.activeCall.compareAndSet(call, null)
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            null
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) { null }
+        } catch (_: Exception) {
+            null
+        } finally {
+            lastRequestFinishedAt = System.currentTimeMillis()
+        }
     }
+
     private fun baseHeaders(session: TradeSession, referer: String, csrfHeaderOnly: Boolean): Headers {
         val account = session.account
         val b = Headers.Builder()
@@ -487,6 +533,7 @@ class TradeAutomation(context: Context) {
         private const val RANK_CACHE_PREFIX = "catalog_rank_"
         private const val NO_RANK = "__unknown__"
         private const val POLL_INTERVAL_MS = 45_000L
+        private const val REQUEST_DELAY_MS = 500L
         private const val NEGATIVE_RANK_TTL_MS = 30 * 60 * 1000L
         private const val MAX_CATALOG_PAGES = 30
         private const val MAX_MANGA_CANDIDATES = 12
