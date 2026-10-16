@@ -4215,6 +4215,29 @@ class MangaBuffAutomation(
                 }
             }
 
+            // Log real manual taps while the ad flow is active so the close X can be
+            // measured on the current inset/viewport layout. Returning false preserves
+            // normal WebView touch handling.
+            webView.setOnTouchListener { view, event ->
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    val density = view.resources.displayMetrics.density.coerceAtLeast(1f)
+                    log(
+                        account.username,
+                        "ADS: MANUAL_TOUCH_UP " +
+                            "xCss=" + (event.x / density) +
+                            " yCss=" + (event.y / density) +
+                            " xPx=" + event.x +
+                            " yPx=" + event.y +
+                            " rawX=" + event.rawX +
+                            " rawY=" + event.rawY +
+                            " webView=" + view.width + "x" + view.height +
+                            " density=" + density +
+                            " url=" + webView.url
+                    )
+                }
+                false
+            }
+
             // Keep the bridge registered across the balance navigation.
             webView.addJavascriptInterface(AdsBridge(), "AndroidAds")
 
