@@ -405,8 +405,13 @@ class TradeAutomation(context: Context) {
         }
     }
     private data class TradeCard(
-        val catalogId: String, val instanceId: String?, val rank: String?, val lockState: LockState,
-        val ownerTradeLocked: Boolean, val markedProtectedOrFavorite: Boolean
+        val catalogId: String,
+        val instanceId: String?,
+        val ownerUserId: String?,
+        val rank: String?,
+        val lockState: LockState,
+        val ownerTradeLocked: Boolean,
+        val markedProtectedOrFavorite: Boolean
     )
     private enum class LockState { LOCKED, UNLOCKED, UNKNOWN }
     private data class TradeAnalysis(val accept: Boolean, val reason: String, val receivedCount: Int = 0)
@@ -458,6 +463,13 @@ class TradeAutomation(context: Context) {
         val ownerHref = element.selectFirst("a.card-show__owner[href*='card_user_id='], a[href*='card_user_id=']")?.attr("href").orEmpty()
         val instanceId = CARD_USER_ID_REGEX.find(ownerHref)?.groupValues?.getOrNull(1)
             ?: element.selectFirst("[data-card-user-id]")?.attr("data-card-user-id")?.takeIf { it.isNotBlank() }
+        val ownerProfileHref = element.selectFirst(
+            "a.card-show__owner[href*='/users/'], .card-show__owner a[href*='/users/'], " +
+                "a[href*='/users/'][href*='/cards'], a.trade__main-user[href*='/users/']"
+        )?.attr("href").orEmpty()
+        val ownerUserId = USER_PROFILE_REGEX.find(ownerProfileHref)?.groupValues?.getOrNull(1)
+            ?: element.attr("data-owner-id").takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+            ?: element.attr("data-user-id").takeIf { it.isNotBlank() && it.all(Char::isDigit) }
         val lock = element.selectFirst(".lock-card-btn, .card-actions__btn--lock")
         val icon = lock?.selectFirst("i")
         val title = lock?.attr("title").orEmpty().ifBlank { lock?.attr("aria-label").orEmpty() }
@@ -471,17 +483,30 @@ class TradeAutomation(context: Context) {
         val favorite = element.selectFirst(".card-show__favorite, .card-show__protected, .manga-cards__favorite, .is-favorite, [data-is-favorite='1'], [data-is-favorite='true'], [data-favorite='true'], [aria-label*='Избранное']") != null ||
             element.attr("data-is-favorite").equals("1") || element.attr("data-is-favorite").equals("true", true) || element.attr("data-protected").equals("true", true)
         val tradeLocked = element.selectFirst(".card-show__owner-icon--trade-lock") != null
-        val rank = if (catalogId.isNotBlank()) resolveCatalogRank(session, catalogId) else null
-        return TradeCard(catalogId, instanceId, rank, state, tradeLocked, favorite)
+        val rank = if (catalogId.isNotBlank()) resolveCatalogRank(session, catalogId, ownerUserId) else null
+        return TradeCard(catalogId, instanceId, ownerUserId, rank, state, tradeLocked, favorite)
     }
 
-    private fun resolveCatalogRank(session: TradeSession, cardId: String): String? {
+    private fun resolveCatalogRank(
+        session: TradeSession,
+        cardId: String,
+        ownerUserId: String? = null
+    ): String? {
         if (session.cancelled) return null
         val key = RANK_CACHE_PREFIX + cardId
         val cached = prefs.getString(key, null)
         if (cached != null && cached != NO_RANK) return cached
         if (cached == NO_RANK) {
-            if (System.currentTimeMillis() - prefs.getLong(key + "_time", 0L) < NEGATIVE_RANK_TTL_MS) return null
+            if (System.currentTimeMillis() - prefs.getLong(key + "_time", 0L) < NEGATIVE_RANK_TTL_MS) {
+                if (!ownerUserId.isNullOrBlank()) {
+                    resolveRankFromOwnerInventory(session, ownerUserId, cardId)?.let {
+                        return rememberRank(cardId, it)
+                    }
+                } else {
+                    return null
+                }
+                return null
+            }
             prefs.edit().remove(key).remove(key + "_time").apply()
         }
         val mangas = linkedSetOf<String>()
@@ -508,9 +533,53 @@ class TradeAutomation(context: Context) {
                 pages++
             }
         }
+        if (!ownerUserId.isNullOrBlank() && !session.cancelled) {
+            resolveRankFromOwnerInventory(session, ownerUserId, cardId)?.let {
+                return rememberRank(cardId, it)
+            }
+        }
         if (!session.cancelled) prefs.edit().putString(key, NO_RANK).putLong(key + "_time", System.currentTimeMillis()).apply()
         return null
     }
+
+    /**
+     * Use the owner's card inventory and the rank-filter tabs exposed by MangaBuff.
+     * Discover filters from the returned HTML rather than hardcoding a user ID.
+     */
+    private fun resolveRankFromOwnerInventory(
+        session: TradeSession,
+        ownerUserId: String,
+        cardId: String
+    ): String? {
+        if (session.cancelled || ownerUserId.isBlank() || !ownerUserId.all(Char::isDigit)) return null
+        val baseUrl = "$BASE_URL/users/$ownerUserId/cards"
+        val html = requestHtml(session, baseUrl) ?: return null
+        val doc = Jsoup.parse(html, baseUrl)
+
+        rankForCardInDocument(doc, cardId)?.let { return it }
+
+        val rankFilters = doc.select(".tabs__nav a[href*='type=']")
+            .mapNotNull { anchor ->
+                val type = USER_CARD_TYPE_REGEX.find(anchor.attr("href"))?.groupValues?.getOrNull(1)
+                    ?.uppercase()
+                type?.takeIf { it in TradePolicy.STANDARD_RANKS || it in TradePolicy.SPECIAL_RANKS }
+            }
+            .distinct()
+            .ifEmpty {
+                listOf("X") + TradePolicy.STANDARD_ORDER.reversed() + listOf("H", "N", "V", "Q", "L", "K", "W")
+            }
+
+        for (rank in rankFilters) {
+            if (session.cancelled || !isAccountAvailable(session.account.id)) return null
+            val rankUrl = baseUrl + "?type=" + rank.lowercase()
+            val rankHtml = requestHtml(session, rankUrl) ?: continue
+            val rankDoc = Jsoup.parse(rankHtml, rankUrl)
+            rankForCardInDocument(rankDoc, cardId)?.let { return it }
+            if (CatalogRankParser.containsExactCard(rankDoc, cardId)) return rank
+        }
+        return null
+    }
+
     private fun rankFromMangaCatalog(session: TradeSession, mangaId: String, cardId: String): String? {
         var url = "$BASE_URL/manga/$mangaId/cards"
         val seen = hashSetOf<String>()
@@ -730,5 +799,7 @@ class TradeAutomation(context: Context) {
         private val CARD_PATH_REGEX = Regex("/cards/(\\d+)")
         private val MANGA_PATH_REGEX = Regex("/manga/([^/?#]+)")
         private val CARD_USER_ID_REGEX = Regex("(?:[?&])card_user_id=(\\d+)")
+        private val USER_PROFILE_REGEX = Regex("/users/(\\d+)(?:/cards)?(?:[/?#]|$)", RegexOption.IGNORE_CASE)
+        private val USER_CARD_TYPE_REGEX = Regex("(?:[?&])type=([a-z])(?:&|$)", RegexOption.IGNORE_CASE)
     }
 }

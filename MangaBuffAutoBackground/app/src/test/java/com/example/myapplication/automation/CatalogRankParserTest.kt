@@ -59,6 +59,25 @@ class CatalogRankParserTest {
     }
 
     @Test
+    fun ownerCardInventoryCanFindExactCatalogueIdWithoutConfusingInstanceId() {
+        val doc = Jsoup.parse(
+            """
+            <div class="manga-cards__item-wrapper" data-rank="P">
+              <div class="manga-cards__item" data-card-id="68318">
+                <div class="lock-card-btn" data-id="675286385"></div>
+                <div data-card-user-id="675286385"></div>
+              </div>
+            </div>
+            """.trimIndent(),
+            "https://mangabuff.ru/users/1539681/cards"
+        )
+
+        assertEquals("P", CatalogRankParser.findRank(doc, "68318"))
+        assertEquals(true, CatalogRankParser.containsExactCard(doc, "68318"))
+        assertEquals(false, CatalogRankParser.containsExactCard(doc, "675286385"))
+    }
+
+    @Test
     fun acceptsKnownSpecialRanksWhenExplicitlyPresent() {
         val doc = Jsoup.parse(
             """<div class="manga-cards__item-wrapper" data-rank="H">

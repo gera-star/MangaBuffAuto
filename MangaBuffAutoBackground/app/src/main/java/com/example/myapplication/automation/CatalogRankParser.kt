@@ -21,10 +21,7 @@ internal object CatalogRankParser {
         val wantedId = cardId.trim()
         if (wantedId.isEmpty() || !wantedId.all(Char::isDigit)) return null
 
-        val exactNodes = doc.select(CARD_SELECTORS).filter { node ->
-            node.attr("data-card-id").trim() == wantedId ||
-                node.attr("data-id").trim() == wantedId
-        }
+        val exactNodes = exactCardNodes(doc, wantedId)
 
         for (candidate in exactNodes) {
             // In the catalogue response this climbs from .manga-cards__item to
@@ -56,6 +53,22 @@ internal object CatalogRankParser {
 
         return null
     }
+
+    /**
+     * Check catalogue IDs only. In particular, do not treat lock-card-btn[data-id]
+     * or data-card-user-id instance IDs as a catalogue card ID.
+     */
+    fun containsExactCard(doc: Document, cardId: String): Boolean {
+        val wantedId = cardId.trim()
+        if (wantedId.isEmpty() || !wantedId.all(Char::isDigit)) return false
+        return exactCardNodes(doc, wantedId).isNotEmpty()
+    }
+
+    private fun exactCardNodes(doc: Document, wantedId: String): List<Element> =
+        doc.select(CARD_SELECTORS).filter { node ->
+            node.attr("data-card-id").trim() == wantedId ||
+                node.attr("data-id").trim() == wantedId
+        }
 
     private fun normalizeKnownRank(value: String): String? {
         val rank = value.trim().uppercase()
