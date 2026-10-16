@@ -280,7 +280,16 @@ class ProfileWebViewStore(
                         }
                     }
                     json.isJsonArray -> json.asJsonArray.mapNotNull { value ->
-                        if (value.isJsonPrimitive && value.asJsonPrimitive.isString) value.asString else null
+                        when {
+                            value.isJsonPrimitive && value.asJsonPrimitive.isString -> value.asString
+                            value.isJsonObject -> {
+                                val item = value.asJsonObject
+                                val name = item.get("name")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                                val cookieValue = item.get("value")?.takeIf { it.isJsonPrimitive && !it.isJsonNull }?.asString
+                                if (name.isNotBlank() && cookieValue != null) "$name=$cookieValue" else null
+                            }
+                            else -> null
+                        }
                     }
                     else -> emptyList()
                 }

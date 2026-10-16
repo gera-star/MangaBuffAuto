@@ -652,12 +652,10 @@ class TradeAutomation(context: Context) {
     }
 
     private fun storeProcessedRecordsLocked(accountId: String, records: Map<String, Long>) {
-        val bounded = records.entries
-            .sortedByDescending { it.value }
-            .take(MAX_PROCESSED_IDS)
-            .map { (id, timestamp) -> id + "|" + timestamp }
-            .toSet()
-        prefs.edit().putStringSet(scopedKey(KEY_PROCESSED_TTL, accountId), bounded).apply()
+        // TTL is the eviction policy; do not evict recent safety markers just because
+        // the number of attempted trades crossed an arbitrary limit.
+        val durable = records.map { (id, timestamp) -> id + "|" + timestamp }.toSet()
+        prefs.edit().putStringSet(scopedKey(KEY_PROCESSED_TTL, accountId), durable).apply()
     }
 
     companion object {
@@ -685,7 +683,6 @@ class TradeAutomation(context: Context) {
         private const val MAX_TRADE_PAGES = 20
         private const val MAX_LOGS = 120
         private const val MAX_POLICY_TEXT_LENGTH = 8000
-        private const val MAX_PROCESSED_IDS = 10_000
         private const val PROCESSED_TTL_MS = 90L * 24 * 60 * 60 * 1000
         private const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
