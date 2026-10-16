@@ -49,6 +49,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.example.myapplication.automation.TradeAutomation
+import com.example.myapplication.ui.TradeModeEdgeButton
+import com.example.myapplication.ui.TradeModeScreen
 import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.ui.MainViewModel
 import com.example.myapplication.ui.MangaBuffAppUI
@@ -142,6 +154,15 @@ class MainActivity : ComponentActivity() {
             MyApplicationTheme(darkTheme = true, dynamicColor = false) {
                 val settings by viewModel.settings.collectAsState()
                 val automationRunning by viewModel.isRunning.collectAsState()
+                val tradeAutomation = remember { TradeAutomation(applicationContext) }
+                var tradingModeOpen by remember { mutableStateOf(false) }
+                var showTradePasswordDialog by remember { mutableStateOf(false) }
+                var tradePassword by remember { mutableStateOf("") }
+                var tradePasswordError by remember { mutableStateOf(false) }
+
+                DisposableEffect(tradeAutomation) {
+                    onDispose { tradeAutomation.close() }
+                }
 
                 DisposableEffect(settings.keepScreenOn, automationRunning) {
                     if (settings.keepScreenOn && automationRunning) {
@@ -255,6 +276,72 @@ class MainActivity : ComponentActivity() {
                             WebViewReturnOverlay(
                                 modifier = Modifier.align(Alignment.BottomCenter),
                                 onReturn = { viewModel.setDebugWebViewVisible(false) }
+                            )
+                        }
+
+                        if (tradingModeOpen) {
+                            TradeModeScreen(
+                                viewModel = viewModel,
+                                engine = tradeAutomation,
+                                onBack = { tradingModeOpen = false }
+                            )
+                        } else if (!showKeenySplash && !debugWebViewVisible) {
+                            TradeModeEdgeButton(
+                                modifier = Modifier.align(Alignment.CenterEnd),
+                                isBack = false,
+                                onClick = {
+                                    tradePassword = ""
+                                    tradePasswordError = false
+                                    showTradePasswordDialog = true
+                                }
+                            )
+                        }
+
+                        if (showTradePasswordDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showTradePasswordDialog = false },
+                                title = { Text("Торговый режим") },
+                                text = {
+                                    Column {
+                                        Text("Введите пароль для открытия скрытого меню.")
+                                        OutlinedTextField(
+                                            value = tradePassword,
+                                            onValueChange = {
+                                                tradePassword = it.filter(Char::isDigit).take(8)
+                                                tradePasswordError = false
+                                            },
+                                            label = { Text("Пароль") },
+                                            singleLine = true,
+                                            isError = tradePasswordError,
+                                            visualTransformation = PasswordVisualTransformation(),
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                                        )
+                                        if (tradePasswordError) {
+                                            Text("Неверный пароль", color = Color(0xFFFF8A80))
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            if (tradePassword == "1988") {
+                                                tradingModeOpen = true
+                                                showTradePasswordDialog = false
+                                                tradePassword = ""
+                                                tradePasswordError = false
+                                            } else {
+                                                tradePasswordError = true
+                                            }
+                                        }
+                                    ) {
+                                        Text("Открыть")
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showTradePasswordDialog = false }) {
+                                        Text("Назад")
+                                    }
+                                }
                             )
                         }
                     }
