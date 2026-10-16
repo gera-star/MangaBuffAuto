@@ -31,6 +31,8 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
+          # The legacy `tools` package is retired and makes setup-android fail.
+          packages: platform-tools
           accept-android-sdk-licenses: false
 
       - name: Accept Android SDK licenses
