@@ -85,6 +85,9 @@ fun TradeModeScreen(
     var accountMenuExpanded by remember { mutableStateOf(false) }
     var ruleMode by remember { mutableStateOf(engine.savedMode()) }
     var coefficientText by remember { mutableStateOf(engine.savedProfitCoefficient()) }
+    var autoAcceptEnabled by remember { mutableStateOf(engine.savedAutoAcceptEnabled()) }
+    var protectedCardIdsText by remember { mutableStateOf(engine.savedProtectedCardIds()) }
+    var specialWeightsText by remember { mutableStateOf(engine.savedSpecialInstanceWeights()) }
 
     LaunchedEffect(activeAccountId, accounts) {
         if (!activeAccountId.isNullOrBlank()) {
@@ -137,9 +140,17 @@ fun TradeModeScreen(
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Text(
-                        if (isRunning) "РАБОТАЕТ" else "ОСТАНОВЛЕН",
+                        when {
+                            !isRunning -> "ОСТАНОВЛЕН"
+                            autoAcceptEnabled -> "АВТОПРИЁМ"
+                            else -> "АНАЛИЗ"
+                        },
                         modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
-                        color = if (isRunning) Color(0xFF7DF0B1) else Color(0xFFD0C7D8),
+                        color = when {
+                            !isRunning -> Color(0xFFD0C7D8)
+                            autoAcceptEnabled -> Color(0xFFFFC27D)
+                            else -> Color(0xFF7DF0B1)
+                        },
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -212,20 +223,24 @@ fun TradeModeScreen(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Автоматически принимать", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text("Мониторинг предложений", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                             Text("Проверка примерно раз в 45 секунд", color = Color(0xFFABB4C6), fontSize = 11.sp)
                         }
-                        Switch(
-                            checked = isRunning,
-                            enabled = isRunning || (selectedAccount != null && hasSession),
+                        Switch(checked = isRunning, enabled = isRunning || (selectedAccount != null && hasSession),
                             onCheckedChange = { enabled ->
-                                if (enabled && selectedAccount != null) {
-                                    engine.start(selectedAccount, ruleMode, coefficient)
-                                } else {
-                                    engine.stop()
-                                }
-                            }
-                        )
+                                if (enabled && selectedAccount != null) engine.start(selectedAccount, ruleMode, coefficient) else engine.stop()
+                            })
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Автоматически принимать", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text(if (autoAcceptEnabled) "Подходящие предложения будут приниматься автоматически."
+                                else "Безопасный режим: только анализ, без POST принятия.",
+                                color = if (autoAcceptEnabled) Color(0xFFFFC27D) else Color(0xFFABB4C6), fontSize = 11.sp)
+                        }
+                        Switch(checked = autoAcceptEnabled, onCheckedChange = { enabled ->
+                            autoAcceptEnabled = enabled; engine.setAutoAcceptEnabled(enabled)
+                        })
                     }
                     HorizontalDivider(color = Color(0xFF343A47))
                     Text("Защита карт", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
@@ -234,6 +249,26 @@ fun TradeModeScreen(
                         color = Color(0xFFBBC3D2),
                         fontSize = 11.sp,
                         lineHeight = 15.sp
+                    )
+                    OutlinedTextField(
+                        value = protectedCardIdsText,
+                        onValueChange = { protectedCardIdsText = it.take(8000); engine.saveProtectedCardIds(protectedCardIdsText) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Защищённые / избранные ID") },
+                        placeholder = { Text("catalog ID или card_user_id") },
+                        supportingText = { Text("ID через запятую или с новой строки. Эти карты бот не отдаёт.") },
+                        minLines = 1, maxLines = 2,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+                    )
+                    OutlinedTextField(
+                        value = specialWeightsText,
+                        onValueChange = { specialWeightsText = it.take(8000); engine.saveSpecialInstanceWeights(specialWeightsText) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Вес специальных экземпляров") },
+                        placeholder = { Text("card_user_id=вес, например 690490862=6") },
+                        supportingText = { Text("H/N/V/Q/L/K/W: задайте вес 1–8 (E–S). X запрещён всегда.") },
+                        minLines = 1, maxLines = 2,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
                     )
                 }
             }
@@ -300,7 +335,7 @@ fun TradeModeScreen(
                             )
                         }
                         Text(
-                            "Сумма рангов получаемых карт должна быть не меньше ранга отдаваемой карты × коэффициент. Значение 1,5 означает запас 50%.",
+                            "Сумма весов получаемых карт должна быть не меньше веса отдаваемой × коэффициент. Специальным экземплярам нужен явно заданный вес; X при отдаче запрещён.",
                             color = Color(0xFFBBC3D2),
                             fontSize = 11.sp,
                             lineHeight = 15.sp
