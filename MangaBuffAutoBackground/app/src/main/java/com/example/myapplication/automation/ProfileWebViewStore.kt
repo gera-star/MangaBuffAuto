@@ -14,6 +14,7 @@ import android.webkit.WebViewClient
 import androidx.webkit.ProfileStore
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.google.gson.JsonParser
 import com.example.myapplication.data.LogEntry
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
@@ -232,10 +233,14 @@ class ProfileWebViewStore(
             targetCookieManager.setAcceptCookie(true)
             var syncedCookieCount = 0
             if (cookiesJson.isNotBlank()) {
-                val cookieItems = cookiesJson.split(";", ",")
+                val cookieItems = parseCookieHeader(cookiesJson)
                 for (item in cookieItems) {
-                    if (item.contains("=")) {
-                        targetCookieManager.setCookie("https://mangabuff.ru", item.trim())
+                    val trimmed = item.trim()
+                    val separator = trimmed.indexOf('=')
+                    // A request Cookie header contains name=value pairs separated by semicolons.
+                    // Do not split commas: commas can be part of cookie values.
+                    if (separator > 0) {
+                        targetCookieManager.setCookie("https://mangabuff.ru", trimmed)
                         syncedCookieCount++
                     }
                 }
@@ -252,6 +257,37 @@ class ProfileWebViewStore(
             onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIE_PROFILE_FAIL error=${e.message}", isError = true))
             throw e
         }
+    }
+
+    private fun parseCookieHeader(raw: String): List<String> {
+        val text = raw.trim()
+            .removePrefix("Cookie:")
+            .removePrefix("cookie:")
+            .trim()
+        if (text.isEmpty()) return emptyList()
+
+        // Older versions sometimes stored the browser cookies as JSON. Accept that format
+        // without exposing values to logs; otherwise treat the field as an HTTP Cookie header.
+        if (text.startsWith("{") || text.startsWith("[")) {
+            runCatching {
+                val json = JsonParser.parseString(text)
+                when {
+                    json.isJsonObject -> json.asJsonObject.entrySet().mapNotNull { (name, value) ->
+                        if (name.isBlank() || value.isJsonNull || value.isJsonObject || value.isJsonArray) {
+                            null
+                        } else {
+                            "$name=" + if (value.isJsonPrimitive) value.asJsonPrimitive.asString else value.toString()
+                        }
+                    }
+                    json.isJsonArray -> json.asJsonArray.mapNotNull { value ->
+                        if (value.isJsonPrimitive && value.asJsonPrimitive.isString) value.asString else null
+                    }
+                    else -> emptyList()
+                }
+            }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        }
+
+        return text.split(';').map(String::trim).filter { it.isNotEmpty() && it.indexOf('=') > 0 }
     }
 
     suspend fun awaitAttached(accountId: String, webView: WebView) {

@@ -9673,7 +9673,7 @@ class MangaBuffAutomation(
             return false
         }
 
-        val chapterId = Regex("/manga/[^/]+/[^/]+/(\\d+)$")
+        val chapterId = Regex("/manga/[^/]+/[^/]+/(\\d+(?:\\.\\d+)?)$")
             .find(cleanTarget)
             ?.groupValues
             ?.getOrNull(1)
@@ -9682,7 +9682,7 @@ class MangaBuffAutomation(
                 ?.chapterId
                 ?.takeIf { it.isNotBlank() }
             ?: cleanTarget.substringAfterLast('/')
-                .takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+                .takeIf { Regex("\\d+(?:\\.\\d+)?").matches(it) }
 
         if (chapterId.isNullOrBlank()) {
             log(

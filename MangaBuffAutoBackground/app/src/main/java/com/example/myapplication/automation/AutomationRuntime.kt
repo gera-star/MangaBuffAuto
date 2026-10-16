@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
 class AutomationRuntime(
@@ -34,9 +35,9 @@ class AutomationRuntime(
     private val onAccountRecoveryNeeded: (accountId: String) -> Unit = {},
     private val onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> }
 ) {
-    private val runtimes = mutableMapOf<String, AccountRuntime>()
-    private val automationEngines = mutableMapOf<String, MangaBuffAutomation>()
-    private val executionJobs = mutableMapOf<String, Job>()
+    private val runtimes = ConcurrentHashMap<String, AccountRuntime>()
+    private val automationEngines = ConcurrentHashMap<String, MangaBuffAutomation>()
+    private val executionJobs = ConcurrentHashMap<String, Job>()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val webViewStore = ProfileWebViewStore(

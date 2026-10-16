@@ -655,7 +655,7 @@ class TradeAutomation(context: Context) {
         val bounded = records.entries
             .sortedByDescending { it.value }
             .take(MAX_PROCESSED_IDS)
-            .map { (id, timestamp) -> "\${id}|\${timestamp}" }
+            .map { (id, timestamp) -> id + "|" + timestamp }
             .toSet()
         prefs.edit().putStringSet(scopedKey(KEY_PROCESSED_TTL, accountId), bounded).apply()
     }

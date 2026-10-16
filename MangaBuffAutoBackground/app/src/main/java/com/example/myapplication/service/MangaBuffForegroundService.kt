@@ -904,7 +904,7 @@ class MangaBuffForegroundService : Service() {
                 LogEntry(
                     username = accountId,
                     component = "PROFILE",
-                    message = "PROFILE_DELETE_DEFERRED profile=mb_$accountId retryOnNextProcess=true reason=\${e.message}",
+                    message = "PROFILE_DELETE_DEFERRED profile=mb_$accountId retryOnNextProcess=true reason=" + e.message,
                     isError = true
                 )
             )
@@ -932,7 +932,7 @@ class MangaBuffForegroundService : Service() {
                     LogEntry(
                         username = accountId,
                         component = "PROFILE",
-                        message = "PROFILE_DELETE_RETRY_FAILED profile=mb_$accountId reason=\${e.message}",
+                        message = "PROFILE_DELETE_RETRY_FAILED profile=mb_$accountId reason=" + e.message,
                         isError = true
                     )
                 )
