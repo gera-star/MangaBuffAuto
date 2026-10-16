@@ -102,13 +102,8 @@ class TradeAutomation(context: Context) {
         activeSession?.let { it.autoAccept = enabled }
         addLog(if (enabled) "Автопринятие включено пользователем." else "Автопринятие выключено: новые предложения только анализируются.")
     }
-    fun savedProtectedCardIds(): String = prefs.getString(KEY_PROTECTED_CARD_IDS, "") ?: ""
-    fun saveProtectedCardIds(value: String) { prefs.edit().putString(KEY_PROTECTED_CARD_IDS, value.take(MAX_POLICY_TEXT_LENGTH)).apply() }
     fun savedSpecialInstanceWeights(): String = prefs.getString(KEY_SPECIAL_INSTANCE_WEIGHTS, "") ?: ""
     fun saveSpecialInstanceWeights(value: String) { prefs.edit().putString(KEY_SPECIAL_INSTANCE_WEIGHTS, value.take(MAX_POLICY_TEXT_LENGTH)).apply() }
-    private fun protectedCardIds(): Set<String> =
-        savedProtectedCardIds().split(',', ';', '\n', '\r', ' ', '\t').map(String::trim)
-            .filter { it.isNotEmpty() && it.all(Char::isDigit) }.toSet()
     private fun specialInstanceWeights(): Map<String, Int> {
         val result = linkedMapOf<String, Int>()
         savedSpecialInstanceWeights().lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { line ->
@@ -254,7 +249,6 @@ class TradeAutomation(context: Context) {
     private data class TradeAnalysis(val accept: Boolean, val reason: String, val receivedCount: Int = 0)
     private enum class AcceptResult { ACCEPTED, REJECTED, UNKNOWN, CANCELLED }
     private fun analyzeTrade(session: TradeSession, doc: Document, tradeId: String, mode: TradeRuleMode, coefficient: Double): TradeAnalysis {
-        if (doc.selectFirst(".card-show__owner-icon--trade-lock") != null) return TradeAnalysis(false, "у пользователя найден признак запрета обменов")
         var giveBlock: Element? = null
         var receiveBlock: Element? = null
         for (block in doc.select(".trade__main-items")) {
@@ -282,8 +276,6 @@ class TradeAutomation(context: Context) {
             if (c.instanceId.isNullOrBlank()) return TradeAnalysis(false, "не найден card_user_id конкретного экземпляра")
             if (c.ownerTradeLocked) return TradeAnalysis(false, "у владельца карты отмечен запрет обменов")
             if (c.markedProtectedOrFavorite) return TradeAnalysis(false, "карта помечена на странице как избранная/защищённая")
-            val protected = protectedCardIds()
-            if (c.catalogId in protected || c.instanceId?.let(protected::contains) == true) return TradeAnalysis(false, "ID карты присутствует в пользовательском списке защиты")
             if (c.lockState == LockState.LOCKED) return TradeAnalysis(false, "отдаваемая карта заблокирована")
             if (c.lockState == LockState.UNKNOWN) return TradeAnalysis(false, "невозможно уверенно определить состояние замка")
         }
@@ -294,7 +286,7 @@ class TradeAutomation(context: Context) {
             TradeValueCard(r, c.catalogId, c.instanceId)
         }
         val reason = TradePolicy.rejectionReason(TradeValueCard(rank, g.catalogId, g.instanceId),
-            receives, mode, coefficient, protectedCardIds(), specialInstanceWeights())
+            receives, mode, coefficient, specialInstanceWeights())
         return if (reason == null) TradeAnalysis(true, "подходит", receive.size) else TradeAnalysis(false, reason)
     }
     private fun parseTradeCard(session: TradeSession, element: Element): TradeCard {
@@ -514,7 +506,6 @@ class TradeAutomation(context: Context) {
         private const val KEY_PROFIT = "profit_coefficient"
         private const val KEY_PROCESSED = "processed_trade_ids"
         private const val KEY_AUTO_ACCEPT = "auto_accept_enabled"
-        private const val KEY_PROTECTED_CARD_IDS = "protected_card_ids"
         private const val KEY_SPECIAL_INSTANCE_WEIGHTS = "special_instance_weights"
         private const val RANK_CACHE_PREFIX = "catalog_rank_"
         private const val NO_RANK = "__unknown__"

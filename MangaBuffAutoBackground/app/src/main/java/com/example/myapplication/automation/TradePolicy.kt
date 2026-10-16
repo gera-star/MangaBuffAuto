@@ -8,11 +8,10 @@ object TradePolicy {
     val SPECIAL_RANKS: Set<String> = setOf("H", "N", "V", "Q", "L", "K", "W", "X")
     fun standardWeight(rank: String): Int? = STANDARD_ORDER.indexOf(rank.trim().uppercase()).takeIf { it >= 0 }?.plus(1)
     fun rejectionReason(given: TradeValueCard, received: List<TradeValueCard>, mode: TradeRuleMode, coefficient: Double,
-        protectedIds: Set<String>, specialInstanceWeights: Map<String, Int>): String? {
+        specialInstanceWeights: Map<String, Int>): String? {
         if (received.size < 2) return "получается меньше двух карт"
         if (given.catalogId.isBlank()) return "нет catalog ID отдаваемой карты"
         if (given.rank.trim().uppercase() == "X") return "карты ранга X нельзя отдавать автоматически"
-        if (given.catalogId in protectedIds || given.instanceId?.let(protectedIds::contains) == true) return "ID отдаваемой карты есть в пользовательском списке защиты"
         val rank = given.rank.trim().uppercase()
         val customGiven = given.instanceId?.let(specialInstanceWeights::get)
         val gv = standardWeight(rank) ?: when {

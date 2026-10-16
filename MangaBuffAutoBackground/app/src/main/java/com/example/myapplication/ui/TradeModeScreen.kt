@@ -1,8 +1,12 @@
 package com.example.myapplication.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +16,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -58,6 +68,7 @@ private val TradeBackground = Color(0xFF101218)
 private val TradeSurface = Color(0xFF1B202A)
 private val TradeAccent = Color(0xFFB45CFF)
 private val TradeCyan = Color(0xFF62E5FF)
+private const val TRADE_WEB_CARDS_URL = "https://mangabuff.ru/users/1539681/cards"
 
 /**
  * Trading UI is an overlay above the existing app UI. The normal screen stays
@@ -74,6 +85,7 @@ fun TradeModeScreen(
     val isRunning by engine.isRunning.collectAsState()
     val activeAccountId by engine.activeAccountId.collectAsState()
     val logEntries by engine.logs.collectAsState()
+    val context = LocalContext.current
 
     var selectedAccountId by remember {
         mutableStateOf(
@@ -86,7 +98,6 @@ fun TradeModeScreen(
     var ruleMode by remember { mutableStateOf(engine.savedMode()) }
     var coefficientText by remember { mutableStateOf(engine.savedProfitCoefficient()) }
     var autoAcceptEnabled by remember { mutableStateOf(engine.savedAutoAcceptEnabled()) }
-    var protectedCardIdsText by remember { mutableStateOf(engine.savedProtectedCardIds()) }
     var specialWeightsText by remember { mutableStateOf(engine.savedSpecialInstanceWeights()) }
 
     LaunchedEffect(activeAccountId, accounts) {
@@ -105,6 +116,9 @@ fun TradeModeScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(TradeBackground)
+            // Respect Android status/shade area, cutouts, navigation bar, and keyboard.
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .imePadding()
             .clickable(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null,
@@ -114,8 +128,9 @@ fun TradeModeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 14.dp, end = 46.dp, top = 12.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 10.dp, end = 46.dp, top = 6.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -126,7 +141,7 @@ fun TradeModeScreen(
                     Text(
                         "АВТООБМЕН",
                         color = Color.White,
-                        fontSize = 21.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
@@ -162,7 +177,7 @@ fun TradeModeScreen(
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Text("Аккаунт", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
@@ -218,13 +233,13 @@ fun TradeModeScreen(
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Мониторинг предложений", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                            Text("Проверка примерно раз в 45 секунд", color = Color(0xFFABB4C6), fontSize = 11.sp)
+                            Text("Мониторинг", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                            Text("Опрос каждые 45 секунд", color = Color(0xFFABB4C6), fontSize = 10.sp)
                         }
                         Switch(checked = isRunning, enabled = isRunning || (selectedAccount != null && hasSession),
                             onCheckedChange = { enabled ->
@@ -233,7 +248,7 @@ fun TradeModeScreen(
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Автоматически принимать", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text("Автопринятие", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                             Text(if (autoAcceptEnabled) "Подходящие предложения будут приниматься автоматически."
                                 else "Безопасный режим: только анализ, без POST принятия.",
                                 color = if (autoAcceptEnabled) Color(0xFFFFC27D) else Color(0xFFABB4C6), fontSize = 11.sp)
@@ -243,30 +258,36 @@ fun TradeModeScreen(
                         })
                     }
                     HorizontalDivider(color = Color(0xFF343A47))
-                    Text("Защита карт", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                    Text(
-                        "Отдаётся ровно 1 карта, получить нужно 2 или больше. Заблокированные и защищённые карты не отдаём. Ранг X отдавать нельзя никогда; специальный ранг можно отдавать только при заданном весе конкретного экземпляра.",
-                        color = Color(0xFFBBC3D2),
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp
-                    )
-                    OutlinedTextField(
-                        value = protectedCardIdsText,
-                        onValueChange = { protectedCardIdsText = it.take(8000); engine.saveProtectedCardIds(protectedCardIdsText) },
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Защищённые / избранные ID") },
-                        placeholder = { Text("catalog ID или card_user_id") },
-                        supportingText = { Text("ID через запятую или с новой строки. Эти карты бот не отдаёт.") },
-                        minLines = 1, maxLines = 2,
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Защита карт", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        OutlinedButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TRADE_WEB_CARDS_URL)))
+                                }
+                            },
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text("WEB", fontSize = 11.sp)
+                        }
+                    }
+                    Text(
+                        "Открой свои карты на MangaBuff и включи сайтный замок у экземпляров, которые нельзя использовать для запросов на обмен.",
+                        color = Color(0xFFBBC3D2),
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp
                     )
                     OutlinedTextField(
                         value = specialWeightsText,
                         onValueChange = { specialWeightsText = it.take(8000); engine.saveSpecialInstanceWeights(specialWeightsText) },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Вес специальных экземпляров") },
+                        label = { Text("Веса спец. карт") },
                         placeholder = { Text("card_user_id=вес, например 690490862=6") },
-                        supportingText = { Text("H/N/V/Q/L/K/W: задайте вес 1–8 (E–S). X запрещён всегда.") },
+                        supportingText = { Text("H/N/V/Q/L/K/W: вес 1–8 для каждого экземпляра; X отдавать нельзя.") },
                         minLines = 1, maxLines = 2,
                         textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
                     )
@@ -278,7 +299,7 @@ fun TradeModeScreen(
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text("Правило оценки", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
@@ -359,8 +380,8 @@ fun TradeModeScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                    .heightIn(max = 220.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (logEntries.isEmpty()) {
                     item {
@@ -400,7 +421,7 @@ private fun TradeLogRow(entry: TradeLogEntry) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF191E27), RoundedCornerShape(8.dp))
-            .padding(horizontal = 9.dp, vertical = 7.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
         verticalAlignment = Alignment.Top
     ) {
         Text(
@@ -412,8 +433,8 @@ private fun TradeLogRow(entry: TradeLogEntry) {
         Text(
             entry.message,
             color = if (entry.isError) Color(0xFFFFA99B) else Color(0xFFD5DCE8),
-            fontSize = 11.sp,
-            lineHeight = 14.sp,
+            fontSize = 10.sp,
+            lineHeight = 13.sp,
             modifier = Modifier.weight(1f)
         )
     }
