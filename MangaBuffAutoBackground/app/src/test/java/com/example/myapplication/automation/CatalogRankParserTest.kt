@@ -69,4 +69,36 @@ class CatalogRankParserTest {
 
         assertEquals("H", CatalogRankParser.findRank(doc, "222"))
     }
+
+    @Test
+    fun readsRankFromRealOwnerCardMarkupWithoutConfusingInstanceId() {
+        val doc = Jsoup.parse(
+            """
+            <div class="manga-cards__item-wrapper" data-rank="P" data-is-special="0">
+              <div class="manga-cards__item" data-card-id="68318">
+                <div class="card-actions" data-card-id="68318" data-card-user-id="675286385">
+                  <button data-action="lock" data-card-id="68318" data-card-user-id="675286385"
+                    aria-pressed="false" title="Заблокировать карту"></button>
+                </div>
+                <div class="lock-card-btn" data-id="675286385"><i class="icon icon-unlock"></i></div>
+              </div>
+            </div>
+            <div class="manga-cards__item-wrapper" data-rank="P" data-is-special="0">
+              <div class="manga-cards__item" data-card-id="392525">
+                <div class="card-actions" data-card-id="392525" data-card-user-id="687366753">
+                  <button data-action="lock" data-card-id="392525" data-card-user-id="687366753"
+                    aria-pressed="false" title="Заблокировать карту"></button>
+                </div>
+                <div class="lock-card-btn" data-id="687366753"><i class="icon icon-unlock"></i></div>
+              </div>
+            </div>
+            """.trimIndent(),
+            "https://mangabuff.ru/users/168879/cards"
+        )
+
+        assertEquals("P", CatalogRankParser.findRank(doc, "68318"))
+        assertEquals("P", CatalogRankParser.findRank(doc, "392525"))
+        assertNull(CatalogRankParser.findRank(doc, "675286385"))
+        assertNull(CatalogRankParser.findRank(doc, "687366753"))
+    }
 }
