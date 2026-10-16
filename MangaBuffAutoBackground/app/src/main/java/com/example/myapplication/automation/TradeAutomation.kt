@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import okhttp3.FormBody
 import okhttp3.Headers
@@ -136,7 +137,7 @@ class TradeAutomation(context: Context) {
         _logs.update { old -> (old + TradeLogEntry(message = message, isError = isError)).takeLast(MAX_LOGS) }
     }
 
-    private fun scanPendingTrades(
+    private suspend fun scanPendingTrades(
         account: MangaBuffAccount,
         mode: TradeRuleMode,
         coefficient: Double
@@ -166,7 +167,7 @@ class TradeAutomation(context: Context) {
         }
 
         for ((tradeId, sender) in offers) {
-            if (!scope.coroutineContext.isActive) return
+            if (!currentCoroutineContext().isActive) return
             if (isProcessed(tradeId)) continue
             val detailUrl = "$BASE_URL/trades/$tradeId"
             val detail = requestHtml(detailUrl)
