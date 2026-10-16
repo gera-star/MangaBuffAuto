@@ -374,22 +374,8 @@ class TradeAutomation(context: Context) {
         }
         return null
     }
-    private fun rankForCardInDocument(doc: Document, cardId: String): String? {
-        val target = doc.selectFirst("[data-card-id='$cardId']")
-        var node: Element? = target
-        repeat(8) {
-            val rank = node?.attr("data-rank")?.trim()?.uppercase()
-            if (!rank.isNullOrBlank()) return knownRank(rank)
-            node = node?.parent()
-        }
-
-        // Some card detail templates show the catalog rank in a dedicated badge.
-        val badge = doc.selectFirst(".card-show__rank, .card-rank, .card-show__rank-name")
-        return badge?.text()?.trim()?.uppercase()?.let(::knownRank)
-    }
-
-    private fun knownRank(rank: String): String? =
-        rank.takeIf { it in TradePolicy.STANDARD_RANKS || it in TradePolicy.SPECIAL_RANKS }
+    private fun rankForCardInDocument(doc: Document, cardId: String): String? =
+        CatalogRankParser.findRank(doc, cardId)
 
     private fun rememberRank(cardId: String, rank: String): String {
         prefs.edit().putString(RANK_CACHE_PREFIX + cardId, rank).apply()
