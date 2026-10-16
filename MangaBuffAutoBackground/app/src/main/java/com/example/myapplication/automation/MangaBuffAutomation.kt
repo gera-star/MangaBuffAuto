@@ -4987,34 +4987,64 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
-                                    /*
-                                     * IMPORTANT:
-                                     * The Yandex fullscreen close element can be discovered in
-                                     * the injected DOM, but its getBoundingClientRect() coordinates
-                                     * are NOT guaranteed to be coordinates of the parent WebView.
-                                     * The previous test proved this: the DOM returned a point near
-                                     * the bottom of the WebView and the native tap opened the ad's
-                                     * Google Play destination instead of closing the ad.
-                                     *
-                                     * Therefore NEVER dispatch a native tap using the DOM rect here.
-                                     * Use the previously verified fullscreen top-right point.
-                                     */
+                                    var attempt = nativeCloseAttempts + 1;
+                                    var closeElement = null;
+                                    try {
+                                        closeElement = findCloseButton();
+                                    } catch (e) {
+                                        AndroidAds.onStateLog(
+                                            "AUTO_CLOSE_SEARCH_ERROR",
+                                            "attempt=" + attempt +
+                                                " error=" + (e && e.message ? e.message : String(e))
+                                        );
+                                    }
+
+                                    var closeVisible = !!(
+                                        closeElement && isVisibleElement(closeElement)
+                                    );
                                     AndroidAds.onStateLog(
                                         "AUTO_CLOSE_SEARCH",
-                                        "attempt=" + (nativeCloseAttempts + 1) +
-                                            " dom_coordinate_tap=DISABLED source=VERIFIED_FALLBACK"
+                                        "attempt=" + attempt +
+                                            " found=" + (!!closeElement) +
+                                            " visible=" + closeVisible +
+                                            " source=YANDEX_DOM"
                                     );
 
-                                    if (nativeCloseAttempts < 3) {
-                                        nativeCloseAttempts++;
+                                    /*
+                                     * Prefer the actual X element discovered by its stable Yandex
+                                     * SVG path / fullscreen-close attributes. requestNativeCloseTap()
+                                     * translates nested-frame coordinates into the top WebView
+                                     * viewport before sending the native touch.
+                                     */
+                                    if (closeVisible) {
+                                        nativeCloseAttempts = attempt;
+                                        var domTapRequested = requestNativeCloseTap(closeElement);
+                                        if (domTapRequested) {
+                                            nativeCloseRequested = true;
+                                            AndroidAds.onStateLog(
+                                                "CLOSE_NATIVE_REQUESTED",
+                                                "attempt=" + nativeCloseAttempts +
+                                                    " elapsed=25s source=DOM_CLOSE_CONTROL"
+                                            );
+                                            verifyAfterNativeClose();
+                                            return;
+                                        }
 
                                         AndroidAds.onStateLog(
-                                            "AUTO_CLOSE_SEARCH",
-                                            "attempt=" + nativeCloseAttempts +
-                                                " found=false visible=false " +
-                                                "source=VERIFIED_FALLBACK"
+                                            "AUTO_CLOSE_DOM_TAP_UNAVAILABLE",
+                                            "attempt=" + attempt + " fallback=top_right"
                                         );
+                                    }
 
+                                    /*
+                                     * If the X is inside an inaccessible cross-origin frame, use
+                                     * the known top-right fallback. Do not use an un-translated DOM
+                                     * rect: that previously sent a tap into the ad creative.
+                                     */
+                                    if (nativeCloseAttempts < attempt) {
+                                        nativeCloseAttempts = attempt;
+                                    }
+                                    if (nativeCloseAttempts < 3) {
                                         AndroidAds.onStateLog(
                                             "NATIVE_CLOSE_FALLBACK",
                                             "x=" + VERIFIED_CLOSE_FALLBACK_X +
@@ -5033,13 +5063,11 @@ class MangaBuffAutomation(
                                             );
 
                                             nativeCloseRequested = true;
-
                                             AndroidAds.onStateLog(
                                                 "CLOSE_NATIVE_REQUESTED",
                                                 "attempt=" + nativeCloseAttempts +
                                                     " elapsed=25s source=fullscreen_top_right_fallback"
                                             );
-
                                             verifyAfterNativeClose();
                                             return;
                                         } catch (e) {
@@ -5051,11 +5079,6 @@ class MangaBuffAutomation(
                                         }
                                     }
 
-                                    /*
-                                     * Do not hammer the fullscreen overlay. After one verified
-                                     * fallback tap, a later retry is allowed only if the native
-                                     * request itself could not be issued.
-                                     */
                                     if (!nativeCloseRequested) {
                                         nativeCloseRetryTimer = setTimeout(
                                             attemptAutoClose,
