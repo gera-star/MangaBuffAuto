@@ -167,7 +167,7 @@ class TradeAutomation(context: Context) {
                 val match = TRADE_PATH_REGEX.find(href) ?: return@forEach
                 val id = match.groupValues[1]
                 val name = element.selectFirst(".trade__list-name")?.text()?.trim().orEmpty()
-                offersById.putIfAbsent(id, name)
+                if (!offersById.containsKey(id)) offersById[id] = name
             }
             val linkedMaxPage = doc.select(".pagination__button a[href]")
                 .mapNotNull { link -> Regex("[?&]page=(\\d+)").find(link.attr("href"))?.groupValues?.getOrNull(1)?.toIntOrNull() }
@@ -480,7 +480,8 @@ class TradeAutomation(context: Context) {
         form?.select("input[name]")?.forEach { input ->
             val name = input.attr("name")
             if (name.isNotBlank()) {
-                bodyBuilder.add(name, input.attr("value"))
+                val value = if (name == "_token" && csrfToken.isNotBlank()) csrfToken else input.attr("value")
+                bodyBuilder.add(name, value)
                 included.add(name)
             }
         }
@@ -495,7 +496,10 @@ class TradeAutomation(context: Context) {
             val retryBuilder = FormBody.Builder()
             form?.select("input[name]")?.forEach { input ->
                 val name = input.attr("name")
-                if (name.isNotBlank()) retryBuilder.add(name, input.attr("value"))
+                if (name.isNotBlank()) {
+                    val value = if (name == "_token" && csrfToken.isNotBlank()) csrfToken else input.attr("value")
+                    retryBuilder.add(name, value)
+                }
             }
             if (form?.selectFirst("input[name=_token]") == null && csrfToken.isNotBlank()) {
                 retryBuilder.add("_token", csrfToken)
@@ -505,7 +509,10 @@ class TradeAutomation(context: Context) {
         }
 
         val response = result ?: return false
-        if (response.code !in 200..399 || looksLikeLogin(response.body)) return false
+        if (response.code !in 200..399 || looksLikeLogin(response.body)) {
+            addLog("Обмен #$tradeId: сервер вернул HTTP ${response.code} при принятии (${response.url.substringAfter(BASE_URL)}).", true)
+            return false
+        }
         val responseDoc = Jsoup.parse(response.body, response.url)
         val bodyText = responseDoc.text().lowercase()
         val stillHasAcceptButton = responseDoc.selectFirst(".trade__accepted-btn") != null
