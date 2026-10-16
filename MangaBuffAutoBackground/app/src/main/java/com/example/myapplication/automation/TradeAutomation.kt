@@ -60,6 +60,7 @@ class TradeAutomation(context: Context) {
     val activeAccountId: StateFlow<String?> = _activeAccountId.asStateFlow()
 
     @Volatile private var worker: Job? = null
+    @Volatile private var generation: Long = 0L
     @Volatile private var activeAccount: MangaBuffAccount? = null
     @Volatile private var csrfToken: String = ""
 
@@ -91,10 +92,14 @@ class TradeAutomation(context: Context) {
         saveMode(mode)
         saveProfitCoefficient(profitCoefficient.toString())
         addLog("Автообмен включён для аккаунта «${account.username}». Авторизация используется существующая.")
+        val thisGeneration = synchronized(this) {
+            generation += 1L
+            generation
+        }
         worker = scope.launch {
             try {
                 refreshCsrf()
-                while (isActive) {
+                while (isActive && generation == thisGeneration) {
                     scanPendingTrades(account, mode, profitCoefficient)
                     delay(POLL_INTERVAL_MS)
                 }
@@ -103,14 +108,17 @@ class TradeAutomation(context: Context) {
             } catch (e: Exception) {
                 addLog("Цикл автообмена остановлен: ${e.message ?: e.javaClass.simpleName}", true)
             } finally {
-                _isRunning.value = false
-                _activeAccountId.value = null
-                activeAccount = null
+                if (generation == thisGeneration) {
+                    _isRunning.value = false
+                    _activeAccountId.value = null
+                    activeAccount = null
+                }
             }
         }
     }
 
     fun stop() {
+        synchronized(this) { generation += 1L }
         worker?.cancel()
         worker = null
         _isRunning.value = false
@@ -325,8 +333,14 @@ class TradeAutomation(context: Context) {
      * where .manga-cards__item-wrapper exposes data-rank. No visual recognition.
      */
     private fun resolveCatalogRank(cardId: String): String? {
-        val cached = prefs.getString(RANK_CACHE_PREFIX + cardId, null)
-        if (cached != null) return cached.takeIf { it != NO_RANK }
+        val cacheKey = RANK_CACHE_PREFIX + cardId
+        val cached = prefs.getString(cacheKey, null)
+        if (cached != null && cached != NO_RANK) return cached
+        if (cached == NO_RANK) {
+            val timestamp = prefs.getLong(cacheKey + "_time", 0L)
+            if (System.currentTimeMillis() - timestamp < NEGATIVE_RANK_TTL_MS) return null
+            prefs.edit().remove(cacheKey).remove(cacheKey + "_time").apply()
+        }
 
         var mangaId: String? = null
         val detailUrls = listOf("$BASE_URL/cards/$cardId", "$BASE_URL/cards/$cardId/users")
@@ -520,6 +534,7 @@ class TradeAutomation(context: Context) {
         private const val RANK_CACHE_PREFIX = "catalog_rank_"
         private const val NO_RANK = "__unknown__"
         private const val POLL_INTERVAL_MS = 45_000L
+        private const val NEGATIVE_RANK_TTL_MS = 30 * 60 * 1000L
         private const val MAX_OFFERS_PER_SCAN = 8
         private const val MAX_CATALOG_PAGES = 30
         private const val MAX_LOGS = 120
