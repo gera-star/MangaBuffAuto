@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import com.example.myapplication.MainActivity
 import com.example.myapplication.R
 import com.example.myapplication.automation.BackgroundExecutionState
+import com.example.myapplication.automation.AccountExecutionGate
 import com.example.myapplication.automation.MultiAccountAutomationRunner
 import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.data.AccountRepository
@@ -550,6 +551,7 @@ class MangaBuffForegroundService : Service() {
         val job = serviceScope.launch(start = CoroutineStart.LAZY) {
             val currentJob = coroutineContext[Job]
             var hasExecutionPermit = false
+            var exclusiveExecutionPermit: AccountExecutionGate.Permit? = null
             if (currentJob != null) accountExecutionQueue.markQueued(accountId, currentJob)
 
             try {
@@ -571,6 +573,22 @@ class MangaBuffForegroundService : Service() {
                         username = account.username,
                         component = "QUEUE",
                         message = "ACCOUNT_QUEUE_ACQUIRED taskType=${taskType.title}"
+                    )
+                )
+                publishLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "ACCOUNT",
+                        message = "ACCOUNT_EXECUTION_GATE_WAITING accountId=$accountId"
+                    )
+                )
+                publishStatus(accountId, "Ожидание освобождения общего слота...", true, taskType.title, 0f)
+                exclusiveExecutionPermit = AccountExecutionGate.acquire()
+                publishLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "ACCOUNT",
+                        message = "ACCOUNT_EXECUTION_GATE_ACQUIRED accountId=$accountId"
                     )
                 )
                 publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
@@ -688,6 +706,7 @@ class MangaBuffForegroundService : Service() {
                 } finally {
                     if (currentJob != null) accountExecutionQueue.forget(accountId, currentJob)
                     if (hasExecutionPermit) accountExecutionQueue.release()
+                    exclusiveExecutionPermit?.release()
                 }
             }
         }

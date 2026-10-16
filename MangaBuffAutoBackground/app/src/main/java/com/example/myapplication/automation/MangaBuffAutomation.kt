@@ -236,7 +236,10 @@ class MangaBuffAutomation(
     private val accountIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun closeRuntime() {
+        // This HTTP client belongs only to this MangaBuffAutomation/account.
         accountIoScope.coroutineContext[Job]?.cancel()
+        runCatching { httpClient.dispatcher.cancelAll() }
+        runCatching { httpClient.connectionPool.evictAll() }
         stopBackgroundScroll()
         activeReaderSkip = null
         activeReaderMarkRead = null

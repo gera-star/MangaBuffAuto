@@ -11,7 +11,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
@@ -36,7 +35,8 @@ enum class TradeRuleMode(val title: String) {
 data class TradeLogEntry(
     val time: Long = System.currentTimeMillis(),
     val message: String,
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    val accountId: String = ""
 )
 
 /**
@@ -47,13 +47,6 @@ class TradeAutomation(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("mangabuff_trade_mode", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
-
     // Mirrors the browser plugin's serialized MangaBuff queue. The whole request
     // is inside the lock so quick consecutive catalogue lookups cannot overlap.
     private val requestQueueLock = Any()
@@ -61,9 +54,14 @@ class TradeAutomation(context: Context) {
 
     private val _logs = MutableStateFlow<List<TradeLogEntry>>(emptyList())
     val logs: StateFlow<List<TradeLogEntry>> = _logs.asStateFlow()
+    private val logsLock = Any()
+    private val logsByAccount = mutableMapOf<String, List<TradeLogEntry>>()
+    @Volatile private var visibleLogAccountId: String? = null
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
+    private val _waitingForExecution = MutableStateFlow(false)
+    val waitingForExecution: StateFlow<Boolean> = _waitingForExecution.asStateFlow()
 
     private val _activeAccountId = MutableStateFlow<String?>(null)
     val activeAccountId: StateFlow<String?> = _activeAccountId.asStateFlow()
@@ -78,35 +76,69 @@ class TradeAutomation(context: Context) {
         @Volatile var autoAccept: Boolean = false
         @Volatile var cancelled: Boolean = false
         val activeCall = java.util.concurrent.atomic.AtomicReference<Call?>(null)
-        fun cancel() { cancelled = true; activeCall.get()?.cancel() }
+        val client: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(25, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+
+        fun cancel() {
+            cancelled = true
+            activeCall.getAndSet(null)?.cancel()
+            runCatching { client.dispatcher.cancelAll() }
+            runCatching { client.connectionPool.evictAll() }
+        }
     }
 
-    fun savedMode(): TradeRuleMode =
-        runCatching { TradeRuleMode.valueOf(prefs.getString(KEY_MODE, TradeRuleMode.STRICT.name)!!) }
-            .getOrDefault(TradeRuleMode.STRICT)
+    private fun scopedKey(base: String, accountId: String): String = "$base::$accountId"
 
-    fun saveMode(mode: TradeRuleMode) {
-        prefs.edit().putString(KEY_MODE, mode.name).apply()
+    fun selectLogAccount(accountId: String) {
+        synchronized(logsLock) {
+            visibleLogAccountId = accountId
+            _logs.value = logsByAccount[accountId].orEmpty()
+        }
     }
 
-    fun savedProfitCoefficient(): String =
-        prefs.getString(KEY_PROFIT, "1.5") ?: "1.5"
+    fun savedMode(accountId: String): TradeRuleMode =
+        runCatching {
+            TradeRuleMode.valueOf(prefs.getString(scopedKey(KEY_MODE, accountId), TradeRuleMode.STRICT.name)!!)
+        }.getOrDefault(TradeRuleMode.STRICT)
 
-    fun saveProfitCoefficient(value: String) {
-        prefs.edit().putString(KEY_PROFIT, value).apply()
+    fun saveMode(accountId: String, mode: TradeRuleMode) {
+        prefs.edit().putString(scopedKey(KEY_MODE, accountId), mode.name).apply()
     }
 
-    fun savedAutoAcceptEnabled(): Boolean = prefs.getBoolean(KEY_AUTO_ACCEPT, false)
-    fun setAutoAcceptEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_AUTO_ACCEPT, enabled).apply()
-        activeSession?.let { it.autoAccept = enabled }
-        addLog(if (enabled) "Автопринятие включено пользователем." else "Автопринятие выключено: новые предложения только анализируются.")
+    fun savedProfitCoefficient(accountId: String): String =
+        prefs.getString(scopedKey(KEY_PROFIT, accountId), "1.5") ?: "1.5"
+
+    fun saveProfitCoefficient(accountId: String, value: String) {
+        prefs.edit().putString(scopedKey(KEY_PROFIT, accountId), value).apply()
     }
-    fun savedSpecialInstanceWeights(): String = prefs.getString(KEY_SPECIAL_INSTANCE_WEIGHTS, "") ?: ""
-    fun saveSpecialInstanceWeights(value: String) { prefs.edit().putString(KEY_SPECIAL_INSTANCE_WEIGHTS, value.take(MAX_POLICY_TEXT_LENGTH)).apply() }
-    private fun specialInstanceWeights(): Map<String, Int> {
+
+    fun savedAutoAcceptEnabled(accountId: String): Boolean =
+        prefs.getBoolean(scopedKey(KEY_AUTO_ACCEPT, accountId), false)
+
+    fun setAutoAcceptEnabled(accountId: String, enabled: Boolean) {
+        prefs.edit().putBoolean(scopedKey(KEY_AUTO_ACCEPT, accountId), enabled).apply()
+        activeSession?.takeIf { it.account.id == accountId }?.let { it.autoAccept = enabled }
+        addLog(
+            if (enabled) "Автопринятие включено пользователем."
+            else "Автопринятие выключено: новые предложения только анализируются.",
+            accountId = accountId
+        )
+    }
+
+    fun savedSpecialInstanceWeights(accountId: String): String =
+        prefs.getString(scopedKey(KEY_SPECIAL_INSTANCE_WEIGHTS, accountId), "") ?: ""
+
+    fun saveSpecialInstanceWeights(accountId: String, value: String) {
+        prefs.edit().putString(scopedKey(KEY_SPECIAL_INSTANCE_WEIGHTS, accountId), value.take(MAX_POLICY_TEXT_LENGTH)).apply()
+    }
+
+    private fun specialInstanceWeights(accountId: String): Map<String, Int> {
         val result = linkedMapOf<String, Int>()
-        savedSpecialInstanceWeights().lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { line ->
+        savedSpecialInstanceWeights(accountId).lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { line ->
             val sep = line.indexOf('=')
             if (sep <= 0) return@forEach
             val id = line.substring(0, sep).trim()
@@ -115,36 +147,60 @@ class TradeAutomation(context: Context) {
         }
         return result
     }
+
     fun start(account: MangaBuffAccount, mode: TradeRuleMode, profitCoefficient: Double) {
         stop()
         if (account.getSafeCookiesJson().isBlank()) {
-            addLog("У аккаунта нет сохранённых Cookie. Авторизуй аккаунт обычным способом.", true)
+            addLog("У аккаунта нет сохранённых Cookie. Авторизуй аккаунт обычным способом.", true, account.id)
             return
         }
         val coefficient = if (profitCoefficient.isFinite()) profitCoefficient.coerceIn(1.0, 10.0) else 1.5
-        val session = TradeSession(account).apply { autoAccept = savedAutoAcceptEnabled() }
+        val session = TradeSession(account).apply { autoAccept = savedAutoAcceptEnabled(account.id) }
         activeSession = session
         _activeAccountId.value = account.id
         _isRunning.value = true
-        saveMode(mode)
-        saveProfitCoefficient(coefficient.toString())
-        addLog("Мониторинг запущен для «${account.username}». " +
-            if (session.autoAccept) "Автопринятие включено." else "Режим анализа — запрос принятия не отправляется.")
+        _waitingForExecution.value = true
+        saveMode(account.id, mode)
+        saveProfitCoefficient(account.id, coefficient.toString())
+        selectLogAccount(account.id)
+        addLog("Мониторинг запущен для «${account.username}».", accountId = account.id)
         val runId = synchronized(this) { generation += 1L; generation }
         worker = scope.launch {
+            var csrfInitialized = false
             try {
-                refreshCsrf(session)
                 while (isActive && canRun(session, runId)) {
-                    scanPendingTrades(session, mode, coefficient, runId)
+                    var executionPermit: AccountExecutionGate.Permit? = null
+                    try {
+                        _waitingForExecution.value = true
+                        executionPermit = AccountExecutionGate.acquire()
+                        if (!canRun(session, runId)) return@launch
+                        _waitingForExecution.value = false
+                        addLog("Эксклюзивный слот получен; проверяю предложения.", accountId = account.id)
+                        if (!csrfInitialized || session.csrfToken.isBlank()) {
+                            refreshCsrf(session)
+                            csrfInitialized = true
+                        }
+                        if (!canRun(session, runId)) return@launch
+                        scanPendingTrades(session, mode, coefficient, runId)
+                    } finally {
+                        executionPermit?.release()
+                        if (canRun(session, runId)) _waitingForExecution.value = false
+                    }
                     if (canRun(session, runId)) delay(POLL_INTERVAL_MS)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!session.cancelled) addLog("Цикл автообмена остановлен: ${e.message ?: e.javaClass.simpleName}", true)
+                if (!session.cancelled) addLog(
+                    "Цикл автообмена остановлен: ${e.message ?: e.javaClass.simpleName}",
+                    true,
+                    account.id
+                )
             } finally {
+                session.cancel()
                 if (generation == runId) {
                     _isRunning.value = false
+                    _waitingForExecution.value = false
                     _activeAccountId.value = null
                     if (activeSession === session) activeSession = null
                 }
@@ -161,12 +217,25 @@ class TradeAutomation(context: Context) {
         worker?.cancel()
         worker = null
         _isRunning.value = false
+        _waitingForExecution.value = false
         _activeAccountId.value = null
     }
-    fun close() { stop(); scope.coroutineContext[Job]?.cancel() }
-    private fun addLog(message: String, isError: Boolean = false) {
-        _logs.update { old -> (old + TradeLogEntry(message = message, isError = isError)).takeLast(MAX_LOGS) }
+
+    fun close() {
+        stop()
+        scope.coroutineContext[Job]?.cancel()
     }
+
+    private fun addLog(message: String, isError: Boolean = false, accountId: String? = null) {
+        val ownerId = accountId ?: activeSession?.account?.id ?: visibleLogAccountId.orEmpty()
+        synchronized(logsLock) {
+            val next = (logsByAccount[ownerId].orEmpty() +
+                TradeLogEntry(message = message, isError = isError, accountId = ownerId)).takeLast(MAX_LOGS)
+            logsByAccount[ownerId] = next
+            if (visibleLogAccountId == ownerId) _logs.value = next
+        }
+    }
+
     private suspend fun scanPendingTrades(
         session: TradeSession, mode: TradeRuleMode, coefficient: Double, expectedGeneration: Long
     ) {
@@ -177,11 +246,11 @@ class TradeAutomation(context: Context) {
             val listUrl = if (page == 1) "$BASE_URL/trades" else "$BASE_URL/trades?page=$page"
             val html = requestHtml(session, listUrl)
             if (html == null) {
-                if (canRun(session, expectedGeneration)) addLog("Не удалось загрузить список предложений (страница $page). Проверю позже.", true)
+                if (canRun(session, expectedGeneration)) addLog("Не удалось загрузить список предложений (страница $page). Проверю позже.", true, session.account.id)
                 break
             }
             if (looksLikeLogin(html)) {
-                addLog("Сессия «${session.account.username}» не авторизована или истекла. Проверь её в обычном меню.", true)
+                addLog("Сессия «${session.account.username}» не авторизована или истекла. Проверь её в обычном меню.", true, session.account.id)
                 return
             }
             val doc = Jsoup.parse(html, listUrl)
@@ -196,48 +265,49 @@ class TradeAutomation(context: Context) {
             page++
         }
         if (!canRun(session, expectedGeneration)) return
-        if (offers.isEmpty()) { addLog("Новых предложений на странице не найдено."); return }
+        if (offers.isEmpty()) { addLog("Новых предложений на странице не найдено.", accountId = session.account.id); return }
         for ((tradeId, sender) in offers) {
             if (!canRun(session, expectedGeneration) || !currentCoroutineContext().isActive) return
-            if (isProcessed(tradeId)) continue
+            val sessionTradeKey = "${session.account.id}:$tradeId"
+            if (isProcessed(session.account.id, tradeId)) continue
             val detailUrl = "$BASE_URL/trades/$tradeId"
             val html = requestHtml(session, detailUrl)
             if (html == null) {
-                if (canRun(session, expectedGeneration)) addLog("Обмен #$tradeId: не удалось загрузить детали; проверю позже.", true)
+                if (canRun(session, expectedGeneration)) addLog("Обмен #$tradeId: не удалось загрузить детали; проверю позже.", true, session.account.id)
                 continue
             }
             val doc = Jsoup.parse(html, detailUrl)
             if (doc.selectFirst(".trade__accepted-btn") == null) {
-                if (skippedLogged.add(tradeId)) addLog("Обмен #$tradeId: кнопка принятия не найдена; действие пропущено.")
+                if (skippedLogged.add(sessionTradeKey)) addLog("Обмен #$tradeId: кнопка принятия не найдена; действие пропущено.", accountId = session.account.id)
                 continue
             }
             val result = analyzeTrade(session, doc, tradeId, mode, coefficient)
             if (!canRun(session, expectedGeneration) || !currentCoroutineContext().isActive) return
             if (!result.accept) {
-                if (skippedLogged.add(tradeId)) addLog("Обмен #$tradeId ${sender}: пропуск — ${result.reason}")
-                suitableLogged.remove(tradeId)
+                if (skippedLogged.add(sessionTradeKey)) addLog("Обмен #$tradeId ${sender}: пропуск — ${result.reason}", accountId = session.account.id)
+                suitableLogged.remove(sessionTradeKey)
                 continue
             }
-            skippedLogged.remove(tradeId)
+            skippedLogged.remove(sessionTradeKey)
             if (!session.autoAccept) {
-                if (suitableLogged.add(tradeId)) addLog("Обмен #$tradeId ${sender}: подходит, получаешь ${result.receivedCount} карты. Только анализ, запрос не отправлялся.")
+                if (suitableLogged.add(sessionTradeKey)) addLog("Обмен #$tradeId ${sender}: подходит, получаешь ${result.receivedCount} карты. Только анализ, запрос не отправлялся.", accountId = session.account.id)
                 continue
             }
-            suitableLogged.remove(tradeId)
+            suitableLogged.remove(sessionTradeKey)
             if (!canRun(session, expectedGeneration) || !currentCoroutineContext().isActive) return
             if (session.csrfToken.isBlank()) refreshCsrf(session)
             if (session.cancelled || !canRun(session, expectedGeneration)) return
             if (session.csrfToken.isBlank()) {
-                if (suitableLogged.add(tradeId)) addLog("Обмен #$tradeId: CSRF-токен отсутствует, принятие не отправлено.", true)
+                if (suitableLogged.add(sessionTradeKey)) addLog("Обмен #$tradeId: CSRF-токен отсутствует, принятие не отправлено.", true, session.account.id)
                 continue
             }
-            markProcessed(tradeId) // avoid replay if response is lost
-            addLog("Обмен #$tradeId: условия подходят. Отправляю одну попытку принятия.")
+            markProcessed(session.account.id, tradeId) // avoid replay only for this account
+            addLog("Обмен #$tradeId: условия подходят. Отправляю одну попытку принятия.", accountId = session.account.id)
             when (acceptTrade(session, detailUrl, tradeId)) {
-                AcceptResult.ACCEPTED -> addLog("Обмен #$tradeId: сервер подтвердил принятие.")
-                AcceptResult.REJECTED -> addLog("Обмен #$tradeId: сервер отклонил запрос. Повторного POST не будет; проверь вручную.", true)
-                AcceptResult.UNKNOWN -> addLog("Обмен #$tradeId: ответ не распознан. Повторный POST запрещён; проверь статус вручную.", true)
-                AcceptResult.CANCELLED -> addLog("Обмен #$tradeId: запрос прерван остановкой; проверь статус вручную.", true)
+                AcceptResult.ACCEPTED -> addLog("Обмен #$tradeId: сервер подтвердил принятие.", accountId = session.account.id)
+                AcceptResult.REJECTED -> addLog("Обмен #$tradeId: сервер отклонил запрос. Повторного POST не будет; проверь вручную.", true, session.account.id)
+                AcceptResult.UNKNOWN -> addLog("Обмен #$tradeId: ответ не распознан. Повторный POST запрещён; проверь статус вручную.", true, session.account.id)
+                AcceptResult.CANCELLED -> addLog("Обмен #$tradeId: запрос прерван остановкой; проверь статус вручную.", true, session.account.id)
             }
         }
     }
@@ -286,7 +356,7 @@ class TradeAutomation(context: Context) {
             TradeValueCard(r, c.catalogId, c.instanceId)
         }
         val reason = TradePolicy.rejectionReason(TradeValueCard(rank, g.catalogId, g.instanceId),
-            receives, mode, coefficient, specialInstanceWeights())
+            receives, mode, coefficient, specialInstanceWeights(session.account.id))
         return if (reason == null) TradeAnalysis(true, "подходит", receive.size) else TradeAnalysis(false, reason)
     }
     private fun parseTradeCard(session: TradeSession, element: Element): TradeCard {
@@ -379,7 +449,7 @@ class TradeAutomation(context: Context) {
         if (session.csrfToken.isBlank()) refreshCsrf(session)
         if (session.cancelled) return AcceptResult.CANCELLED
         if (session.csrfToken.isBlank()) {
-            addLog("Обмен #$tradeId: CSRF-токен не получен; запрос не отправлен.", true)
+            addLog("Обмен #$tradeId: CSRF-токен не получен; запрос не отправлен.", true, session.account.id)
             return AcceptResult.REJECTED
         }
         val response = request(session, "$BASE_URL/trades/$tradeId/accept", "POST", ByteArray(0).toRequestBody(null),
@@ -387,7 +457,7 @@ class TradeAutomation(context: Context) {
             ?: return if (session.cancelled) AcceptResult.CANCELLED else AcceptResult.UNKNOWN
         if (session.cancelled) return AcceptResult.CANCELLED
         if (response.code !in 200..299 || looksLikeLogin(response.body)) {
-            addLog("Обмен #$tradeId: HTTP ${response.code}; повторный POST отключён.", true)
+            addLog("Обмен #$tradeId: HTTP ${response.code}; повторный POST отключён.", true, session.account.id)
             return AcceptResult.REJECTED
         }
         val json = runCatching { JSONObject(response.body) }.getOrNull() ?: return AcceptResult.UNKNOWN
@@ -438,7 +508,7 @@ class TradeAutomation(context: Context) {
                 builder.get()
             }
 
-            val call = client.newCall(builder.build())
+            val call = session.client.newCall(builder.build())
             session.activeCall.set(call)
             try {
                 // stop() can happen while waiting for a request slot.
@@ -489,15 +559,16 @@ class TradeAutomation(context: Context) {
             doc.location().contains("/login")
     }
 
-    private fun isProcessed(tradeId: String): Boolean =
-        prefs.getStringSet(KEY_PROCESSED, emptySet())?.contains(tradeId) == true
+    private fun isProcessed(accountId: String, tradeId: String): Boolean =
+        prefs.getStringSet(scopedKey(KEY_PROCESSED, accountId), emptySet())?.contains(tradeId) == true
 
-    private fun markProcessed(tradeId: String) {
-        val copy = prefs.getStringSet(KEY_PROCESSED, emptySet())?.toMutableSet() ?: mutableSetOf()
+    private fun markProcessed(accountId: String, tradeId: String) {
+        val key = scopedKey(KEY_PROCESSED, accountId)
+        val copy = prefs.getStringSet(key, emptySet())?.toMutableSet() ?: mutableSetOf()
         copy.add(tradeId)
-        // Keep a bounded set so the preference doesn't grow indefinitely.
+        // Keep the at-most-once marker private to this account.
         val bounded = copy.toList().takeLast(MAX_PROCESSED_IDS).toSet()
-        prefs.edit().putStringSet(KEY_PROCESSED, bounded).apply()
+        prefs.edit().putStringSet(key, bounded).apply()
     }
 
     companion object {

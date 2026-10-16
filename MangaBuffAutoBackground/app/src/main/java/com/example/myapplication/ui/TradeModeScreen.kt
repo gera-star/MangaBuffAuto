@@ -83,6 +83,7 @@ fun TradeModeScreen(
     BackHandler(enabled = true, onBack = onBack)
     val accounts by viewModel.accounts.collectAsState()
     val isRunning by engine.isRunning.collectAsState()
+    val waitingForExecution by engine.waitingForExecution.collectAsState()
     val activeAccountId by engine.activeAccountId.collectAsState()
     val logEntries by engine.logs.collectAsState()
     val context = LocalContext.current
@@ -95,16 +96,26 @@ fun TradeModeScreen(
         )
     }
     var accountMenuExpanded by remember { mutableStateOf(false) }
-    var ruleMode by remember { mutableStateOf(engine.savedMode()) }
-    var coefficientText by remember { mutableStateOf(engine.savedProfitCoefficient()) }
-    var autoAcceptEnabled by remember { mutableStateOf(engine.savedAutoAcceptEnabled()) }
-    var specialWeightsText by remember { mutableStateOf(engine.savedSpecialInstanceWeights()) }
+    var ruleMode by remember { mutableStateOf(engine.savedMode(selectedAccountId)) }
+    var coefficientText by remember { mutableStateOf(engine.savedProfitCoefficient(selectedAccountId)) }
+    var autoAcceptEnabled by remember { mutableStateOf(engine.savedAutoAcceptEnabled(selectedAccountId)) }
+    var specialWeightsText by remember { mutableStateOf(engine.savedSpecialInstanceWeights(selectedAccountId)) }
 
     LaunchedEffect(activeAccountId, accounts) {
         if (!activeAccountId.isNullOrBlank()) {
             selectedAccountId = activeAccountId.orEmpty()
         } else if (selectedAccountId.isBlank() || accounts.none { it.id == selectedAccountId }) {
             selectedAccountId = accounts.firstOrNull { it.getSafeCookiesJson().isNotBlank() }?.id.orEmpty()
+        }
+    }
+
+    LaunchedEffect(selectedAccountId) {
+        engine.selectLogAccount(selectedAccountId)
+        if (selectedAccountId.isNotBlank()) {
+            ruleMode = engine.savedMode(selectedAccountId)
+            coefficientText = engine.savedProfitCoefficient(selectedAccountId)
+            autoAcceptEnabled = engine.savedAutoAcceptEnabled(selectedAccountId)
+            specialWeightsText = engine.savedSpecialInstanceWeights(selectedAccountId)
         }
     }
 
@@ -157,12 +168,14 @@ fun TradeModeScreen(
                     Text(
                         when {
                             !isRunning -> "ОСТАНОВЛЕН"
+                            waitingForExecution -> "ОЖИДАНИЕ"
                             autoAcceptEnabled -> "АВТОПРИЁМ"
                             else -> "АНАЛИЗ"
                         },
                         modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
                         color = when {
                             !isRunning -> Color(0xFFD0C7D8)
+                            waitingForExecution -> Color(0xFF62E5FF)
                             autoAcceptEnabled -> Color(0xFFFFC27D)
                             else -> Color(0xFF7DF0B1)
                         },
@@ -254,7 +267,7 @@ fun TradeModeScreen(
                                 color = if (autoAcceptEnabled) Color(0xFFFFC27D) else Color(0xFFABB4C6), fontSize = 11.sp)
                         }
                         Switch(checked = autoAcceptEnabled, onCheckedChange = { enabled ->
-                            autoAcceptEnabled = enabled; engine.setAutoAcceptEnabled(enabled)
+                            autoAcceptEnabled = enabled; engine.setAutoAcceptEnabled(selectedAccountId, enabled)
                         })
                     }
                     HorizontalDivider(color = Color(0xFF343A47))
@@ -283,7 +296,7 @@ fun TradeModeScreen(
                     )
                     OutlinedTextField(
                         value = specialWeightsText,
-                        onValueChange = { specialWeightsText = it.take(8000); engine.saveSpecialInstanceWeights(specialWeightsText) },
+                        onValueChange = { specialWeightsText = it.take(8000); engine.saveSpecialInstanceWeights(selectedAccountId, specialWeightsText) },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Веса спец. карт") },
                         placeholder = { Text("card_user_id=вес, например 690490862=6") },
@@ -306,26 +319,26 @@ fun TradeModeScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         if (ruleMode == TradeRuleMode.STRICT) {
                             Button(
-                                onClick = { ruleMode = TradeRuleMode.STRICT; engine.saveMode(ruleMode) },
+                                onClick = { ruleMode = TradeRuleMode.STRICT; engine.saveMode(selectedAccountId, ruleMode) },
                                 enabled = !isRunning,
                                 modifier = Modifier.weight(1f)
                             ) { Text("Строгий", fontSize = 12.sp) }
                         } else {
                             OutlinedButton(
-                                onClick = { ruleMode = TradeRuleMode.STRICT; engine.saveMode(ruleMode) },
+                                onClick = { ruleMode = TradeRuleMode.STRICT; engine.saveMode(selectedAccountId, ruleMode) },
                                 enabled = !isRunning,
                                 modifier = Modifier.weight(1f)
                             ) { Text("Строгий", fontSize = 12.sp) }
                         }
                         if (ruleMode == TradeRuleMode.VALUE) {
                             Button(
-                                onClick = { ruleMode = TradeRuleMode.VALUE; engine.saveMode(ruleMode) },
+                                onClick = { ruleMode = TradeRuleMode.VALUE; engine.saveMode(selectedAccountId, ruleMode) },
                                 enabled = !isRunning,
                                 modifier = Modifier.weight(1f)
                             ) { Text("По сумме", fontSize = 12.sp) }
                         } else {
                             OutlinedButton(
-                                onClick = { ruleMode = TradeRuleMode.VALUE; engine.saveMode(ruleMode) },
+                                onClick = { ruleMode = TradeRuleMode.VALUE; engine.saveMode(selectedAccountId, ruleMode) },
                                 enabled = !isRunning,
                                 modifier = Modifier.weight(1f)
                             ) { Text("По сумме", fontSize = 12.sp) }
@@ -344,7 +357,7 @@ fun TradeModeScreen(
                                 value = coefficientText,
                                 onValueChange = {
                                     coefficientText = it.filter { char -> char.isDigit() || char == '.' || char == ',' }.replace(',', '.').take(4)
-                                    engine.saveProfitCoefficient(coefficientText)
+                                    engine.saveProfitCoefficient(selectedAccountId, coefficientText)
                                 },
                                 modifier = Modifier.width(92.dp),
                                 enabled = !isRunning,
