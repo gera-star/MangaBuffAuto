@@ -4,6 +4,7 @@ import java.util.UUID
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 data class DailyStats(
     val day: String = "",
@@ -18,7 +19,10 @@ data class DailyStats(
     val comments: Int = 0
 )
 
-fun currentStatsDay(): String = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+fun currentStatsDay(): String = SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+    // MangaBuff daily progress rolls over at Moscow midnight, independent of device timezone.
+    timeZone = TimeZone.getTimeZone("Europe/Moscow")
+}.format(Date())
 
 data class MangaBuffAccount(
     val id: String = UUID.randomUUID().toString(),
