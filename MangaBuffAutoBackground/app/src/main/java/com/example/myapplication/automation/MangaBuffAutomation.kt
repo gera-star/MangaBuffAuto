@@ -5044,7 +5044,7 @@ class MangaBuffAutomation(
                                     if (nativeCloseAttempts < attempt) {
                                         nativeCloseAttempts = attempt;
                                     }
-                                    if (nativeCloseAttempts < 3) {
+                                    if (!nativeCloseRequested) {
                                         AndroidAds.onStateLog(
                                             "NATIVE_CLOSE_FALLBACK",
                                             "x=" + VERIFIED_CLOSE_FALLBACK_X +
