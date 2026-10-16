@@ -6913,7 +6913,7 @@ class MangaBuffAutomation(
                     log(account.username, "READ: CHAPTER_READER_FINISHED elapsed=" + elapsedMs + "ms")
                     log(account.username, "READ: CHAPTER_END_REACHED chapter=" + number)
                     log(account.username, "READER: CHAPTER_CONFIRMATION source=" + confirmation)
-                    log(account.username, "READER: COMPLETION_ACCEPTED chapterId=" + chapterId)
+                    log(account.username, "READER: CHAPTER_COMPLETION_RECORDED chapterId=" + chapterId)
 
                     /*
                      * MangaBuff uses ccl=2 in the tested flow. The first chapter
