@@ -4942,10 +4942,21 @@ class MangaBuffAutomation(
                                         if (!finished) verifyReward(0);
 
                                         /*
-                                         * If the fallback tap did not close the fullscreen ad
-                                         * (e.g. the control appeared a little later), let the
-                                         * accessibility path attempt the actual reward control.
+                                         * A dispatched tap is not proof that the fullscreen
+                                         * overlay closed. Retry the same verified close point
+                                         * a limited number of times before trying accessibility.
                                          */
+                                        if (!finished && nativeCloseAttempts < 3) {
+                                            nativeCloseRequested = false;
+                                            AndroidAds.onStateLog(
+                                                "AUTO_CLOSE_RETRY",
+                                                "nextAttempt=" + (nativeCloseAttempts + 1) +
+                                                    " reason=reward_not_confirmed"
+                                            );
+                                            attemptAutoClose();
+                                            return;
+                                        }
+
                                         if (
                                             !finished &&
                                             !window.__mbAdsRewardFallbackStarted
@@ -4953,18 +4964,18 @@ class MangaBuffAutomation(
                                             window.__mbAdsRewardFallbackStarted = true;
                                             AndroidAds.onStateLog(
                                                 "AD_REWARD_FALLBACK",
-                                                "verified_top_right_tap_did_not_confirm_reward"
+                                                "close_retries_exhausted_reward_not_confirmed"
                                             );
                                             requestRewardClaim();
                                         }
-                                    }, 1200);
+                                    }, 1500);
                                 }
 
                                 function attemptAutoClose() {
                                     if (
                                         finished ||
                                         nativeCloseRequested ||
-                                        nativeCloseAttempts >= 2
+                                        nativeCloseAttempts >= 3
                                     ) {
                                         return;
                                     }
@@ -4987,8 +4998,7 @@ class MangaBuffAutomation(
                                             " dom_coordinate_tap=DISABLED source=VERIFIED_FALLBACK"
                                     );
 
-                                    if (!verifiedFallbackRequested) {
-                                        verifiedFallbackRequested = true;
+                                    if (nativeCloseAttempts < 3) {
                                         nativeCloseAttempts++;
 
                                         AndroidAds.onStateLog(
@@ -5019,7 +5029,8 @@ class MangaBuffAutomation(
 
                                             AndroidAds.onStateLog(
                                                 "CLOSE_NATIVE_REQUESTED",
-                                                "elapsed=32s source=fullscreen_top_right_fallback"
+                                                "attempt=" + nativeCloseAttempts +
+                                                    " elapsed=25s source=fullscreen_top_right_fallback"
                                             );
 
                                             verifyAfterNativeClose();
@@ -5089,12 +5100,12 @@ class MangaBuffAutomation(
                                      * exposed to page JavaScript.
                                      */
                                     var adStartedAt = Date.now();
-                                    var ownWatchDurationMs = 32000;
+                                    var ownWatchDurationMs = 25000;
                                     var lastSecondLogged = -1;
 
                                     AndroidAds.onStateLog(
                                         "OUR_TIMER_STARTED",
-                                        "duration=32s"
+                                        "duration=25s"
                                     );
 
                                     watchTimer = setInterval(function() {
