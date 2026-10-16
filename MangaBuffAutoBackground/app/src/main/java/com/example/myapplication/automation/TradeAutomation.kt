@@ -61,6 +61,7 @@ class TradeAutomation(context: Context) {
 
     @Volatile private var worker: Job? = null
     @Volatile private var generation: Long = 0L
+    private val skippedLogged = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     @Volatile private var activeAccount: MangaBuffAccount? = null
     @Volatile private var csrfToken: String = ""
 
@@ -183,10 +184,12 @@ class TradeAutomation(context: Context) {
 
             val analysis = analyzeTrade(doc, tradeId, mode, coefficient)
             if (!analysis.accept) {
-                addLog("Обмен #$tradeId ${sender.ifBlank { "" }}: пропуск — ${analysis.reason}")
-                markProcessed(tradeId)
+                if (skippedLogged.add(tradeId)) {
+                    addLog("Обмен #$tradeId ${sender.ifBlank { "" }}: пропуск — ${analysis.reason}")
+                }
                 continue
             }
+            skippedLogged.remove(tradeId)
 
             addLog("Обмен #$tradeId: условия подходят (${analysis.receivedCount} карт получаем). Пробую принять.")
             val accepted = acceptTrade(doc, detailUrl, tradeId)
@@ -350,7 +353,7 @@ class TradeAutomation(context: Context) {
             val direct = rankForCardInDocument(doc, cardId)
             if (direct != null) return rememberRank(cardId, direct)
 
-            val mangaHref = doc.select("a[href*=/manga/]").firstOrNull()?.attr("href").orEmpty()
+            val mangaHref = doc.select("a[href*="/manga/"]").firstOrNull()?.attr("href").orEmpty()
             mangaId = MANGA_PATH_REGEX.find(mangaHref)?.groupValues?.getOrNull(1)
                 ?: doc.selectFirst("[data-manga-id]")?.attr("data-manga-id")
             if (mangaId != null) break
@@ -510,7 +513,7 @@ class TradeAutomation(context: Context) {
 
     private fun looksLikeLogin(docOrHtml: String): Boolean {
         val doc = Jsoup.parse(docOrHtml, BASE_URL)
-        return doc.selectFirst("form[action*=/login], input[name=email], input[name=password]") != null ||
+        return doc.selectFirst("form[action*="/login"], input[name="email"], input[name="password"]") != null ||
             doc.title().contains("Войти", ignoreCase = true) ||
             doc.location().contains("/login")
     }
