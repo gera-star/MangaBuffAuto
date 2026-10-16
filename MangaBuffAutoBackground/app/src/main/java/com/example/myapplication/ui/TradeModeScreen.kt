@@ -1,5 +1,6 @@
 package com.example.myapplication.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -68,6 +69,7 @@ fun TradeModeScreen(
     engine: TradeAutomation,
     onBack: () -> Unit
 ) {
+    BackHandler(enabled = true, onBack = onBack)
     val accounts by viewModel.accounts.collectAsState()
     val isRunning by engine.isRunning.collectAsState()
     val activeAccountId by engine.activeAccountId.collectAsState()
