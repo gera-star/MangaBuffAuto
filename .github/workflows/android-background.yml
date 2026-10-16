@@ -42,7 +42,7 @@ jobs:
           yes | sdkmanager --licenses
 
       - name: Install compile SDK
-        run: sdkmanager --install "platforms;android-37" "platform-tools"
+        run: sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
 
       - name: Run unit tests and assemble debug APK
         working-directory: MangaBuffAutoBackground
