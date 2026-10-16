@@ -77,6 +77,7 @@ class TradeAutomation(context: Context) {
     @Volatile private var activeSession: TradeSession? = null
     private class TradeSession(val account: MangaBuffAccount) {
         @Volatile var csrfToken: String = account.getSafeCsrfToken()
+        @Volatile var ownUserId: String? = null
         @Volatile var autoAccept: Boolean = false
         @Volatile var cancelled: Boolean = false
         val activeCall = java.util.concurrent.atomic.AtomicReference<Call?>(null)
@@ -437,7 +438,9 @@ class TradeAutomation(context: Context) {
         val receive = receiveBlock!!.select("a.trade__main-item")
         if (give.size != 1) return TradeAnalysis(false, "нужно отдавать ровно одну карту, найдено: ${give.size}")
         if (receive.size < 2) return TradeAnalysis(false, "получается меньше двух карт")
-        val offered = give.map { parseTradeCard(session, it) }
+        // The side labeled "you give" belongs to the logged-in account. If the card
+        // element omits an owner link, use the current profile ID learned from the site header.
+        val offered = give.map { parseTradeCard(session, it, session.ownUserId) }
         val incoming = receive.map { parseTradeCard(session, it) }
         for (c in offered) {
             if (c.catalogId.isBlank()) return TradeAnalysis(false, "не найден catalog ID отдаваемой карты")
@@ -457,7 +460,11 @@ class TradeAutomation(context: Context) {
             receives, mode, coefficient, specialInstanceWeights(session.account.id))
         return if (reason == null) TradeAnalysis(true, "подходит", receive.size) else TradeAnalysis(false, reason)
     }
-    private fun parseTradeCard(session: TradeSession, element: Element): TradeCard {
+    private fun parseTradeCard(
+        session: TradeSession,
+        element: Element,
+        fallbackOwnerUserId: String? = null
+    ): TradeCard {
         val href = element.attr("href")
         val catalogId = element.attr("data-card-id").ifBlank { CARD_PATH_REGEX.find(href)?.groupValues?.getOrNull(1).orEmpty() }
         val ownerHref = element.selectFirst("a.card-show__owner[href*='card_user_id='], a[href*='card_user_id=']")?.attr("href").orEmpty()
@@ -470,6 +477,7 @@ class TradeAutomation(context: Context) {
         val ownerUserId = USER_PROFILE_REGEX.find(ownerProfileHref)?.groupValues?.getOrNull(1)
             ?: element.attr("data-owner-id").takeIf { it.isNotBlank() && it.all(Char::isDigit) }
             ?: element.attr("data-user-id").takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+            ?: fallbackOwnerUserId?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
         val lock = element.selectFirst(".lock-card-btn, .card-actions__btn--lock")
         val icon = lock?.selectFirst("i")
         val title = lock?.attr("title").orEmpty().ifBlank { lock?.attr("aria-label").orEmpty() }
@@ -498,16 +506,17 @@ class TradeAutomation(context: Context) {
         if (cached != null && cached != NO_RANK) return cached
         if (cached == NO_RANK) {
             if (System.currentTimeMillis() - prefs.getLong(key + "_time", 0L) < NEGATIVE_RANK_TTL_MS) {
-                if (!ownerUserId.isNullOrBlank()) {
+                val ownerAlreadyChecked = !ownerUserId.isNullOrBlank() &&
+                    prefs.getString(key + "_owner_checked", null) == ownerUserId
+                if (!ownerUserId.isNullOrBlank() && !ownerAlreadyChecked) {
                     resolveRankFromOwnerInventory(session, ownerUserId, cardId)?.let {
                         return rememberRank(cardId, it)
                     }
-                } else {
-                    return null
+                    prefs.edit().putString(key + "_owner_checked", ownerUserId).apply()
                 }
                 return null
             }
-            prefs.edit().remove(key).remove(key + "_time").apply()
+            prefs.edit().remove(key).remove(key + "_time").remove(key + "_owner_checked").apply()
         }
         val mangas = linkedSetOf<String>()
         for (url in listOf("$BASE_URL/cards/$cardId", "$BASE_URL/cards/$cardId/users")) {
@@ -537,6 +546,7 @@ class TradeAutomation(context: Context) {
             resolveRankFromOwnerInventory(session, ownerUserId, cardId)?.let {
                 return rememberRank(cardId, it)
             }
+            prefs.edit().putString(key + "_owner_checked", ownerUserId).apply()
         }
         if (!session.cancelled) prefs.edit().putString(key, NO_RANK).putLong(key + "_time", System.currentTimeMillis()).apply()
         return null
@@ -602,7 +612,12 @@ class TradeAutomation(context: Context) {
         CatalogRankParser.findRank(doc, cardId)
 
     private fun rememberRank(cardId: String, rank: String): String {
-        prefs.edit().putString(RANK_CACHE_PREFIX + cardId, rank).apply()
+        val key = RANK_CACHE_PREFIX + cardId
+        prefs.edit()
+            .putString(key, rank)
+            .remove(key + "_time")
+            .remove(key + "_owner_checked")
+            .apply()
         return rank
     }
 
@@ -635,8 +650,18 @@ class TradeAutomation(context: Context) {
         if (session.cancelled) return
         val html = requestHtml(session, BASE_URL) ?: return
         if (session.cancelled) return
-        val token = Jsoup.parse(html, BASE_URL).selectFirst("meta[name=csrf-token]")?.attr("content")
+        val doc = Jsoup.parse(html, BASE_URL)
+        val token = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
         if (!token.isNullOrBlank()) session.csrfToken = token
+        // The site's own navigation links the current user's card inventory. This lets the
+        // rank fallback use the real profile ID without pinning one user's numeric ID in code.
+        val ownCardsHref = doc.select("a[href*='/users/'][href*='/cards']")
+            .firstOrNull { USER_PROFILE_REGEX.containsMatchIn(it.attr("href")) }
+            ?.attr("href")
+            .orEmpty()
+        USER_PROFILE_REGEX.find(ownCardsHref)?.groupValues?.getOrNull(1)?.let {
+            session.ownUserId = it
+        }
     }
     private data class HttpResult(val code: Int, val url: String, val body: String)
     private fun requestHtml(session: TradeSession, url: String): String? =
