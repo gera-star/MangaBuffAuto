@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.automation.DeckCommentToggleRegistry
+import com.example.myapplication.automation.EventDropToggleRegistry
 import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
@@ -433,7 +434,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveSettings(newSettings: GlobalSettings) {
         _settings.value = newSettings
         repository.saveSettings(newSettings)
-        addLog(LogEntry(message = "Параметры выполнения обновлены"))
+        // A running reader checks the registry for each addHistory reward response, so
+        // the Events toggle applies immediately without restarting or duplicating reading.
+        _accounts.value.forEach { account ->
+            EventDropToggleRegistry.setEnabled(account.id, newSettings.eventsEnabled)
+        }
+        addLog(
+            LogEntry(
+                message = "Параметры выполнения обновлены; сбор Events=" +
+                    if (newSettings.eventsEnabled) "ВКЛ" else "ВЫКЛ"
+            )
+        )
     }
 
     fun runTaskForAccount(account: MangaBuffAccount, taskType: TaskType) {
