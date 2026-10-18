@@ -136,7 +136,9 @@ data class GlobalSettings(
     val towerUpgradeMentorship: Boolean = true,
     val towerUpgradeSupply: Boolean = true,
     val keepScreenOn: Boolean = false,
-    val readerSiteAutoscroll: Boolean = true
+    val readerSiteAutoscroll: Boolean = true,
+    /** Collect event candy/pumpkin drops through the existing reader session. */
+    val eventsEnabled: Boolean = false
 ) {
     companion object {
         const val MAX_READER_CHAPTERS = 100
