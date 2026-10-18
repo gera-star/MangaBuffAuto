@@ -1499,10 +1499,16 @@ fun TasksTab(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 TaskActionButton(
-                    "🎃 Events",
+                    "🎁 Награды",
                     onRunEvents,
                     actionEnabled,
-                    Modifier.fillMaxWidth()
+                    Modifier.weight(1f)
+                )
+                TaskActionButton(
+                    if (settings.eventsEnabled) "🎃 Events: ВКЛ" else "🎃 Events: ВЫКЛ",
+                    { onSaveSettings(settings.copy(eventsEnabled = !settings.eventsEnabled)) },
+                    accounts.isNotEmpty(),
+                    Modifier.weight(1f)
                 )
             }
         }
