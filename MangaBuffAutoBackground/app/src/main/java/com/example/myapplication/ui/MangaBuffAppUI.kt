@@ -54,6 +54,7 @@ import kotlinx.coroutines.delay
 
 private const val SUPPORT_PAYMENT_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019df8ad-96b5-7cd8-82aa-e64b36e96b93"
 private const val SUPPORT_RECIPIENT = "Алексей Г."
+private const val SUPPORT_TELEGRAM_URL = "https://t.me/mangabuffauto"
 
 @SuppressLint("RestrictedApi")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -302,6 +303,29 @@ fun MangaBuffAppUI(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline
                     )
+
+                    OutlinedButton(
+                        onClick = {
+                            try {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(SUPPORT_TELEGRAM_URL))
+                                )
+                                showSupportDialog = false
+                            } catch (_: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    "Не удалось открыть Telegram",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Telegram · @mangabuffauto", style = MaterialTheme.typography.labelLarge)
+                    }
 
                     Text(
                         "Мы Любим Мангу ❤️",

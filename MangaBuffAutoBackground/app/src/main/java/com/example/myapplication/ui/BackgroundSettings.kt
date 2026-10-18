@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.OpenInNew
@@ -35,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 
@@ -130,7 +134,13 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text("Фоновая работа") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.62f).dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text(
                     "Для надежной работы MangaBuff при свернутом приложении на Redmi/HyperOS нужны системные настройки. Приложение не может включить их без вашего подтверждения."
                 )
@@ -196,7 +206,8 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
 
                 OutlinedButton(
                     onClick = { openBatterySettings(context) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Icon(Icons.Default.OpenInNew, contentDescription = null)
                     Spacer(Modifier.padding(horizontal = 3.dp))
@@ -205,7 +216,8 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
 
                 OutlinedButton(
                     onClick = { openExactAlarmSettings(context) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                 ) {
                     Icon(Icons.Default.OpenInNew, contentDescription = null)
