@@ -6261,6 +6261,7 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ) {
+        EventDropToggleRegistry.initializeIfAbsent(account.id, settings.eventsEnabled)
         log(account.username, "READER: OPEN")
 
         currentMangaUrl = ensureCanonicalMangaUrl(account.getSafeActiveMangaUrl())
@@ -7089,7 +7090,7 @@ class MangaBuffAutomation(
                     // Match the PC logic: only successful addHistory responses with token + type
                     // trigger a claim. This remains independent of the reader's scroll/navigation.
                     if (lastAddHistoryResponseStatus !in 200..299 ||
-                        !EventDropToggleRegistry.isEnabled(account.id, settings.eventsEnabled)
+                        !EventDropToggleRegistry.isEnabled(account.id, false)
                     ) return
 
                     val payload = try {
@@ -7115,7 +7116,7 @@ class MangaBuffAutomation(
                             type = type,
                             pageCsrfToken = csrfToken,
                             referer = dropReferer,
-                            enabledFallback = settings.eventsEnabled
+                            enabledFallback = false
                         )
                     }
                 }
