@@ -30,9 +30,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.FormBody
 import okhttp3.Headers
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -143,6 +148,12 @@ class MangaBuffAutomation(
         private const val BATTLE_COOLDOWN_MS = 2000L
 
         private const val BALANCE_WATCHDOG_MS = 15_000L
+
+        private const val EVENTS_PACK_URL = "https://mangabuff.ru/event/pack"
+        private const val EVENTS_QUEST_URL = "https://mangabuff.ru/halloween/quest"
+        private const val EVENTS_QUEST_STATE_URL = "https://mangabuff.ru/halloween/quest/state"
+        private const val EVENTS_HEAT_CLAIM_URL = "https://mangabuff.ru/event/heat/claim"
+        private const val EVENTS_QUEST_REWARD_URL = "https://mangabuff.ru/halloween/quest/reward"
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -1237,7 +1248,35 @@ class MangaBuffAutomation(
 
         initDailyStats(account)
         log(account.username, "TASK: ACCOUNT_START type=${taskType.title}")
-        updateStatus(account, "Обновление статистики...", true, taskType.title, 0.05f)
+        updateStatus(
+            account,
+            if (taskType == TaskType.EVENTS) "🎃 Проверка Events..." else "Обновление статистики...",
+            true,
+            taskType.title,
+            0.05f
+        )
+
+        // Events is intentionally isolated from the reader and normal WebView balance flow.
+        // It uses this account's HTTP cookies, visits event endpoints directly, and never navigates the reader WebView.
+        if (taskType == TaskType.EVENTS) {
+            val success = try {
+                runEventsTask(account)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log(account.username, "EVENTS: FAILED reason=${e.message ?: e::class.java.simpleName}", true)
+                false
+            }
+            updateStatus(
+                account,
+                if (success) "✅ Events завершён" else "❌ Events: ошибка",
+                false,
+                "",
+                if (success) 1f else 0f
+            )
+            log(account.username, "TASK: ACCOUNT_FINISHED type=${taskType.title} success=$success", !success)
+            return
+        }
 
         refreshCsrfToken(account)
 
@@ -1337,6 +1376,222 @@ class MangaBuffAutomation(
         val finalSummary = fetchAndLogBalanceInfo(account, webView)
         updateStatus(account, finalSummary, false, "", 1.0f)
         log(account.username, "TASK: ACCOUNT_FINISHED type=${taskType.title}")
+    }
+
+
+    // =========================================================
+    // SEPARATE EVENTS TASK (ported from the PC bot's seasonal.py)
+    // =========================================================
+
+    private data class EventHttpResult(
+        val code: Int,
+        val body: String,
+        val finalUrl: String
+    )
+
+    private suspend fun requestEventEndpoint(
+        account: MangaBuffAccount,
+        url: String,
+        referer: String,
+        accept: String,
+        csrfToken: String? = null,
+        postBody: RequestBody? = null
+    ): EventHttpResult = withContext(Dispatchers.IO) {
+        val headers = getBaseHeaders(account).newBuilder()
+            .set("Accept", accept)
+            .set("Referer", referer)
+        if (!csrfToken.isNullOrBlank()) {
+            headers.set("X-CSRF-TOKEN", csrfToken)
+        }
+
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .headers(headers.build())
+        if (postBody == null) {
+            requestBuilder.get()
+        } else {
+            requestBuilder.post(postBody)
+        }
+
+        httpClient.newCall(requestBuilder.build()).execute().use { response ->
+            EventHttpResult(
+                code = response.code,
+                body = response.body?.string().orEmpty(),
+                finalUrl = response.request.url.toString()
+            )
+        }
+    }
+
+    private fun parseEventNumber(value: String?): Int? {
+        val digits = value?.replace(Regex("[^0-9]"), "").orEmpty()
+        return digits.takeIf { it.isNotEmpty() }?.toIntOrNull()
+    }
+
+    /**
+     * One-off event actions from the PC version:
+     * - read /event/pack and its cauldron state;
+     * - claim the free +5 candy cauldron reward only when the site enables the button;
+     * - claim the +10 personal investigation reward only when the API says it is available.
+     *
+     * Card burning/spending candies and event candy collection through reading are deliberately
+     * excluded. The existing reader implementation remains untouched.
+     */
+    private suspend fun runEventsTask(account: MangaBuffAccount): Boolean {
+        log(account.username, "EVENTS: START")
+        updateStatus(account, "🎃 Events: проверка страницы", true, "Events", 0.15f)
+
+        val page = requestEventEndpoint(
+            account = account,
+            url = EVENTS_PACK_URL,
+            referer = EVENTS_PACK_URL,
+            accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        )
+        if (page.code != 200 || page.finalUrl.contains("/login", ignoreCase = true)) {
+            val auth = page.finalUrl.contains("/login", ignoreCase = true) || page.code == 401 || page.code == 403
+            log(
+                account.username,
+                if (auth) "EVENTS: AUTH_REQUIRED; event page redirected to login or rejected the session"
+                else "EVENTS: PAGE_UNAVAILABLE HTTP=\${page.code} url=\${page.finalUrl}",
+                true
+            )
+            return false
+        }
+
+        val doc = Jsoup.parse(page.body, EVENTS_PACK_URL)
+        val balance = parseEventNumber(doc.selectFirst(".js-event-balance")?.text())
+        val todayNode = doc.select(".event-page__stat-value")
+            .firstOrNull { it.previousElementSibling()?.text()?.trim() == "Сегодня выпало" }
+        val today = parseEventNumber(todayNode?.text())
+        val temperature = parseEventNumber(doc.selectFirst(".js-summer-heat-temp")?.text())
+        val takeButton = doc.selectFirst("button.js-summer-heat-take")
+            ?: doc.selectFirst(".js-summer-heat-take")
+        val canTake = takeButton != null &&
+            !takeButton.hasAttr("disabled") &&
+            !takeButton.classNames().contains("disabled")
+
+        log(
+            account.username,
+            "EVENTS: PAGE balance=\${balance ?: "unknown"} today=\${today ?: "unknown"} " +
+                "temperature=\${temperature?.let { "\${it}°" } ?: "unknown"} canTake=$canTake"
+        )
+
+        if (canTake) {
+            val csrf = doc.selectFirst("meta[name=csrf-token]")?.attr("content").orEmpty()
+            if (csrf.isBlank()) {
+                log(account.username, "EVENTS: CAULDRON_SKIPPED reason=csrf_token_missing", true)
+            } else {
+                try {
+                    val claim = requestEventEndpoint(
+                        account = account,
+                        url = EVENTS_HEAT_CLAIM_URL,
+                        referer = EVENTS_PACK_URL,
+                        accept = "application/json, text/javascript, */*; q=0.01",
+                        csrfToken = csrf,
+                        postBody = FormBody.Builder().add("_token", csrf).build()
+                    )
+                    if (claim.code == 200 && !claim.finalUrl.contains("/login", ignoreCase = true)) {
+                        val serverBalance = runCatching {
+                            val json = JSONObject(claim.body)
+                            when (val raw = json.opt("balance")) {
+                                is Number -> raw.toInt()
+                                is String -> raw.toIntOrNull()
+                                else -> null
+                            }
+                        }.getOrNull()
+                        val updatedBalance = serverBalance ?: balance?.plus(5)
+                        log(
+                            account.username,
+                            "EVENTS: CAULDRON_CLAIMED reward=5 balance=\${updatedBalance ?: "unknown"}"
+                        )
+                    } else {
+                        log(account.username, "EVENTS: CAULDRON_CLAIM_FAILED HTTP=\${claim.code}", true)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    log(account.username, "EVENTS: CAULDRON_CLAIM_ERROR reason=\${e.message}", true)
+                }
+            }
+        } else if ((temperature ?: 0) >= 100) {
+            // As in the PC version, never burn a card automatically just to unlock the cauldron.
+            log(account.username, "EVENTS: CAULDRON_LOCKED temperature=$temperature; card burning left manual")
+        } else {
+            log(account.username, "EVENTS: CAULDRON_NOT_READY")
+        }
+
+        coroutineContext.ensureActive()
+        updateStatus(account, "🎃 Events: проверка личной награды", true, "Events", 0.65f)
+
+        try {
+            val state = requestEventEndpoint(
+                account = account,
+                url = EVENTS_QUEST_STATE_URL,
+                referer = EVENTS_QUEST_URL,
+                accept = "application/json"
+            )
+            if (state.code != 200 || state.finalUrl.contains("/login", ignoreCase = true)) {
+                log(account.username, "EVENTS: QUEST_STATE_UNAVAILABLE HTTP=\${state.code}", true)
+            } else {
+                val investigation = try {
+                    JSONObject(state.body).optJSONObject("investigation")
+                } catch (_: Exception) {
+                    null
+                }
+
+                if (investigation == null) {
+                    log(account.username, "EVENTS: QUEST_STATE_INVALID response_not_json", true)
+                } else if (investigation.optBoolean("reward_available", false) &&
+                    !investigation.optBoolean("reward_claimed", false)
+                ) {
+                    val questPage = requestEventEndpoint(
+                        account = account,
+                        url = EVENTS_QUEST_URL,
+                        referer = EVENTS_QUEST_URL,
+                        accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    )
+                    if (questPage.code != 200 || questPage.finalUrl.contains("/login", ignoreCase = true)) {
+                        log(account.username, "EVENTS: QUEST_PAGE_UNAVAILABLE HTTP=\${questPage.code}", true)
+                    } else {
+                        val questDoc = Jsoup.parse(questPage.body, EVENTS_QUEST_URL)
+                        val csrf = questDoc.selectFirst("meta[name=csrf-token]")?.attr("content")
+                            .orEmpty().ifBlank { account.getSafeCsrfToken() }
+                        if (csrf.isBlank()) {
+                            log(account.username, "EVENTS: QUEST_REWARD_SKIPPED reason=csrf_token_missing", true)
+                        } else {
+                            val claim = requestEventEndpoint(
+                                account = account,
+                                url = EVENTS_QUEST_REWARD_URL,
+                                referer = EVENTS_QUEST_URL,
+                                accept = "application/json",
+                                csrfToken = csrf,
+                                postBody = "{}".toRequestBody("application/json; charset=utf-8".toMediaType())
+                            )
+                            if (claim.code == 200 && !claim.finalUrl.contains("/login", ignoreCase = true)) {
+                                log(account.username, "EVENTS: QUEST_REWARD_CLAIMED reward=10")
+                            } else {
+                                log(account.username, "EVENTS: QUEST_REWARD_CLAIM_FAILED HTTP=\${claim.code}", true)
+                            }
+                        }
+                    }
+                } else {
+                    log(
+                        account.username,
+                        if (investigation.optBoolean("reward_claimed", false)) {
+                            "EVENTS: QUEST_REWARD_ALREADY_CLAIMED"
+                        } else {
+                            "EVENTS: QUEST_REWARD_NOT_AVAILABLE"
+                        }
+                    )
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log(account.username, "EVENTS: QUEST_REWARD_ERROR reason=\${e.message}", true)
+        }
+
+        log(account.username, "EVENTS: COMPLETE")
+        return true
     }
 
     // =========================================================
