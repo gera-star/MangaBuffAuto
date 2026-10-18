@@ -235,6 +235,8 @@ class MangaBuffAutomation(
         private const val EVENTS_QUEST_STATE_URL = "https://mangabuff.ru/halloween/quest/state"
         private const val EVENTS_HEAT_CLAIM_URL = "https://mangabuff.ru/event/heat/claim"
         private const val EVENTS_QUEST_REWARD_URL = "https://mangabuff.ru/halloween/quest/reward"
+        private const val EVENTS_CANDY_TAKE_URL = "https://mangabuff.ru/halloween/takeCandy?r=822"
+        private const val EVENTS_CANDY_DAILY_LIMIT = 35
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -245,6 +247,11 @@ class MangaBuffAutomation(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val accountIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val eventDropClaimLock = Any()
+    private val eventDropPendingByDay = mutableMapOf<String, Int>()
+    private val eventDropTokensSeen = ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var lastAddHistoryResponseStatus = 0
 
     fun closeRuntime() {
         // This HTTP client belongs only to this MangaBuffAutomation/account.
@@ -2327,7 +2334,8 @@ class MangaBuffAutomation(
             0.05f
         )
 
-        // Dedicated event flow intentionally bypasses the reader WebView and its navigation.
+        // The one-shot reward check is separate from the existing reader task; passive drops
+        // are handled by the reader addHistory response bridge.
         if (taskType == TaskType.EVENTS) {
             val success = try {
                 runEventsTask(account, settings, webView)
@@ -2837,6 +2845,93 @@ class MangaBuffAutomation(
     }
 
     /**
+     * Port of the PC reader event-drop handler: successful addHistory responses may
+     * contain a token and type. Claim that exact drop through the site's existing
+     * endpoint instead of creating a second reader or changing chapter navigation.
+     */
+    private suspend fun claimReadingEventDrop(
+        account: MangaBuffAccount,
+        token: String,
+        type: String,
+        pageCsrfToken: String,
+        referer: String,
+        enabledFallback: Boolean
+    ) {
+        if (token.isBlank() || !EventDropToggleRegistry.isEnabled(account.id, enabledFallback)) return
+
+        val day = currentStatsDay()
+        val countKey = "drops_${account.id}_$day"
+        val pendingKey = "${account.id}_$day"
+        val prefs = context.getSharedPreferences("mangabuff_event_drop_guard", Context.MODE_PRIVATE)
+        val reserved = synchronized(eventDropClaimLock) {
+            val done = prefs.getInt(countKey, 0).coerceAtLeast(0)
+            val pending = eventDropPendingByDay[pendingKey] ?: 0
+            if (done + pending >= EVENTS_CANDY_DAILY_LIMIT) {
+                false
+            } else {
+                eventDropPendingByDay[pendingKey] = pending + 1
+                true
+            }
+        }
+        if (!reserved) {
+            log(account.username, "EVENTS: DROP_DAILY_LIMIT_REACHED limit=$EVENTS_CANDY_DAILY_LIMIT")
+            return
+        }
+
+        try {
+            // Re-check after reservation so switching Events OFF cancels queued claims.
+            if (!EventDropToggleRegistry.isEnabled(account.id, enabledFallback)) return
+
+            val csrf = pageCsrfToken.trim()
+                .ifBlank { account.getSafeCsrfToken() }
+                .ifBlank { refreshCsrfToken(account) }
+            if (csrf.isBlank()) {
+                log(account.username, "EVENTS: DROP_SKIPPED reason=csrf_token_missing", true)
+                return
+            }
+
+            val response = requestEventEndpoint(
+                account = account,
+                url = EVENTS_CANDY_TAKE_URL,
+                referer = referer.ifBlank { "https://mangabuff.ru/event/pack" },
+                accept = "*/*",
+                csrfToken = csrf,
+                postBody = FormBody.Builder().add("token", token).build()
+            )
+            if (response.code == 200 && !response.finalUrl.contains("/login", ignoreCase = true)) {
+                val count = synchronized(eventDropClaimLock) {
+                    val next = (prefs.getInt(countKey, 0) + 1).coerceAtMost(EVENTS_CANDY_DAILY_LIMIT)
+                    prefs.edit().putInt(countKey, next).apply()
+                    next
+                }
+                val pumpkin = type.equals("pumpkin", ignoreCase = true)
+                val kind = if (pumpkin) "pumpkin" else "candy"
+                val reward = if (pumpkin) 3 else 1
+                log(
+                    account.username,
+                    "EVENTS: DROP_CLAIMED kind=$kind reward=$reward daily=$count/$EVENTS_CANDY_DAILY_LIMIT"
+                )
+            } else {
+                log(
+                    account.username,
+                    "EVENTS: DROP_CLAIM_FAILED kind=$type HTTP=${response.code} url=${response.finalUrl}",
+                    true
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log(account.username, "EVENTS: DROP_CLAIM_ERROR reason=${e.message}", true)
+        } finally {
+            synchronized(eventDropClaimLock) {
+                val pending = (eventDropPendingByDay[pendingKey] ?: 1) - 1
+                if (pending <= 0) eventDropPendingByDay.remove(pendingKey)
+                else eventDropPendingByDay[pendingKey] = pending
+            }
+        }
+    }
+
+    /**
      * Standalone event run ported from the PC version:
      * - inspect /event/pack;
      * - claim the free +5 cauldron reward only when its button is enabled;
@@ -2927,60 +3022,11 @@ class MangaBuffAutomation(
             log(account.username, "EVENTS: CAULDRON_NOT_READY")
         }
 
-        // 02 — first seven regular comments can earn 2 candies each.
-        // Reuse existing comment code only if its exact chapter is already open:
-        // Events must not navigate or alter the reader flow.
-        coroutineContext.ensureActive()
-        updateStatus(account, "🎃 Events: комментарии", true, "Events", 0.34f)
-        val readerTargetUrl = activeChapterContext
-            ?.takeIf { it.accountId == account.id }
-            ?.actualChapterUrl
-            ?.ifBlank { null }
-            ?: lastFinishedChapterUrl.ifBlank { null }
-        val currentWebViewUrl = withContext(Dispatchers.Main.immediate) {
-            webView.url.orEmpty().substringBefore('?').substringBefore('#')
-        }
-        val cleanReaderTarget = readerTargetUrl
-            ?.substringBefore('?')
-            ?.substringBefore('#')
-            .orEmpty()
-        val isChapterPage = Regex(
-            "^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+(?:\\.\\d+)?$"
-        ).matches(cleanReaderTarget)
-        val eventCommentSlots = (7 - dailyStats.comments.coerceAtLeast(0)).coerceAtLeast(0)
-        if (eventCommentSlots == 0) {
-            log(account.username, "EVENTS: COMMENTS_EVENT_LIMIT_REACHED used=${dailyStats.comments}/7")
-        } else if (isChapterPage && currentWebViewUrl == cleanReaderTarget) {
-            try {
-                log(account.username, "EVENTS: COMMENTS_START remainingEventComments=$eventCommentSlots")
-                runCommentTask(account, settings.copy(commentCount = eventCommentSlots), webView)
-                log(account.username, "EVENTS: COMMENTS_FINISHED dailyTotal=${dailyStats.comments}")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log(account.username, "EVENTS: COMMENTS_FAILED reason=${e.message}", true)
-            }
-        } else {
-            log(
-                account.username,
-                "EVENTS: COMMENTS_SKIPPED reason=no_matching_open_chapter " +
-                    "(current=$currentWebViewUrl target=${cleanReaderTarget.ifBlank { "none" }}); reader was not navigated"
-            )
-        }
+        // Event comments and rewarded ads are already handled by the regular task system.
+        // Do not run regular chapter comments or ads a second time from Events.
 
-        // 03 — existing rewarded-ad routine, bounded by the current three-rewards/day limit.
         coroutineContext.ensureActive()
-        updateStatus(account, "🎃 Events: реклама", true, "Events", 0.5f)
-        try {
-            val adsOkay = runAdsTask(account, webView)
-            log(account.username, "EVENTS: ADS_FINISHED success=$adsOkay")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            log(account.username, "EVENTS: ADS_FAILED reason=${e.message}", true)
-        }
-
-        // 04 — scan and claim completed daily battle quests without starting new battles.
+        // 02 — scan and claim completed daily battle quests without starting new battles.
         coroutineContext.ensureActive()
         updateStatus(account, "🎃 Events: награды дейликов", true, "Events", 0.7f)
         try {
@@ -6231,6 +6277,7 @@ class MangaBuffAutomation(
         readChapterUrlsInRun.clear()
         historyServerAcceptedChapterIds.clear()
         currentHistoryPostChapterIds.clear()
+        lastAddHistoryResponseStatus = 0
 
         activeChapterContext = null
         heartbeatChapterContext = Pair("", "")
@@ -7030,13 +7077,47 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onHistoryPostStatus(status: Int) {
+                    lastAddHistoryResponseStatus = status
                     log(account.username, "READER: MB_HISTORY_POST_STATUS=$status")
                 }
 
                 @JavascriptInterface
-                fun onHistoryPostResponse(response: String) {
+                fun onHistoryPostResponse(response: String, csrfToken: String) {
                     val sanitized = if (response.length > 2048) response.take(2048) + "...[TRUNCATED]" else response
                     log(account.username, "READER: MB_HISTORY_POST_RESPONSE=$sanitized")
+
+                    // Match the PC logic: only successful addHistory responses with token + type
+                    // trigger a claim. This remains independent of the reader's scroll/navigation.
+                    if (lastAddHistoryResponseStatus !in 200..299 ||
+                        !EventDropToggleRegistry.isEnabled(account.id, settings.eventsEnabled)
+                    ) return
+
+                    val payload = try {
+                        JSONObject(response)
+                    } catch (_: Exception) {
+                        null
+                    } ?: return
+                    val token = payload.optString("token").orEmpty()
+                    val type = payload.optString("type").orEmpty()
+                    if (token.isBlank() || type.isBlank()) return
+
+                    val uniqueTokenKey = account.id + ":" + token
+                    if (!eventDropTokensSeen.add(uniqueTokenKey)) {
+                        log(account.username, "EVENTS: DROP_DUPLICATE_IGNORED")
+                        return
+                    }
+
+                    val dropReferer = webView.url.orEmpty()
+                    accountIoScope.launch {
+                        claimReadingEventDrop(
+                            account = account,
+                            token = token,
+                            type = type,
+                            pageCsrfToken = csrfToken,
+                            referer = dropReferer,
+                            enabledFallback = settings.eventsEnabled
+                        )
+                    }
                 }
 
                 @JavascriptInterface
@@ -7521,7 +7602,9 @@ class MangaBuffAutomation(
                                                             try { poolAfter = JSON.parse(localStorage.getItem('history_pool') || '[]'); } catch(e) {}
                                                             AndroidReaderBridge.onHistoryPoolAfter(poolAfter.length);
                                                             AndroidReaderBridge.onHistoryPostStatus(status);
-                                                            AndroidReaderBridge.onHistoryPostResponse(responseText);
+                                                            var csrfNode = document.querySelector('meta[name="csrf-token"]');
+                                                            var csrfToken = csrfNode ? String(csrfNode.getAttribute('content') || '') : '';
+                                                            AndroidReaderBridge.onHistoryPostResponse(responseText, csrfToken);
                                                             AndroidReaderBridge.onHistoryPostFinished(status, urlStr);
                                                         } catch(e) {}
                                                     }
@@ -7577,8 +7660,11 @@ class MangaBuffAutomation(
 
                                                             clone.text()
                                                                 .then(function(text) {
+                                                                    var csrfNode = document.querySelector('meta[name="csrf-token"]');
+                                                                    var csrfToken = csrfNode ? String(csrfNode.getAttribute('content') || '') : '';
                                                                     AndroidReaderBridge.onHistoryPostResponse(
-                                                                        text || ''
+                                                                        text || '',
+                                                                        csrfToken
                                                                     );
 
                                                                     AndroidReaderBridge.onHistoryPostFinished(
