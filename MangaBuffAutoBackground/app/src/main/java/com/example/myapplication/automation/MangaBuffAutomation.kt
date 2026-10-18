@@ -1265,6 +1265,61 @@ class MangaBuffAutomation(
         }
     }
 
+    private val dailyEventsRewardPrefs by lazy {
+        context.getSharedPreferences("mangabuff_daily_events_rewards_guard", Context.MODE_PRIVATE)
+    }
+    private val dailyEventsRewardAttemptsInFlight =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Automatically run the existing reward scan once per MangaBuff day, immediately
+     * after the daily calendar flow has finished. This is separate from passive
+     * reading-drop collection and does not depend on the Events toggle.
+     */
+    private suspend fun runDailyEventsRewardsAfterCalendar(
+        account: MangaBuffAccount,
+        settings: GlobalSettings,
+        webView: WebView,
+        source: String
+    ) {
+        val day = dailyCalendarDate()
+        val key = "checked_day_${account.id}"
+        if (dailyEventsRewardPrefs.getString(key, "") == day) {
+            log(account.username, "EVENTS: AUTO_DAILY_SKIP source=$source reason=ALREADY_CHECKED day=$day")
+            return
+        }
+        if (!dailyEventsRewardAttemptsInFlight.add(account.id)) {
+            log(account.username, "EVENTS: AUTO_DAILY_SKIP source=$source reason=ALREADY_IN_FLIGHT")
+            return
+        }
+
+        try {
+            // Re-check once the in-flight lock is held in case another caller just completed.
+            if (dailyEventsRewardPrefs.getString(key, "") == day) {
+                log(account.username, "EVENTS: AUTO_DAILY_SKIP source=$source reason=ALREADY_CHECKED day=$day")
+                return
+            }
+
+            coroutineContext.ensureActive()
+            log(account.username, "EVENTS: AUTO_DAILY_START source=$source day=$day")
+            val success = try {
+                runEventsTask(account, settings, webView)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log(account.username, "EVENTS: AUTO_DAILY_FAILED source=$source reason=${e.message ?: e::class.java.simpleName}", true)
+                false
+            }
+
+            if (success) {
+                dailyEventsRewardPrefs.edit().putString(key, day).apply()
+            }
+            log(account.username, "EVENTS: AUTO_DAILY_END source=$source success=$success day=$day")
+        } finally {
+            dailyEventsRewardAttemptsInFlight.remove(account.id)
+        }
+    }
+
     private fun initDailyStats(account: MangaBuffAccount) {
         dailyStats = if (account.dailyStatsDay == currentStatsDay()) {
             DailyStats(
@@ -2428,6 +2483,7 @@ class MangaBuffAutomation(
                 val adsSuccess = runAdsTask(account, webView)
                 log(account.username, "TASK: ADS_END elapsed=" + (SystemClock.elapsedRealtime() - start) + "ms success=" + adsSuccess)
                 fetchAndLogBalanceInfo(account, webView, allowDailyCalendar = true)
+                runDailyEventsRewardsAfterCalendar(account, settings, webView, source = "ADS")
                 if (!adsSuccess) {
                     updateStatus(
                         account,
@@ -2452,6 +2508,7 @@ class MangaBuffAutomation(
                 log(account.username, "TASK: MINE_CALENDAR_CHECK_START")
                 fetchAndLogBalanceInfo(account, webView, allowDailyCalendar = true)
                 log(account.username, "TASK: MINE_CALENDAR_CHECK_END")
+                runDailyEventsRewardsAfterCalendar(account, settings, webView, source = "MINE")
             }
         }
 
