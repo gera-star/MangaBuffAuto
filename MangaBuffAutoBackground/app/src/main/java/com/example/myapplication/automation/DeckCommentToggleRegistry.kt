@@ -100,6 +100,10 @@ object DeckCommentToggleRegistry {
 object EventDropToggleRegistry {
     private val enabledByAccount = ConcurrentHashMap<String, Boolean>()
 
+    fun initializeIfAbsent(accountId: String, enabled: Boolean) {
+        if (accountId.isNotBlank()) enabledByAccount.putIfAbsent(accountId, enabled)
+    }
+
     fun setEnabled(accountId: String, enabled: Boolean) {
         if (accountId.isNotBlank()) enabledByAccount[accountId] = enabled
     }
