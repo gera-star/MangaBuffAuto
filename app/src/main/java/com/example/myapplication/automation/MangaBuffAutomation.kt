@@ -1451,7 +1451,7 @@ class MangaBuffAutomation(
             log(
                 account.username,
                 if (auth) "EVENTS: AUTH_REQUIRED; event page redirected to login or rejected the session"
-                else "EVENTS: PAGE_UNAVAILABLE HTTP=\${page.code} url=\${page.finalUrl}",
+                else "EVENTS: PAGE_UNAVAILABLE HTTP=${page.code} url=${page.finalUrl}",
                 true
             )
             return false
@@ -1471,8 +1471,8 @@ class MangaBuffAutomation(
 
         log(
             account.username,
-            "EVENTS: PAGE balance=\${balance ?: "unknown"} today=\${today ?: "unknown"} " +
-                "temperature=\${temperature?.let { "\${it}°" } ?: "unknown"} canTake=$canTake"
+            "EVENTS: PAGE balance=${balance ?: "unknown"} today=${today ?: "unknown"} " +
+                "temperature=${temperature?.let { "${it}°" } ?: "unknown"} canTake=$canTake"
         )
 
         if (canTake) {
@@ -1501,15 +1501,15 @@ class MangaBuffAutomation(
                         val updatedBalance = serverBalance ?: balance?.plus(5)
                         log(
                             account.username,
-                            "EVENTS: CAULDRON_CLAIMED reward=5 balance=\${updatedBalance ?: "unknown"}"
+                            "EVENTS: CAULDRON_CLAIMED reward=5 balance=${updatedBalance ?: "unknown"}"
                         )
                     } else {
-                        log(account.username, "EVENTS: CAULDRON_CLAIM_FAILED HTTP=\${claim.code}", true)
+                        log(account.username, "EVENTS: CAULDRON_CLAIM_FAILED HTTP=${claim.code}", true)
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    log(account.username, "EVENTS: CAULDRON_CLAIM_ERROR reason=\${e.message}", true)
+                    log(account.username, "EVENTS: CAULDRON_CLAIM_ERROR reason=${e.message}", true)
                 }
             }
         } else if ((temperature ?: 0) >= 100) {
@@ -1530,7 +1530,7 @@ class MangaBuffAutomation(
                 accept = "application/json"
             )
             if (state.code != 200 || state.finalUrl.contains("/login", ignoreCase = true)) {
-                log(account.username, "EVENTS: QUEST_STATE_UNAVAILABLE HTTP=\${state.code}", true)
+                log(account.username, "EVENTS: QUEST_STATE_UNAVAILABLE HTTP=${state.code}", true)
             } else {
                 val investigation = try {
                     JSONObject(state.body).optJSONObject("investigation")
@@ -1550,7 +1550,7 @@ class MangaBuffAutomation(
                         accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
                     )
                     if (questPage.code != 200 || questPage.finalUrl.contains("/login", ignoreCase = true)) {
-                        log(account.username, "EVENTS: QUEST_PAGE_UNAVAILABLE HTTP=\${questPage.code}", true)
+                        log(account.username, "EVENTS: QUEST_PAGE_UNAVAILABLE HTTP=${questPage.code}", true)
                     } else {
                         val questDoc = Jsoup.parse(questPage.body, EVENTS_QUEST_URL)
                         val csrf = questDoc.selectFirst("meta[name=csrf-token]")?.attr("content")
@@ -1569,7 +1569,7 @@ class MangaBuffAutomation(
                             if (claim.code == 200 && !claim.finalUrl.contains("/login", ignoreCase = true)) {
                                 log(account.username, "EVENTS: QUEST_REWARD_CLAIMED reward=10")
                             } else {
-                                log(account.username, "EVENTS: QUEST_REWARD_CLAIM_FAILED HTTP=\${claim.code}", true)
+                                log(account.username, "EVENTS: QUEST_REWARD_CLAIM_FAILED HTTP=${claim.code}", true)
                             }
                         }
                     }
@@ -1587,7 +1587,7 @@ class MangaBuffAutomation(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log(account.username, "EVENTS: QUEST_REWARD_ERROR reason=\${e.message}", true)
+            log(account.username, "EVENTS: QUEST_REWARD_ERROR reason=${e.message}", true)
         }
 
         log(account.username, "EVENTS: COMPLETE")
