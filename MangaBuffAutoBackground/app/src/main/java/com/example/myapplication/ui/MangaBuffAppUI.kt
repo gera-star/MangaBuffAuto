@@ -257,7 +257,8 @@ fun MangaBuffAppUI(
                     isRunning = isRunning,
                     onStopAll = { viewModel.stopAllTasks() },
                     onSaveSettings = { newSettings -> viewModel.saveSettings(newSettings) },
-                    onOpenPromoDialog = { viewModel.setShowPromoDialog(true) }
+                    onOpenPromoDialog = { viewModel.setShowPromoDialog(true) },
+                    onRunEvents = { viewModel.runTaskForAllAccounts(TaskType.EVENTS) }
                 )
                 2 -> LogsTab(
                     logs = logs,
@@ -1279,7 +1280,8 @@ fun TasksTab(
     isRunning: Boolean,
     onStopAll: () -> Unit,
     onSaveSettings: (GlobalSettings) -> Unit,
-    onOpenPromoDialog: () -> Unit
+    onOpenPromoDialog: () -> Unit,
+    onRunEvents: () -> Unit
 ) {
 
     var readerChapters by remember { mutableStateOf(settings.readerChapters.toString()) }
@@ -1488,6 +1490,20 @@ fun TasksTab(
                         )
                     }
                 }
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                TaskActionButton(
+                    "🎃 Events",
+                    onRunEvents,
+                    actionEnabled,
+                    Modifier.fillMaxWidth()
+                )
             }
         }
 
