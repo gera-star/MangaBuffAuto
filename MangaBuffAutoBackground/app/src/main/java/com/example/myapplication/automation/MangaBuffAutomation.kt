@@ -251,7 +251,6 @@ class MangaBuffAutomation(
     private val eventDropClaimLock = Any()
     private val eventDropPendingByDay = mutableMapOf<String, Int>()
     private val eventDropTokensSeen = ConcurrentHashMap.newKeySet<String>()
-    @Volatile private var lastAddHistoryResponseStatus = 0
 
     fun closeRuntime() {
         // This HTTP client belongs only to this MangaBuffAutomation/account.
@@ -6278,7 +6277,6 @@ class MangaBuffAutomation(
         readChapterUrlsInRun.clear()
         historyServerAcceptedChapterIds.clear()
         currentHistoryPostChapterIds.clear()
-        lastAddHistoryResponseStatus = 0
 
         activeChapterContext = null
         heartbeatChapterContext = Pair("", "")
@@ -7078,18 +7076,17 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onHistoryPostStatus(status: Int) {
-                    lastAddHistoryResponseStatus = status
                     log(account.username, "READER: MB_HISTORY_POST_STATUS=$status")
                 }
 
                 @JavascriptInterface
-                fun onHistoryPostResponse(response: String, csrfToken: String) {
+                fun onHistoryPostResponse(response: String, csrfToken: String, responseStatus: Int) {
                     val sanitized = if (response.length > 2048) response.take(2048) + "...[TRUNCATED]" else response
                     log(account.username, "READER: MB_HISTORY_POST_RESPONSE=$sanitized")
 
                     // Match the PC logic: only successful addHistory responses with token + type
                     // trigger a claim. This remains independent of the reader's scroll/navigation.
-                    if (lastAddHistoryResponseStatus !in 200..299 ||
+                    if (responseStatus !in 200..299 ||
                         !EventDropToggleRegistry.isEnabled(account.id, false)
                     ) return
 
@@ -7605,7 +7602,7 @@ class MangaBuffAutomation(
                                                             AndroidReaderBridge.onHistoryPostStatus(status);
                                                             var csrfNode = document.querySelector('meta[name="csrf-token"]');
                                                             var csrfToken = csrfNode ? String(csrfNode.getAttribute('content') || '') : '';
-                                                            AndroidReaderBridge.onHistoryPostResponse(responseText, csrfToken);
+                                                            AndroidReaderBridge.onHistoryPostResponse(responseText, csrfToken, status);
                                                             AndroidReaderBridge.onHistoryPostFinished(status, urlStr);
                                                         } catch(e) {}
                                                     }
@@ -7665,7 +7662,8 @@ class MangaBuffAutomation(
                                                                     var csrfToken = csrfNode ? String(csrfNode.getAttribute('content') || '') : '';
                                                                     AndroidReaderBridge.onHistoryPostResponse(
                                                                         text || '',
-                                                                        csrfToken
+                                                                        csrfToken,
+                                                                        status
                                                                     );
 
                                                                     AndroidReaderBridge.onHistoryPostFinished(
