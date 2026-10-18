@@ -91,3 +91,23 @@ object DeckCommentToggleRegistry {
         enabledByAccount.remove(accountId)
     }
 }
+
+
+/**
+ * Live event-drop toggle. Persisted GlobalSettings is the fallback; this registry lets
+ * an already-running reader react immediately when the Events button is switched.
+ */
+object EventDropToggleRegistry {
+    private val enabledByAccount = ConcurrentHashMap<String, Boolean>()
+
+    fun setEnabled(accountId: String, enabled: Boolean) {
+        if (accountId.isNotBlank()) enabledByAccount[accountId] = enabled
+    }
+
+    fun isEnabled(accountId: String, fallback: Boolean): Boolean =
+        enabledByAccount[accountId] ?: fallback
+
+    fun remove(accountId: String) {
+        enabledByAccount.remove(accountId)
+    }
+}
