@@ -91,7 +91,8 @@ enum class TaskType(val title: String) {
     MINE("Шахта"),
     READER("Чтение манги"),
     COMMENT("Комментарии"),
-    PROMO("Промокод")
+    PROMO("Промокод"),
+    EVENTS("Events")
 }
 
 enum class TaskStatus {
