@@ -227,7 +227,8 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
 
                 OutlinedButton(
                     onClick = { openAutostartSettings(context) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Icon(Icons.Default.OpenInNew, contentDescription = null)
                     Spacer(Modifier.padding(horizontal = 3.dp))
@@ -236,7 +237,8 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
 
                 OutlinedButton(
                     onClick = { openAppInfo(context) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Icon(Icons.Default.OpenInNew, contentDescription = null)
                     Spacer(Modifier.padding(horizontal = 3.dp))
