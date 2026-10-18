@@ -2330,7 +2330,7 @@ class MangaBuffAutomation(
         // Dedicated event flow intentionally bypasses the reader WebView and its navigation.
         if (taskType == TaskType.EVENTS) {
             val success = try {
-                runEventsTask(account)
+                runEventsTask(account, settings, webView)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -2844,7 +2844,7 @@ class MangaBuffAutomation(
      *
      * It never spends candy, burns cards, or changes the chapter reader.
      */
-    private suspend fun runEventsTask(account: MangaBuffAccount): Boolean {
+    private suspend fun runEventsTask(account: MangaBuffAccount, settings: GlobalSettings, webView: WebView): Boolean {
         log(account.username, "EVENTS: START")
         updateStatus(account, "🎃 Events: проверка страницы", true, "Events", 0.15f)
 
@@ -2927,8 +2927,73 @@ class MangaBuffAutomation(
             log(account.username, "EVENTS: CAULDRON_NOT_READY")
         }
 
+        // 02 — first seven regular comments can earn 2 candies each.
+        // Reuse existing comment code only if its exact chapter is already open:
+        // Events must not navigate or alter the reader flow.
         coroutineContext.ensureActive()
-        updateStatus(account, "🎃 Events: проверка личной награды", true, "Events", 0.65f)
+        updateStatus(account, "🎃 Events: комментарии", true, "Events", 0.34f)
+        val readerTargetUrl = activeChapterContext
+            ?.takeIf { it.accountId == account.id }
+            ?.actualChapterUrl
+            ?.ifBlank { null }
+            ?: lastFinishedChapterUrl.ifBlank { null }
+        val currentWebViewUrl = withContext(Dispatchers.Main.immediate) {
+            webView.url.orEmpty().substringBefore('?').substringBefore('#')
+        }
+        val cleanReaderTarget = readerTargetUrl
+            ?.substringBefore('?')
+            ?.substringBefore('#')
+            .orEmpty()
+        val isChapterPage = Regex(
+            "^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+(?:\\.\\d+)?$"
+        ).matches(cleanReaderTarget)
+        val eventCommentSlots = (7 - dailyStats.comments.coerceAtLeast(0)).coerceAtLeast(0)
+        if (eventCommentSlots == 0) {
+            log(account.username, "EVENTS: COMMENTS_EVENT_LIMIT_REACHED used=${dailyStats.comments}/7")
+        } else if (isChapterPage && currentWebViewUrl == cleanReaderTarget) {
+            try {
+                log(account.username, "EVENTS: COMMENTS_START remainingEventComments=$eventCommentSlots")
+                runCommentTask(account, settings.copy(commentCount = eventCommentSlots), webView)
+                log(account.username, "EVENTS: COMMENTS_FINISHED dailyTotal=${dailyStats.comments}")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log(account.username, "EVENTS: COMMENTS_FAILED reason=${e.message}", true)
+            }
+        } else {
+            log(
+                account.username,
+                "EVENTS: COMMENTS_SKIPPED reason=no_matching_open_chapter " +
+                    "(current=$currentWebViewUrl target=${cleanReaderTarget.ifBlank { "none" }}); reader was not navigated"
+            )
+        }
+
+        // 03 — existing rewarded-ad routine, bounded by the current three-rewards/day limit.
+        coroutineContext.ensureActive()
+        updateStatus(account, "🎃 Events: реклама", true, "Events", 0.5f)
+        try {
+            val adsOkay = runAdsTask(account, webView)
+            log(account.username, "EVENTS: ADS_FINISHED success=$adsOkay")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log(account.username, "EVENTS: ADS_FAILED reason=${e.message}", true)
+        }
+
+        // 04 — scan and claim completed daily battle quests without starting new battles.
+        coroutineContext.ensureActive()
+        updateStatus(account, "🎃 Events: награды дейликов", true, "Events", 0.7f)
+        try {
+            val scanned = claimBattleRewards(account, webView)
+            log(account.username, "EVENTS: BATTLE_DAILY_REWARDS_SCAN completed=$scanned")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log(account.username, "EVENTS: BATTLE_DAILY_REWARDS_FAILED reason=${e.message}", true)
+        }
+
+        coroutineContext.ensureActive()
+        updateStatus(account, "🎃 Events: проверка личной награды", true, "Events", 0.82f)
 
         try {
             val state = requestEventEndpoint(
