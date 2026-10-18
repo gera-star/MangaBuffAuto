@@ -2905,8 +2905,95 @@ class MangaBuffAutomation(
      * contain a token and type. Claim that exact drop through the site's existing
      * endpoint instead of creating a second reader or changing chapter navigation.
      */
+    private suspend fun postReadingEventDropViaWebView(
+        webView: WebView,
+        token: String,
+        csrfToken: String
+    ): EventHttpResult {
+        val result = withTimeoutOrNull(15_000L) {
+            suspendCancellableCoroutine<EventHttpResult> { continuation ->
+                mainHandler.post {
+                    if (!continuation.isActive) return@post
+                    val tokenLiteral = JSONObject.quote(token)
+                    val csrfLiteral = JSONObject.quote(csrfToken)
+                    val script = """
+                        (function() {
+                            var token = $tokenLiteral;
+                            var csrf = $csrfLiteral;
+                            return fetch('https://mangabuff.ru/halloween/takeCandy?r=822', {
+                                method: 'POST',
+                                credentials: 'same-origin',
+                                headers: {
+                                    'Accept': '*/*',
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                    'X-CSRF-TOKEN': csrf,
+                                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                                },
+                                body: 'token=' + encodeURIComponent(token)
+                            }).then(function(response) {
+                                return response.text().then(function(body) {
+                                    return JSON.stringify({
+                                        status: response.status,
+                                        body: (body || '').slice(0, 1500),
+                                        url: response.url || location.href
+                                    });
+                                });
+                            }).catch(function(error) {
+                                return JSON.stringify({
+                                    status: 0,
+                                    body: String(error),
+                                    url: location.href
+                                });
+                            });
+                        })();
+                    """.trimIndent()
+                    try {
+                        webView.evaluateJavascript(script) { raw ->
+                            if (continuation.isActive) {
+                                val decoded = runCatching {
+                                    org.json.JSONTokener(raw ?: "null").nextValue() as? String
+                                }.getOrNull().orEmpty()
+                                val payload = runCatching { JSONObject(decoded) }.getOrNull()
+                                val response = if (payload != null) {
+                                    EventHttpResult(
+                                        code = payload.optInt("status", 0),
+                                        body = payload.optString("body").orEmpty(),
+                                        finalUrl = payload.optString("url").ifBlank { webView.url.orEmpty() }
+                                    )
+                                } else {
+                                    EventHttpResult(
+                                        code = 0,
+                                        body = "Could not parse WebView fetch result: ${raw.orEmpty().take(500)}",
+                                        finalUrl = webView.url.orEmpty()
+                                    )
+                                }
+                                continuation.resume(response)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (continuation.isActive) {
+                            continuation.resume(
+                                EventHttpResult(
+                                    code = 0,
+                                    body = e.message ?: e::class.java.simpleName,
+                                    finalUrl = webView.url.orEmpty()
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        return result ?: EventHttpResult(
+            code = 0,
+            body = "WebView event-drop request timed out after 15000ms",
+            finalUrl = webView.url.orEmpty()
+        )
+    }
+
     private suspend fun claimReadingEventDrop(
         account: MangaBuffAccount,
+        webView: WebView,
         token: String,
         type: String,
         pageCsrfToken: String,
@@ -2946,13 +3033,15 @@ class MangaBuffAutomation(
                 return
             }
 
-            val response = requestEventEndpoint(
-                account = account,
-                url = EVENTS_CANDY_TAKE_URL,
-                referer = referer.ifBlank { "https://mangabuff.ru/event/pack" },
-                accept = "*/*",
-                csrfToken = csrf,
-                postBody = FormBody.Builder().add("token", token).build()
+            log(
+                account.username,
+                "EVENTS: DROP_CLAIM_REQUEST source=READING_PAGE type=$type tokenLength=${token.length} " +
+                    "referer=${referer.ifBlank { "https://mangabuff.ru/event/pack" }}"
+            )
+            val response = postReadingEventDropViaWebView(
+                webView = webView,
+                token = token,
+                csrfToken = csrf
             )
             if (response.code == 200 && !response.finalUrl.contains("/login", ignoreCase = true)) {
                 val count = synchronized(eventDropClaimLock) {
@@ -7166,6 +7255,7 @@ class MangaBuffAutomation(
                     accountIoScope.launch {
                         claimReadingEventDrop(
                             account = account,
+                            webView = webView,
                             token = token,
                             type = type,
                             pageCsrfToken = csrfToken,
