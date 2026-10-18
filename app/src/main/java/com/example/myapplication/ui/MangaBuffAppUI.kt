@@ -963,6 +963,12 @@ fun TasksTab(
                             Modifier.weight(1f)
                         )
                         TaskActionButton(
+                            "🎃 Events",
+                            { onRunAll(TaskType.EVENTS) },
+                            actionEnabled,
+                            Modifier.weight(1f)
+                        )
+                        TaskActionButton(
                             "🎟️ Промокод",
                             onOpenPromoDialog,
                             actionEnabled,
