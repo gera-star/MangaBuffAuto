@@ -5602,7 +5602,7 @@ class MangaBuffAutomation(
                                         : (window.innerWidth || 384);
                                 var VERIFIED_CLOSE_FALLBACK_X =
                                     Math.max(20.0, verifiedViewportWidth - 30.0);
-                                var VERIFIED_CLOSE_FALLBACK_Y = 24.0;
+                                var VERIFIED_CLOSE_FALLBACK_Y = 64.0;
                                 var verifiedFallbackRequested = false;
 
                                 function verifyAfterNativeClose() {
