@@ -3095,6 +3095,7 @@ class MangaBuffAutomation(
                             if (window.__mbPumpkinAutoTapTimer) {
                                 clearInterval(window.__mbPumpkinAutoTapTimer);
                             }
+
                             var startedAt = Date.now();
                             var lastTapAt = 0;
                             var lastTarget = null;
@@ -3113,7 +3114,9 @@ class MangaBuffAutomation(
                             function attrsFor(el) {
                                 if (!el) return '';
                                 var values = [
-                                    el.id, el.className, el.getAttribute && el.getAttribute('alt'),
+                                    el.id,
+                                    typeof el.className === 'string' ? el.className : '',
+                                    el.getAttribute && el.getAttribute('alt'),
                                     el.getAttribute && el.getAttribute('title'),
                                     el.getAttribute && el.getAttribute('aria-label'),
                                     el.getAttribute && el.getAttribute('src'),
@@ -3142,6 +3145,16 @@ class MangaBuffAutomation(
                                 return false;
                             }
 
+                            function looksLikeHeartOrReaction(el) {
+                                var node = el;
+                                for (var depth = 0; node && depth < 4; depth++, node = node.parentElement) {
+                                    if (/(heart|favorite|favourite|wishlist|like[-_ ]?(button|count|icon)?|reaction|любим|лайк|серд|нравится)/i.test(attrsFor(node))) {
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            }
+
                             function imageLike(el) {
                                 var tag = (el.tagName || '').toLowerCase();
                                 if (tag === 'img' || tag === 'svg' || tag === 'canvas') return true;
@@ -3162,27 +3175,40 @@ class MangaBuffAutomation(
                                 return false;
                             }
 
-                            function hasFloatingLayer(el) {
-                                var node = el;
-                                for (var depth = 0; node && depth < 5; depth++, node = node.parentElement) {
-                                    var style = window.getComputedStyle(node);
-                                    if (style.position === 'fixed') return true;
-                                    if (style.position === 'absolute' && parseInt(style.zIndex, 10) >= 10) return true;
-                                }
-                                return false;
+                            function inPumpkinZone(el) {
+                                if (!visible(el)) return false;
+                                var r = el.getBoundingClientRect();
+                                var w = window.innerWidth || document.documentElement.clientWidth || 1;
+                                var h = window.innerHeight || document.documentElement.clientHeight || 1;
+                                var cx = r.left + r.width / 2;
+                                var cy = r.top + r.height / 2;
+
+                                // The pumpkin in the supplied screenshot is centered near the bottom.
+                                // The heart and normal reader controls sit well outside this narrow area.
+                                return cx >= w * 0.38 && cx <= w * 0.62 &&
+                                    cy >= h * 0.86 && cy <= h * 0.995 &&
+                                    r.width >= 28 && r.height >= 20 &&
+                                    r.width <= w * 0.40 && r.height <= h * 0.18;
                             }
 
-                            function clickTarget(el) {
+                            function hasDedicatedFloatingLayer(el) {
                                 var node = el;
-                                for (var depth = 0; depth < 4 && node.parentElement; depth++) {
-                                    var parent = node.parentElement;
-                                    if (isMangaCard(parent)) break;
-                                    if (parent.matches && parent.matches('button,a,[role="button"]')) return parent;
-                                    var pr = parent.getBoundingClientRect();
-                                    if (pr.width > 240 || pr.height > 240) break;
-                                    node = parent;
+                                var w = window.innerWidth || document.documentElement.clientWidth || 1;
+                                var h = window.innerHeight || document.documentElement.clientHeight || 1;
+
+                                for (var depth = 0; node && depth < 5; depth++, node = node.parentElement) {
+                                    var style = window.getComputedStyle(node);
+                                    if (style.position !== 'fixed' && style.position !== 'absolute') continue;
+
+                                    var r = node.getBoundingClientRect();
+                                    // A full-width fixed bottom toolbar is not the pumpkin layer.
+                                    if (r.width > w * 0.42 || r.height > h * 0.20) return false;
+                                    if (r.width < 24 || r.height < 18) continue;
+
+                                    var z = parseInt(style.zIndex || '0', 10);
+                                    return style.position === 'fixed' || z >= 10;
                                 }
-                                return el;
+                                return false;
                             }
 
                             function tap(el) {
@@ -3216,63 +3242,54 @@ class MangaBuffAutomation(
                                     window.__mbPumpkinAutoTapTimer = null;
                                     return;
                                 }
+
                                 var nodes = document.querySelectorAll(
                                     'img,svg,canvas,[style*="background-image"],' +
                                     '[class*="pumpkin" i],[id*="pumpkin" i],' +
                                     '[class*="halloween" i],[id*="halloween" i],' +
-                                    '[aria-label],[title]'
+                                    '[class*="event-drop" i],[id*="event-drop" i],' +
+                                    '[class*="candy-drop" i],[id*="candy-drop" i]'
                                 );
                                 var candidates = [];
+
                                 for (var i = 0; i < nodes.length; i++) {
                                     var el = nodes[i];
-                                    if (!visible(el)) continue;
-                                    var r = el.getBoundingClientRect();
-                                    var cx = r.left + r.width / 2;
-                                    var cy = r.top + r.height / 2;
-                                    var bottomCenter = cx >= window.innerWidth * 0.20 &&
-                                        cx <= window.innerWidth * 0.80 &&
-                                        cy >= window.innerHeight * 0.52 &&
-                                        cy <= window.innerHeight * 0.98;
-                                    if (!bottomCenter) continue;
+                                    if (!inPumpkinZone(el)) continue;
+                                    if (looksLikeHeartOrReaction(el)) continue;
+                                    if (isMangaCard(el)) continue;
 
                                     var marked = pumpkinMarked(el);
-                                    if (!marked && !imageLike(el)) continue;
+                                    // Never tap an arbitrary toolbar icon based only on position.
+                                    // Unmarked candidates must be image-like and have their own
+                                    // small floating layer in the pumpkin zone.
+                                    if (!marked && (!imageLike(el) || !hasDedicatedFloatingLayer(el))) continue;
 
-                                    var target = clickTarget(el);
-                                    if (!visible(target)) continue;
-                                    if (isMangaCard(el) || isMangaCard(target)) continue;
-                                    var tr = target.getBoundingClientRect();
-                                    if (tr.width > 240 || tr.height > 240) continue;
-
-                                    // Do not identify a pumpkin by size/position alone:
-                                    // normal manga cards are in this area too.
-                                    var floating = hasFloatingLayer(el) || hasFloatingLayer(target);
-                                    if (!marked && !floating) continue;
                                     candidates.push({
-                                        el: target,
+                                        el: el,
                                         marked: marked,
-                                        floating: floating,
-                                        area: tr.width * tr.height
+                                        area: el.getBoundingClientRect().width * el.getBoundingClientRect().height
                                     });
                                 }
+
                                 candidates.sort(function(a, b) {
                                     if (a.marked !== b.marked) return a.marked ? -1 : 1;
-                                    if (a.floating !== b.floating) return a.floating ? -1 : 1;
                                     return a.area - b.area;
                                 });
+
                                 if (!candidates.length) {
                                     lastTarget = null;
                                     return;
                                 }
+
                                 var target = candidates[0].el;
-                                if (Date.now() - lastTapAt < 160 && target === lastTarget) return;
-                                lastTapAt = Date.now();
+                                if (target === lastTarget && Date.now() - lastTapAt < 360) return;
                                 lastTarget = target;
+                                lastTapAt = Date.now();
                                 tap(target);
                             }
 
                             scan();
-                            window.__mbPumpkinAutoTapTimer = setInterval(scan, 180);
+                            window.__mbPumpkinAutoTapTimer = setInterval(scan, 220);
                         } catch (_) {}
                     })();
                     """.trimIndent(),
