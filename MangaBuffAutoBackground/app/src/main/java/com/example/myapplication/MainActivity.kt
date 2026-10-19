@@ -658,6 +658,10 @@ private fun MovableWebControls(
             onClick = {
                 val x = tapX * maxLeft + buttonPx / 2f
                 val y = tapY * maxTop + buttonPx / 2f
+                android.util.Log.i(
+                    "MangaBuffAuto",
+                    "ADS: FLOATING_CLOSE_TAP px=$x,$y webView=${webView.width}x${webView.height}"
+                )
                 dispatchMovableFingerTap(webView, x, y)
             }
         )
@@ -725,7 +729,7 @@ private fun MovableWebCircle(
                 CircleShape
             )
             .clip(CircleShape)
-            .background(Color(0xF0171A24))
+            .background(if (glyph == "×") Color(0x70171A24) else Color(0xF0171A24))
             .pointerInput(areaSize) {
                 var initialLeft = 0f
                 var initialTop = 0f
@@ -790,10 +794,10 @@ private fun dispatchMovableFingerTap(
         val coordinates = android.view.MotionEvent.PointerCoords().apply {
             this.x = px
             this.y = py
-            pressure = 0.85f
-            size = 0.18f
-            touchMajor = 22f
-            touchMinor = 18f
+            pressure = 1.0f
+            size = 0.35f
+            touchMajor = 48f
+            touchMinor = 42f
             orientation = 0f
         }
         return android.view.MotionEvent.obtain(
