@@ -12316,7 +12316,7 @@ class MangaBuffAutomation(
         log(
             account.username,
             "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} " +
-                "perRunLimit=8 dailyLimit=$DECK_COMMENT_DAILY_LIMIT dailyUsed=$dailyDeckAttemptCount gapSec=40"
+                "perRunLimit=8 dailyLimit=$DECK_COMMENT_DAILY_LIMIT dailyUsed=$dailyDeckAttemptCount gapSecRange=60..138"
         )
 
         for ((index, deck) in targetDecks.withIndex()) {
