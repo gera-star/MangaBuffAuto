@@ -3080,10 +3080,11 @@ class MangaBuffAutomation(
     }
 
     /**
-     * Pumpkin drops float over the bottom-center reader controls. Do not scan the whole
-     * lower half of the page: that also matches manga-card artwork. Restrict candidates
-     * to the narrow area where the pumpkin actually appears and keep tapping it until
-     * the image disappears or moves away.
+     * Coordinates the existing reader candy collector with pumpkin collection.
+     *
+     * Candy clicks are handled by the reader's established event-gift-ball routine below.
+     * This controller only waits for confirmed candy collection, then clicks the exact
+     * div.event-bag repeatedly until it disappears before releasing the next candy cycle.
      */
     private fun installReadingEventPumpkinAutoTap(webView: WebView) {
         mainHandler.post {
@@ -3096,178 +3097,63 @@ class MangaBuffAutomation(
                                 clearInterval(window.__mbPumpkinAutoTapTimer);
                             }
 
+                            // Keep state when the controller is reinjected into the same document.
+                            if (window.__mbEventDropPhase !== 'candy' &&
+                                window.__mbEventDropPhase !== 'pumpkin') {
+                                window.__mbEventDropPhase = 'candy';
+                            }
+                            if (window.__mbEventDropPhase === 'pumpkin' &&
+                                !window.__mbPumpkinPhaseStartedAt) {
+                                window.__mbPumpkinPhaseStartedAt = Date.now();
+                            }
+
                             var startedAt = Date.now();
                             var lastTapAt = 0;
-                            var lastTarget = null;
+                            var lastSeenPumpkin = false;
                             var pumpkinAbsentSince = 0;
+                            var tapCount = 0;
+
+                            function logStep(message) {
+                                try {
+                                    if (window.AndroidReaderBridge &&
+                                        window.AndroidReaderBridge.onLogStep) {
+                                        window.AndroidReaderBridge.onLogStep(message);
+                                    }
+                                } catch (_) {}
+                            }
 
                             function visible(el) {
                                 if (!el || !el.isConnected) return false;
                                 var style = window.getComputedStyle(el);
-                                if (style.display === 'none' || style.visibility === 'hidden' ||
-                                    Number(style.opacity) === 0 || style.pointerEvents === 'none') return false;
+                                if (style.display === 'none' ||
+                                    style.visibility === 'hidden' ||
+                                    Number(style.opacity) === 0 ||
+                                    style.pointerEvents === 'none') return false;
                                 var r = el.getBoundingClientRect();
                                 return r.width >= 12 && r.height >= 12 &&
                                     r.bottom > 0 && r.right > 0 &&
                                     r.top < window.innerHeight && r.left < window.innerWidth;
                             }
 
-                            function attrsFor(el) {
-                                if (!el) return '';
-                                var values = [
-                                    el.id,
-                                    typeof el.className === 'string' ? el.className : '',
-                                    el.getAttribute && el.getAttribute('alt'),
-                                    el.getAttribute && el.getAttribute('title'),
-                                    el.getAttribute && el.getAttribute('aria-label'),
-                                    el.getAttribute && el.getAttribute('src'),
-                                    el.getAttribute && el.getAttribute('href'),
-                                    el.getAttribute && el.getAttribute('style')
-                                ];
+                            function resetUncollectedCandyClickFlags() {
                                 try {
-                                    if (el.attributes) {
-                                        for (var i = 0; i < el.attributes.length; i++) {
-                                            values.push(el.attributes[i].name, el.attributes[i].value);
-                                        }
+                                    var drops = document.querySelectorAll(
+                                        'div.event-gift-ball:not(.event-gift-ball--collected)'
+                                    );
+                                    for (var i = 0; i < drops.length; i++) {
+                                        drops[i].__mbEventDropClicked = false;
                                     }
-                                    var style = window.getComputedStyle(el);
-                                    values.push(style.backgroundImage, style.animationName);
                                 } catch (_) {}
-                                return values.join(' ');
                             }
 
-                            function isHeartOrReaction(el) {
-                                var node = el;
-                                for (var depth = 0; node && depth < 5; depth++, node = node.parentElement) {
-                                    if (/(heart|favorite|favourite|wishlist|like|reaction|любим|лайк|серд|нравится|support|donat)/i.test(attrsFor(node))) {
-                                        return true;
-                                    }
-                                    if (node.matches && node.matches('button,a,[role="button"]')) {
-                                        var label = [
-                                            node.innerText || '',
-                                            node.getAttribute('aria-label') || '',
-                                            node.getAttribute('title') || ''
-                                        ].join(' ');
-                                        if (/(heart|favorite|like|reaction|любим|лайк|серд|нравится|поддерж|донат)/i.test(label)) return true;
-                                    }
-                                }
-                                return false;
-                            }
-
-                            function isPumpkinMarked(el) {
-                                var node = el;
-                                for (var depth = 0; node && depth < 5; depth++, node = node.parentElement) {
-                                    // The actual reader pumpkin is a div with the exact class "event-bag".
-                                    if (node.matches && node.matches('div.event-bag')) return true;
-                                    if (/(pumpkin|тыкв|halloween|event[-_ ]?drop|event[-_ ]?bag|candy[-_ ]?drop|gift[-_ ]?drop)/i.test(attrsFor(node))) {
-                                        return true;
-                                    }
-                                }
-                                return false;
-                            }
-
-                            function isCandyMarked(el) {
-                                var node = el;
-                                for (var depth = 0; node && depth < 4; depth++, node = node.parentElement) {
-                                    if (node.matches && node.matches('div.event-gift-ball:not(.event-gift-ball--collected)')) return true;
-                                    if (/(event[-_ ]?candy|event[-_ ]?gift[-_ ]?ball|candy[-_ ]?drop|candy[-_ ]?pickup|конфетк|конфета)/i.test(attrsFor(node))) {
-                                        return true;
-                                    }
-                                }
-                                return false;
-                            }
-
-                            function isMangaCard(el) {
-                                var node = el;
-                                for (var depth = 0; node && depth < 6; depth++, node = node.parentElement) {
-                                    var href = node.getAttribute ? (node.getAttribute('href') || '') : '';
-                                    var text = String(node.className || '') + ' ' + String(node.id || '');
-                                    if (/\/manga(?:\/|\?|#)/i.test(href) ||
-                                        /(manga[-_ ]?(card|item|cover)|catalog[-_ ]?(card|item)|chapter[-_ ]?card|swiper-slide)/i.test(text)) {
-                                        return true;
-                                    }
-                                }
-                                return false;
-                            }
-
-                            function clickTarget(el) {
-                                var node = el;
-                                for (var depth = 0; node && depth < 3 && node.parentElement; depth++) {
-                                    var parent = node.parentElement;
-                                    if (isMangaCard(parent) || isHeartOrReaction(parent)) break;
-                                    if (parent.matches && parent.matches('button,[role="button"]')) return parent;
-                                    var r = parent.getBoundingClientRect();
-                                    if (r.width > 240 || r.height > 180) break;
-                                    node = parent;
-                                }
-                                return el;
-                            }
-
-                            function tap(el) {
-                                if (!el || !visible(el) || isHeartOrReaction(el) || isMangaCard(el)) return false;
-                                var r = el.getBoundingClientRect();
-                                var x = Math.round(r.left + r.width / 2);
-                                var y = Math.round(r.top + r.height / 2);
-                                try {
-                                    el.dispatchEvent(new PointerEvent('pointerdown', {
-                                        bubbles: true, cancelable: true, clientX: x, clientY: y,
-                                        pointerType: 'touch', isPrimary: true
-                                    }));
-                                    el.dispatchEvent(new PointerEvent('pointerup', {
-                                        bubbles: true, cancelable: true, clientX: x, clientY: y,
-                                        pointerType: 'touch', isPrimary: true
-                                    }));
-                                } catch (_) {}
-                                try {
-                                    el.dispatchEvent(new MouseEvent('mousedown', {
-                                        bubbles: true, cancelable: true, clientX: x, clientY: y
-                                    }));
-                                    el.dispatchEvent(new MouseEvent('mouseup', {
-                                        bubbles: true, cancelable: true, clientX: x, clientY: y
-                                    }));
-                                } catch (_) {}
-                                try { el.click(); } catch (_) {}
-                                return true;
-                            }
-
-                            function findMarked(kind) {
-                                var selectors = kind === 'pumpkin' ? [
-                                    'div.event-bag',
-                                    '[class*="pumpkin" i]', '[id*="pumpkin" i]',
-                                    '[alt*="pumpkin" i]', '[title*="pumpkin" i]',
-                                    '[aria-label*="pumpkin" i]',
-                                    '[class*="тыкв" i]', '[id*="тыкв" i]',
-                                    '[class*="halloween" i]', '[id*="halloween" i]',
-                                    '[class*="event-drop" i]', '[id*="event-drop" i]',
-                                    '[src*="pumpkin" i]', '[src*="halloween" i]', '[src*="event-drop" i]',
-                                    '[style*="pumpkin" i]', '[style*="halloween" i]'
-                                ] : [
-                                    'div.event-gift-ball:not(.event-gift-ball--collected)',
-                                    '[class*="event-candy" i]', '[id*="event-candy" i]',
-                                    '[class*="candy-drop" i]', '[id*="candy-drop" i]',
-                                    '[class*="candy-pickup" i]', '[id*="candy-pickup" i]',
-                                    '[class*="конфетк" i]', '[id*="конфетк" i]',
-                                    '[alt*="candy" i]', '[title*="candy" i]',
-                                    '[aria-label*="candy" i]', '[src*="candy" i]',
-                                    '[style*="candy" i]'
-                                ];
-                                var nodes = document.querySelectorAll(selectors.join(','));
-                                var candidates = [];
-                                for (var i = 0; i < nodes.length; i++) {
-                                    var el = nodes[i];
-                                    if (!visible(el) || isHeartOrReaction(el) || isMangaCard(el)) continue;
-                                    if (el.id === 'mangabuff-reading-candy-counter') continue;
-                                    var marked = kind === 'pumpkin' ? isPumpkinMarked(el) : isCandyMarked(el);
-                                    if (!marked) continue;
-                                    var target = clickTarget(el);
-                                    if (!visible(target) || isHeartOrReaction(target) || isMangaCard(target)) continue;
-                                    if (target.id === 'mangabuff-reading-candy-counter') continue;
-                                    var r = target.getBoundingClientRect();
-                                    if (r.width > window.innerWidth * 0.45 || r.height > window.innerHeight * 0.22) continue;
-                                    candidates.push({el: target, area: r.width * r.height});
-                                }
-                                candidates.sort(function(a,b) { return a.area - b.area; });
-                                return candidates.length ? candidates[0].el : null;
+                            function returnToCandyPhase(reason) {
+                                window.__mbEventDropPhase = 'candy';
+                                window.__mbPumpkinPhaseStartedAt = 0;
+                                lastSeenPumpkin = false;
+                                pumpkinAbsentSince = 0;
+                                lastTapAt = 0;
+                                resetUncollectedCandyClickFlags();
+                                logStep('EVENTS: PHASE pumpkin -> candy reason=' + reason);
                             }
 
                             function scan() {
@@ -3277,45 +3163,50 @@ class MangaBuffAutomation(
                                     return;
                                 }
 
-                                // Strict two-stage state machine:
-                                // 1) tap the normal event candy exactly once;
-                                // 2) only then search for the pumpkin and repeat taps on it.
-                                // Never use position-only guesses or generic "candy" classes
-                                // while looking for the pumpkin (those can match unrelated UI).
+                                // The reader's original candy routine owns this phase.
+                                // Do not independently click candies here.
                                 if (window.__mbEventDropPhase !== 'pumpkin') {
-                                    var candy = findMarked('candy');
-                                    if (!candy) {
-                                        lastTarget = null;
-                                        return;
-                                    }
-                                    if (candy === lastTarget && Date.now() - lastTapAt < 700) return;
-                                    lastTarget = candy;
-                                    lastTapAt = Date.now();
-                                    if (tap(candy)) {
-                                        window.__mbEventDropPhase = 'pumpkin';
-                                        lastTarget = null;
-                                        pumpkinAbsentSince = Date.now();
+                                    lastSeenPumpkin = false;
+                                    pumpkinAbsentSince = 0;
+                                    return;
+                                }
+
+                                // Exact selector confirmed by DevTools; never guess by position
+                                // or search generic images/classes that might be manga cards.
+                                var pumpkin = document.querySelector('div.event-bag');
+                                if (!visible(pumpkin)) {
+                                    if (lastSeenPumpkin) {
+                                        if (!pumpkinAbsentSince) pumpkinAbsentSince = Date.now();
+                                        if (Date.now() - pumpkinAbsentSince >= 900) {
+                                            returnToCandyPhase('element_disappeared');
+                                        }
+                                    } else {
+                                        // Give the site time to spawn the pumpkin after the candy
+                                        // was collected, without getting stuck forever if none appears.
+                                        var phaseStarted = Number(window.__mbPumpkinPhaseStartedAt || 0);
+                                        if (phaseStarted > 0 && Date.now() - phaseStarted >= 12000) {
+                                            returnToCandyPhase('spawn_timeout');
+                                        }
                                     }
                                     return;
                                 }
 
-                                var pumpkin = findMarked('pumpkin');
-                                if (!pumpkin) {
-                                    // Pumpkin disappears after being collected. Return to the
-                                    // candy stage only after it has been absent for a short pause.
-                                    if (!pumpkinAbsentSince) pumpkinAbsentSince = Date.now();
-                                    if (Date.now() - pumpkinAbsentSince >= 900) {
-                                        window.__mbEventDropPhase = 'candy';
-                                        lastTarget = null;
-                                    }
-                                    return;
-                                }
-
+                                lastSeenPumpkin = true;
                                 pumpkinAbsentSince = 0;
-                                if (pumpkin === lastTarget && Date.now() - lastTapAt < 260) return;
-                                lastTarget = pumpkin;
+                                if (Date.now() - lastTapAt < 260) return;
                                 lastTapAt = Date.now();
-                                tap(pumpkin);
+
+                                // One click per pass. Repeating every 260 ms emulates repeated taps;
+                                // stop only after the exact .event-bag element disappears.
+                                try {
+                                    pumpkin.click();
+                                    tapCount++;
+                                    if (tapCount === 1 || tapCount % 5 === 0) {
+                                        logStep('EVENTS: PUMPKIN_TAP count=' + tapCount);
+                                    }
+                                } catch (error) {
+                                    logStep('EVENTS: PUMPKIN_CLICK_ERROR ' + String(error));
+                                }
                             }
 
                             scan();
@@ -10163,71 +10054,97 @@ class MangaBuffAutomation(
                                             }, 1000);
                                         }
 
-                                        // Use the existing reading-candy click routine for any numbered
-                                        // event-gift-ball variant (for example event-gift-ball-3).
-                                        // Successful collection adds event-gift-ball--collected.
-                                        try {
-                                            var drop = document.querySelector(
-                                                '.event-gift-ball:not(.event-gift-ball--collected)'
-                                            );
-                                            if (drop && !drop.__mbEventDropClicked) {
-                                                var s = getComputedStyle(drop);
-                                                var rect = drop.getBoundingClientRect();
-                                                var isVisible = s.display !== 'none' &&
-                                                    s.visibility !== 'hidden' &&
-                                                    Number(s.opacity || 1) > 0 &&
-                                                    rect.width > 0 && rect.height > 0 &&
-                                                    rect.bottom > 0 && rect.top < innerHeight &&
-                                                    rect.right > 0 && rect.left < innerWidth;
-                                                if (isVisible) {
-                                                    drop.__mbEventDropClicked = true;
-                                                    AndroidReaderBridge.onEventDropClickAttempt(
-                                                        String(drop.className || ''),
-                                                        String(drop.id || ''),
-                                                        'event-gift-ball'
-                                                    );
-                                                    try {
-                                                        AndroidReaderBridge.onLogStep(
-                                                            'EVENTS: CANDY_FOUND class=' + String(drop.className || '')
+                                        // The reader's existing click path is the sole candy collector.
+                                        // Pause it while the pumpkin is being tapped so both automations
+                                        // cannot race or switch phases independently.
+                                        if (window.__mbEventDropPhase !== 'pumpkin') {
+                                            try {
+                                                var drop = document.querySelector(
+                                                    'div.event-gift-ball:not(.event-gift-ball--collected)'
+                                                );
+                                                if (drop && !drop.__mbEventDropClicked) {
+                                                    var style = getComputedStyle(drop);
+                                                    var rect = drop.getBoundingClientRect();
+                                                    var isVisible = style.display !== 'none' &&
+                                                        style.visibility !== 'hidden' &&
+                                                        Number(style.opacity || 1) > 0 &&
+                                                        rect.width > 0 && rect.height > 0 &&
+                                                        rect.bottom > 0 && rect.top < innerHeight &&
+                                                        rect.right > 0 && rect.left < innerWidth;
+                                                    if (isVisible) {
+                                                        drop.__mbEventDropClicked = true;
+                                                        AndroidReaderBridge.onEventDropClickAttempt(
+                                                            String(drop.className || ''),
+                                                            String(drop.id || ''),
+                                                            'event-gift-ball'
                                                         );
-                                                    } catch(ignore) {}
-
-                                                    // Same simple DOM click used for the working card gift.
-                                                    try { drop.click(); } catch(clickError) {
                                                         try {
                                                             AndroidReaderBridge.onLogStep(
-                                                                'EVENTS: CANDY_CLICK_ERROR ' + String(clickError)
+                                                                'EVENTS: CANDY_FOUND class=' + String(drop.className || '')
                                                             );
                                                         } catch(ignore) {}
-                                                    }
 
-                                                    // Confirm that MangaBuff changed the element to its collected state.
-                                                    setTimeout(function() {
+                                                        // Keep the already-used, working DOM click for candy.
                                                         try {
-                                                            if (!drop || !drop.isConnected) {
+                                                            drop.click();
+                                                        } catch(clickError) {
+                                                            try {
                                                                 AndroidReaderBridge.onLogStep(
-                                                                    'EVENTS: CANDY_RESULT element_removed=true'
+                                                                    'EVENTS: CANDY_CLICK_ERROR ' + String(clickError)
                                                                 );
-                                                            } else {
-                                                                var collected = drop.classList.contains(
-                                                                    'event-gift-ball--collected'
-                                                                );
+                                                            } catch(ignore) {}
+                                                        }
+
+                                                        var verifyStartedAt = Date.now();
+                                                        var verifyCandyResult = function() {
+                                                            try {
+                                                                var removed = !drop || !drop.isConnected;
+                                                                var collected = !removed &&
+                                                                    drop.classList.contains('event-gift-ball--collected');
+                                                                if (removed || collected) {
+                                                                    if (window.__mbEventDropPhase !== 'pumpkin') {
+                                                                        window.__mbEventDropPhase = 'pumpkin';
+                                                                        window.__mbPumpkinPhaseStartedAt = Date.now();
+                                                                        window.__mbPumpkinTapCount = 0;
+                                                                        AndroidReaderBridge.onLogStep(
+                                                                            'EVENTS: CANDY_RESULT collected=true removed=' + removed +
+                                                                            ' -> pumpkin phase'
+                                                                        );
+                                                                    }
+                                                                    return;
+                                                                }
+
+                                                                // Give the page up to 2.5 seconds to update the
+                                                                // collected class/remove the ball before retrying.
+                                                                if (Date.now() - verifyStartedAt < 2500) {
+                                                                    setTimeout(verifyCandyResult, 200);
+                                                                    return;
+                                                                }
+
                                                                 AndroidReaderBridge.onLogStep(
-                                                                    'EVENTS: CANDY_RESULT collected=' + collected +
-                                                                    ' class=' + String(drop.className || '')
+                                                                    'EVENTS: CANDY_RESULT collected=false class=' +
+                                                                    String(drop && drop.className || '') +
+                                                                    '; will retry'
                                                                 );
-                                                                if (!collected) drop.__mbEventDropClicked = false;
+                                                                if (drop && drop.isConnected) {
+                                                                    drop.__mbEventDropClicked = false;
+                                                                }
+                                                            } catch(ignore) {
+                                                                if (drop && drop.isConnected) {
+                                                                    drop.__mbEventDropClicked = false;
+                                                                }
                                                             }
-                                                        } catch(ignore) {}
-                                                    }, 350);
+                                                        };
+                                                        setTimeout(verifyCandyResult, 180);
+                                                    }
                                                 }
+                                            } catch(e) {
+                                                try {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'EVENTS: CANDY_CLICK_ERROR ' + String(e)
+                                                    );
+                                                } catch(ignore) {}
                                             }
-                                        } catch(e) {
-                                            try {
-                                                AndroidReaderBridge.onLogStep(
-                                                    'EVENTS: CANDY_CLICK_ERROR ' + String(e)
-                                                );
-                                            } catch(ignore) {}
                                         }
                                     }, 700);
 
