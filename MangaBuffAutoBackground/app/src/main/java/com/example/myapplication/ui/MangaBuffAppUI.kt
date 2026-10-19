@@ -479,9 +479,110 @@ fun MangaBuffAppUI(
                             wv.settings.domStorageEnabled = true
                             wv.settings.databaseEnabled = true
 
-                            // Do not manually reload every HTTP(S) link in shouldOverrideUrlLoading:
-                            // it bypasses the WebView's normal click/navigation handling used by site menus.
-                            wv.webViewClient = WebViewClient()
+                            // Keep the site's native navigation behavior, but repair profile popups
+                            // that the balance page positions partly above the WebView viewport.
+                            wv.webViewClient = object : WebViewClient() {
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    super.onPageFinished(view, url)
+                                    view?.evaluateJavascript(
+                                        """
+                                        (function() {
+                                            if (window.__mbBalancePopupGuard) return;
+                                            window.__mbBalancePopupGuard = true;
+
+                                            var popupSelectors = [
+                                                '[role="menu"]',
+                                                '[role="dialog"]',
+                                                '[class*="dropdown"]',
+                                                '[class*="popover"]',
+                                                '[class*="profile-menu"]',
+                                                '[class*="user-menu"]',
+                                                '[class*="account-menu"]',
+                                                '[class*="popup"]',
+                                                '[class*="menu"]'
+                                            ].join(',');
+
+                                            function repairPopups() {
+                                                try {
+                                                    var nodes = document.querySelectorAll(popupSelectors);
+                                                    for (var i = 0; i < nodes.length; i++) {
+                                                        var el = nodes[i];
+                                                        if (!el || el === document.body || el === document.documentElement) continue;
+                                                        var cs = window.getComputedStyle(el);
+                                                        if (cs.display === 'none' || cs.visibility === 'hidden' ||
+                                                            Number(cs.opacity) === 0 || cs.pointerEvents === 'none') continue;
+
+                                                        var r = el.getBoundingClientRect();
+                                                        if (r.width < 70 || r.height < 28 ||
+                                                            r.width > window.innerWidth * 0.94 ||
+                                                            r.height > window.innerHeight * 0.9) continue;
+
+                                                        // Only intervene when a floating menu is actually clipped by an edge.
+                                                        var above = r.top < 8;
+                                                        var below = r.bottom > window.innerHeight - 8;
+                                                        var leftOff = r.left < 4;
+                                                        var rightOff = r.right > window.innerWidth - 4;
+                                                        if (!above && !below && !leftOff && !rightOff) continue;
+
+                                                        var top = Math.max(8, Math.min(r.top, window.innerHeight - r.height - 8));
+                                                        var left = Math.max(4, Math.min(r.left, window.innerWidth - r.width - 4));
+
+                                                        // If an ancestor clips overflow, allow the popup to escape it.
+                                                        var parent = el.parentElement;
+                                                        var depth = 0;
+                                                        while (parent && parent !== document.body && depth < 5) {
+                                                            var ps = window.getComputedStyle(parent);
+                                                            if (/(hidden|clip)/.test(ps.overflow + ' ' + ps.overflowY + ' ' + ps.overflowX)) {
+                                                                parent.style.setProperty('overflow', 'visible', 'important');
+                                                                parent.style.setProperty('overflow-y', 'visible', 'important');
+                                                                parent.style.setProperty('overflow-x', 'visible', 'important');
+                                                            }
+                                                            parent = parent.parentElement;
+                                                            depth++;
+                                                        }
+
+                                                        el.style.setProperty('position', 'fixed', 'important');
+                                                        el.style.setProperty('top', top + 'px', 'important');
+                                                        el.style.setProperty('left', left + 'px', 'important');
+                                                        el.style.setProperty('right', 'auto', 'important');
+                                                        el.style.setProperty('bottom', 'auto', 'important');
+                                                        el.style.setProperty('transform', 'none', 'important');
+                                                        el.style.setProperty('margin', '0', 'important');
+                                                        el.style.setProperty('z-index', '2147483647', 'important');
+                                                        el.style.setProperty('max-height', (window.innerHeight - 16) + 'px', 'important');
+                                                        el.style.setProperty('overflow-y', 'auto', 'important');
+                                                    }
+                                                } catch (e) {}
+                                            }
+
+                                            var repairTimer = null;
+                                            function scheduleRepair() {
+                                                if (repairTimer) clearTimeout(repairTimer);
+                                                // Menus are sometimes inserted after the avatar click animation.
+                                                [0, 50, 120, 250, 500, 800].forEach(function(delay) {
+                                                    setTimeout(repairPopups, delay);
+                                                });
+                                            }
+
+                                            document.addEventListener('click', scheduleRepair, true);
+                                            document.addEventListener('touchend', scheduleRepair, true);
+                                            document.addEventListener('pointerup', scheduleRepair, true);
+
+                                            try {
+                                                new MutationObserver(scheduleRepair).observe(document.documentElement, {
+                                                    childList: true, subtree: true, attributes: true,
+                                                    attributeFilter: ['class', 'style', 'aria-expanded', 'aria-hidden']
+                                                });
+                                            } catch (e) {}
+
+                                            window.addEventListener('resize', scheduleRepair);
+                                            window.addEventListener('scroll', scheduleRepair, true);
+                                        })();
+                                        """.trimIndent(),
+                                        null
+                                    )
+                                }
+                            }
 
                             val balanceUrl = "https://mangabuff.ru/balance"
                             val existingCookies = runCatching {
