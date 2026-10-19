@@ -9893,8 +9893,9 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
+                                            var targetSpeed = ${siteAutoscrollHalfSpeed} ? '225' : '450';
                                             try {
-                                                speed.value = '450';
+                                                speed.value = targetSpeed;
                                                 speed.dispatchEvent(new Event('input', { bubbles: true }));
                                                 speed.dispatchEvent(new Event('change', { bubbles: true }));
                                             } catch(e) {
@@ -9903,7 +9904,7 @@ class MangaBuffAutomation(
                                             }
 
                                             var valueLabel = popup.querySelector('[data-reader-value="speed"]');
-                                            if (valueLabel) valueLabel.textContent = '450';
+                                            if (valueLabel) valueLabel.textContent = targetSpeed;
 
                                             var toggle = popup.querySelector('[data-reader-autoscroll-enabled]');
                                             if (!toggle) {
