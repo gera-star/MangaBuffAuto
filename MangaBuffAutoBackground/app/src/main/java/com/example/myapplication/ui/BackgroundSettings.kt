@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -30,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -122,7 +125,10 @@ private fun hasNotifications(context: Context): Boolean =
         ) == PackageManager.PERMISSION_GRANTED
 
 @Composable
-fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
+fun BackgroundSettingsDialog(
+    onDismiss: () -> Unit,
+    onOpenAbout: () -> Unit = {}
+) {
     val context = LocalContext.current
     var refreshKey by remember { mutableStateOf(0) }
 
@@ -132,7 +138,25 @@ fun BackgroundSettingsDialog(onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Фоновая работа") },
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                TextButton(
+                    onClick = onOpenAbout,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 0.dp,
+                        vertical = 2.dp
+                    )
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("О программе")
+                }
+                Text(
+                    "Фоновая работа",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+            }
+        },
         text = {
             Column(
                 modifier = Modifier
