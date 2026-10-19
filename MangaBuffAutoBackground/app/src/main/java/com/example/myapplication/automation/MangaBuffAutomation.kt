@@ -5400,10 +5400,11 @@ class MangaBuffAutomation(
                     log(account.username, "ADS: $state $details")
 
                     if (state == "WATCH_CLICKED") {
-                        // Keep the WebView untouched until the shortened 25s ad timer expires.
+                        // Protect the WebView through the 25s viewing timer plus the
+                        // bounded center-and-ring close attempts (up to about 14s more).
                         adViewingLockedUntilElapsed =
-                            SystemClock.elapsedRealtime() + 25_000L
-                        log(account.username, "ADS: VIEWING_LOCK_ACQUIRED until=25s")
+                            SystemClock.elapsedRealtime() + 42_000L
+                        log(account.username, "ADS: VIEWING_LOCK_ACQUIRED until=42s close_ring_guard")
                     }
 
                     onStep(details)
