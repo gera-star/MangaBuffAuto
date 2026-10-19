@@ -384,6 +384,8 @@ private fun VideoStartupSplash(
             .background(Color(0xFF070A13))
     ) {
         if (!firstVideoFrameVisible) {
+            // Temporary branded backdrop only. The custom splash video is revealed
+            // as soon as its first decoded frame is ready; don't show placeholder logos/text.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -395,45 +397,8 @@ private fun VideoStartupSplash(
                                 Color(0xFF160F1A)
                             )
                         )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val sparks = listOf(
-                        Offset(size.width * 0.12f, size.height * 0.18f),
-                        Offset(size.width * 0.83f, size.height * 0.25f),
-                        Offset(size.width * 0.21f, size.height * 0.73f),
-                        Offset(size.width * 0.88f, size.height * 0.81f),
-                        Offset(size.width * 0.66f, size.height * 0.12f)
                     )
-                    sparks.forEachIndexed { index, point ->
-                        drawCircle(
-                            color = if (index % 2 == 0) Color(0x88FF9A45) else Color(0x6678DFFF),
-                            radius = if (index % 2 == 0) 3.5f else 2.5f,
-                            center = point
-                        )
-                    }
-                }
-
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "MANGA",
-                        style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "2R2R",
-                        style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
-                        color = Color(0xFFFF9148)
-                    )
-                    Spacer(modifier = Modifier.height(22.dp))
-                    Text(
-                        text = "Загружаем твой мир манги…",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFFD5DCEC)
-                    )
-                }
-            }
+            )
         }
 
         AndroidView(
