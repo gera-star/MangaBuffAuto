@@ -11892,10 +11892,11 @@ class MangaBuffAutomation(
             "mangabuff_deck_comment_guard",
             Context.MODE_PRIVATE
         )
-        // Keep the existing ISO date in guard keys, but derive it from the same Moscow day
-        // used by every other daily statistic so the counter resets at one consistent midnight.
+        // Pin this run to the Moscow calendar day used by all other daily stats.
+        // A run that crosses midnight stops safely; the next run picks up the new day's guard.
+        val deckStatsDay = currentStatsDay()
         val deckCommentDay = java.time.LocalDate.parse(
-            currentStatsDay(),
+            deckStatsDay,
             java.time.format.DateTimeFormatter.BASIC_ISO_DATE
         ).toString()
         // Use the stable account ID instead of the username. Cyrillic usernames
@@ -12320,6 +12321,13 @@ class MangaBuffAutomation(
 
         for ((index, deck) in targetDecks.withIndex()) {
             coroutineContext.ensureActive()
+            if (currentStatsDay() != deckStatsDay) {
+                log(
+                    account.username,
+                    "COMMENT: DECK_DAILY_ROLLOVER oldDay=$deckStatsDay newDay=${currentStatsDay()} stopBeforeNextDeck=true"
+                )
+                return sentCount
+            }
             if (stopIfDeckCommentsDisabled("BEFORE_DECK_${index + 1}")) return sentCount
 
             dailyDeckAttemptCount = deckCommentPrefs.getInt(dailyDeckAttemptCountKey, dailyDeckAttemptCount)
@@ -12393,9 +12401,10 @@ class MangaBuffAutomation(
             var actionClicked = false
             var buttonStillDisabledAfterInput = false
             var toggleDisabledDuringDeck = false
+            var dailyRolloverDuringDeck = false
 
             repeat(50) { attempt ->
-                if (actionClicked || toggleDisabledDuringDeck) return@repeat
+                if (actionClicked || toggleDisabledDuringDeck || dailyRolloverDuringDeck) return@repeat
 
                 coroutineContext.ensureActive()
                 if (!deckCommentEnabledNow()) {
@@ -12518,8 +12527,16 @@ class MangaBuffAutomation(
                             toggleDisabledDuringDeck = true
                             return@repeat
                         }
+                        if (currentStatsDay() != deckStatsDay) {
+                            dailyRolloverDuringDeck = true
+                            log(
+                                account.username,
+                                "COMMENT: DECK_DAILY_ROLLOVER oldDay=$deckStatsDay newDay=${currentStatsDay()} stopBeforeSend=true"
+                            )
+                            return@repeat
+                        }
 
-                        // Dispatch Send only after waiting and re-checking the toggle.
+                        // Dispatch Send only after waiting and re-checking the toggle and day.
                         val submitRawState = evalJs(
                             """
                             (function() {
@@ -12590,7 +12607,9 @@ class MangaBuffAutomation(
                                     .putInt(dailyDeckAttemptCountKey, dailyDeckAttemptCount)
                                     .apply()
                                 addDaily(account) {
-                                    it.copy(deckComments = maxOf(it.deckComments, dailyDeckAttemptCount))
+                                    // Count only this new reservation in the current calendar bucket.
+                                    // Do not carry yesterday's cumulative count across midnight.
+                                    it.copy(deckComments = (it.deckComments + 1).coerceAtMost(DECK_COMMENT_DAILY_LIMIT))
                                 }
                                 log(
                                     account.username,
@@ -12670,6 +12689,8 @@ class MangaBuffAutomation(
                     )
                 }
             }
+
+            if (dailyRolloverDuringDeck) return sentCount
 
             if (toggleDisabledDuringDeck || !deckCommentEnabledNow()) {
                 logDeckDisabled(if (actionClicked) "AFTER_SEND_CLICK" else "SEND_CONTROLS")
