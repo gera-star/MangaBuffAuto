@@ -270,7 +270,7 @@ class MainActivity : ComponentActivity() {
 
                         if (debugWebViewVisible && debugWebView != null) {
                             WebViewReturnOverlay(
-                                modifier = Modifier.align(Alignment.BottomCenter),
+                                modifier = Modifier.align(Alignment.TopEnd),
                                 onReturn = { viewModel.setDebugWebViewVisible(false) }
                             )
                         }
@@ -399,53 +399,35 @@ private fun WebViewReturnOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .navigationBarsPadding()
-            .padding(bottom = 56.dp),
-        contentAlignment = Alignment.BottomCenter
+            .padding(top = 78.dp, end = 12.dp),
+        contentAlignment = Alignment.TopEnd
     ) {
-        Row(
+        Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .size(48.dp)
+                .border(
+                    BorderStroke(
+                        1.5.dp,
+                        Brush.linearGradient(
+                            listOf(Color(0xFF43E8FF), Color(0xFFB85CFF))
+                        )
+                    ),
+                    RoundedCornerShape(50)
+                ),
+            shape = RoundedCornerShape(50),
+            color = Color(0xF0171A24),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp
         ) {
-            repeat(7) { index ->
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (index == 2) {
-                        Surface(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .border(
-                                    BorderStroke(
-                                        1.5.dp,
-                                        Brush.linearGradient(
-                                            listOf(Color(0xFF43E8FF), Color(0xFFB85CFF))
-                                        )
-                                    ),
-                                    RoundedCornerShape(50)
-                                ),
-                            shape = RoundedCornerShape(50),
-                            color = Color(0xF0171A24),
-                            tonalElevation = 0.dp,
-                            shadowElevation = 8.dp
-                        ) {
-                            IconButton(
-                                onClick = onReturn,
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                Icon(
-                                    Icons.Default.KeyboardReturn,
-                                    contentDescription = "Вернуться в приложение",
-                                    tint = Color(0xFF6CEBFF)
-                                )
-                            }
-                        }
-                    }
-                }
+            IconButton(
+                onClick = onReturn,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Icon(
+                    Icons.Default.KeyboardReturn,
+                    contentDescription = "Вернуться в приложение",
+                    tint = Color(0xFF6CEBFF)
+                )
             }
         }
     }
