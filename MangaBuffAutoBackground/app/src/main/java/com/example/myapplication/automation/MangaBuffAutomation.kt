@@ -251,6 +251,8 @@ class MangaBuffAutomation(
     private val eventDropClaimLock = Any()
     private val eventDropPendingByDay = mutableMapOf<String, Int>()
     private val eventDropTokensSeen = ConcurrentHashMap.newKeySet<String>()
+    private val pendingReadingEventDropCallbacks =
+        ConcurrentHashMap<String, (EventHttpResult) -> Unit>()
 
     fun closeRuntime() {
         // This HTTP client belongs only to this MangaBuffAutomation/account.
@@ -2910,17 +2912,41 @@ class MangaBuffAutomation(
         token: String,
         csrfToken: String
     ): EventHttpResult {
+        val requestId = UUID.randomUUID().toString()
         val result = withTimeoutOrNull(15_000L) {
             suspendCancellableCoroutine<EventHttpResult> { continuation ->
+                pendingReadingEventDropCallbacks[requestId] = { response ->
+                    if (continuation.isActive) continuation.resume(response)
+                }
+                continuation.invokeOnCancellation {
+                    pendingReadingEventDropCallbacks.remove(requestId)
+                }
+
                 mainHandler.post {
-                    if (!continuation.isActive) return@post
+                    if (!continuation.isActive) {
+                        pendingReadingEventDropCallbacks.remove(requestId)
+                        return@post
+                    }
+
+                    val requestIdLiteral = JSONObject.quote(requestId)
                     val tokenLiteral = JSONObject.quote(token)
                     val csrfLiteral = JSONObject.quote(csrfToken)
                     val script = """
                         (function() {
+                            var requestId = $requestIdLiteral;
                             var token = $tokenLiteral;
                             var csrf = $csrfLiteral;
-                            return fetch('https://mangabuff.ru/halloween/takeCandy?r=822', {
+                            function report(status, body, url) {
+                                try {
+                                    AndroidReaderBridge.onEventDropClaimResult(
+                                        requestId,
+                                        Number(status) || 0,
+                                        String(body || ''),
+                                        String(url || location.href)
+                                    );
+                                } catch (e) {}
+                            }
+                            fetch('https://mangabuff.ru/halloween/takeCandy?r=822', {
                                 method: 'POST',
                                 credentials: 'same-origin',
                                 headers: {
@@ -2932,58 +2958,32 @@ class MangaBuffAutomation(
                                 body: 'token=' + encodeURIComponent(token)
                             }).then(function(response) {
                                 return response.text().then(function(body) {
-                                    return JSON.stringify({
-                                        status: response.status,
-                                        body: (body || '').slice(0, 1500),
-                                        url: response.url || location.href
-                                    });
+                                    report(response.status, body, response.url || location.href);
                                 });
                             }).catch(function(error) {
-                                return JSON.stringify({
-                                    status: 0,
-                                    body: String(error),
-                                    url: location.href
-                                });
+                                report(0, String(error), location.href);
                             });
+                            return true;
                         })();
                     """.trimIndent()
+
                     try {
-                        webView.evaluateJavascript(script) { raw ->
-                            if (continuation.isActive) {
-                                val decoded = runCatching {
-                                    org.json.JSONTokener(raw ?: "null").nextValue() as? String
-                                }.getOrNull().orEmpty()
-                                val payload = runCatching { JSONObject(decoded) }.getOrNull()
-                                val response = if (payload != null) {
-                                    EventHttpResult(
-                                        code = payload.optInt("status", 0),
-                                        body = payload.optString("body").orEmpty(),
-                                        finalUrl = payload.optString("url").ifBlank { webView.url.orEmpty() }
-                                    )
-                                } else {
-                                    EventHttpResult(
-                                        code = 0,
-                                        body = "Could not parse WebView fetch result: ${raw.orEmpty().take(500)}",
-                                        finalUrl = webView.url.orEmpty()
-                                    )
-                                }
-                                continuation.resume(response)
-                            }
-                        }
+                        // The JavaScript interface receives the asynchronous fetch result.
+                        // evaluateJavascript's own callback does not wait for Promise resolution.
+                        webView.evaluateJavascript(script, null)
                     } catch (e: Exception) {
-                        if (continuation.isActive) {
-                            continuation.resume(
-                                EventHttpResult(
-                                    code = 0,
-                                    body = e.message ?: e::class.java.simpleName,
-                                    finalUrl = webView.url.orEmpty()
-                                )
+                        pendingReadingEventDropCallbacks.remove(requestId)?.invoke(
+                            EventHttpResult(
+                                code = 0,
+                                body = e.message ?: e::class.java.simpleName,
+                                finalUrl = webView.url.orEmpty()
                             )
-                        }
+                        )
                     }
                 }
             }
         }
+        pendingReadingEventDropCallbacks.remove(requestId)
         return result ?: EventHttpResult(
             code = 0,
             body = "WebView event-drop request timed out after 15000ms",
@@ -7232,18 +7232,38 @@ class MangaBuffAutomation(
 
                     // Match the PC logic: only successful addHistory responses with token + type
                     // trigger a claim. This remains independent of the reader's scroll/navigation.
-                    if (responseStatus !in 200..299 ||
-                        !EventDropToggleRegistry.isEnabled(account.id, false)
-                    ) return
+                    val eventsEnabled = EventDropToggleRegistry.isEnabled(account.id, false)
+                    if (responseStatus !in 200..299) {
+                        if (eventsEnabled) {
+                            log(account.username, "EVENTS: DROP_NOT_FOUND source=addHistory reason=HTTP_STATUS status=$responseStatus")
+                        }
+                        return
+                    }
+                    if (!eventsEnabled) {
+                        log(account.username, "EVENTS: DROP_NOT_FOUND source=addHistory reason=EVENTS_DISABLED")
+                        return
+                    }
 
                     val payload = try {
                         JSONObject(response)
                     } catch (_: Exception) {
                         null
-                    } ?: return
+                    }
+                    if (payload == null) {
+                        log(account.username, "EVENTS: DROP_NOT_FOUND source=addHistory reason=NON_JSON_RESPONSE")
+                        return
+                    }
                     val token = payload.optString("token").orEmpty()
                     val type = payload.optString("type").orEmpty()
-                    if (token.isBlank() || type.isBlank()) return
+                    if (token.isBlank() || type.isBlank()) {
+                        log(
+                            account.username,
+                            "EVENTS: DROP_NOT_FOUND source=addHistory reason=NO_TOKEN_OR_TYPE " +
+                                "keys=${payload.keys().asSequence().toList().joinToString(",")}"
+                        )
+                        return
+                    }
+                    log(account.username, "EVENTS: DROP_DETECTED kind=$type tokenLength=${token.length}")
 
                     val uniqueTokenKey = account.id + ":" + token
                     if (!eventDropTokensSeen.add(uniqueTokenKey)) {
@@ -7263,6 +7283,12 @@ class MangaBuffAutomation(
                             enabledFallback = false
                         )
                     }
+                }
+
+                @JavascriptInterface
+                fun onEventDropClaimResult(requestId: String, status: Int, body: String, url: String) {
+                    val complete = pendingReadingEventDropCallbacks.remove(requestId) ?: return
+                    complete(EventHttpResult(status, body, url))
                 }
 
                 @JavascriptInterface
