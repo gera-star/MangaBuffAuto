@@ -927,6 +927,192 @@ class MangaBuffAutomation(
     }
 
     /**
+     * Searches Chromium's accessibility subtree for the actual fullscreen-ad
+     * close control. Rewarded-ad contents are often inside a cross-origin frame,
+     * so JavaScript selectors cannot see this button while Android accessibility
+     * still can.
+     *
+     * The label must explicitly indicate closing and the node must lie in the
+     * top-right region, avoiding arbitrary page controls. Called only when the
+     * ad timer has already requested its close action.
+     */
+    private fun autoCloseFullscreenAdFromAccessibility(
+        accountUsername: String,
+        webView: WebView
+    ): Boolean {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post {
+                autoCloseFullscreenAdFromAccessibility(accountUsername, webView)
+            }
+            return false
+        }
+
+        if (!webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) {
+            log(
+                accountUsername,
+                "ADS: ACCESSIBILITY_CLOSE_SCAN_SKIP attached=" + webView.isAttachedToWindow +
+                    " size=" + webView.width + "x" + webView.height,
+                true
+            )
+            return false
+        }
+
+        val root = try {
+            webView.createAccessibilityNodeInfo()
+        } catch (e: Exception) {
+            log(
+                accountUsername,
+                "ADS: ACCESSIBILITY_CLOSE_SCAN_ERROR root=" + e.message,
+                true
+            )
+            return false
+        } ?: return false
+
+        val location = IntArray(2)
+        webView.getLocationOnScreen(location)
+        val density = webView.resources.displayMetrics.density.coerceAtLeast(1f)
+        val minCloseX = webView.width * 0.65f
+        val maxCloseY = minOf(webView.height * 0.25f, 120f * density)
+        val maxCandidateWidth = webView.width * 0.30f
+        val maxCandidateHeight = webView.height * 0.20f
+
+        data class CloseCandidate(
+            val node: android.view.accessibility.AccessibilityNodeInfo,
+            val label: String,
+            val bounds: android.graphics.Rect,
+            val clickable: Boolean
+        )
+
+        fun isCloseZone(bounds: android.graphics.Rect): Boolean {
+            if (bounds.isEmpty) return false
+            val localX = bounds.centerX() - location[0]
+            val localY = bounds.centerY() - location[1]
+            return localX >= minCloseX &&
+                localY >= 0f && localY <= maxCloseY &&
+                bounds.width() <= maxCandidateWidth &&
+                bounds.height() <= maxCandidateHeight
+        }
+
+        val closeWords = listOf(
+            "close", "close ad", "close advertisement",
+            "закрыть", "закрыть рекламу", "закрыть объявление",
+            "dismiss", "dismiss ad"
+        )
+        val queue = ArrayDeque<Pair<android.view.accessibility.AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        val candidates = mutableListOf<CloseCandidate>()
+        var visited = 0
+        val maxVisited = 900
+
+        while (queue.isNotEmpty() && visited < maxVisited) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+
+            val label = buildString {
+                node.text?.toString()?.let { append(it).append(' ') }
+                node.contentDescription?.toString()?.let { append(it).append(' ') }
+                node.viewIdResourceName?.let { append(it.replace('_', ' ')).append(' ') }
+            }.replace("\\s+".toRegex(), " ").trim()
+
+            val normalized = label.lowercase()
+            val explicitlyClose = closeWords.any(normalized::contains)
+            if (explicitlyClose && node.isVisibleToUser) {
+                val bounds = android.graphics.Rect()
+                try {
+                    node.getBoundsInScreen(bounds)
+                } catch (_: Exception) {
+                    bounds.setEmpty()
+                }
+                if (isCloseZone(bounds)) {
+                    candidates += CloseCandidate(
+                        node = node,
+                        label = label,
+                        bounds = bounds,
+                        clickable = node.isClickable
+                    )
+                }
+            }
+
+            if (depth < 16) {
+                for (i in 0 until node.childCount) {
+                    try {
+                        node.getChild(i)?.let { queue.add(it to (depth + 1)) }
+                    } catch (_: Exception) {
+                        // Ad nodes can disappear while the provider changes frames.
+                    }
+                }
+            }
+        }
+
+        log(
+            accountUsername,
+            "ADS: ACCESSIBILITY_CLOSE_SCAN visited=" + visited +
+                " candidates=" + candidates.size +
+                " viewport=" + webView.width + "x" + webView.height
+        )
+
+        val candidate = candidates.sortedWith(
+            compareByDescending<CloseCandidate> { it.clickable }
+                .thenBy { it.bounds.width().toLong() * it.bounds.height().toLong() }
+        ).firstOrNull() ?: return false
+
+        log(
+            accountUsername,
+            "ADS: ACCESSIBILITY_CLOSE_FOUND label=" + candidate.label.take(120) +
+                " clickable=" + candidate.clickable +
+                " bounds=" + candidate.bounds.toShortString()
+        )
+
+        // Try the explicitly labelled node and its nearest clickable ancestors.
+        var target: android.view.accessibility.AccessibilityNodeInfo? = candidate.node
+        repeat(5) {
+            val node = target ?: return@repeat
+            if (node.isVisibleToUser && node.isClickable) {
+                val bounds = android.graphics.Rect()
+                try {
+                    node.getBoundsInScreen(bounds)
+                } catch (_: Exception) {
+                    bounds.setEmpty()
+                }
+                if (isCloseZone(bounds)) {
+                    try {
+                        if (node.performAction(
+                                android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
+                            )
+                        ) {
+                            log(accountUsername, "ADS: ACCESSIBILITY_CLOSE_ACTION_CLICK success=true")
+                            return true
+                        }
+                    } catch (e: Exception) {
+                        log(
+                            accountUsername,
+                            "ADS: ACCESSIBILITY_CLOSE_ACTION_CLICK error=" + e.message,
+                            true
+                        )
+                    }
+                }
+            }
+            target = try {
+                node.parent
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        // Accessibility exposed the real button but did not perform ACTION_CLICK.
+        // Tap its measured screen bounds relative to this WebView, in physical pixels.
+        val localX = (candidate.bounds.centerX() - location[0]).toFloat()
+        val localY = (candidate.bounds.centerY() - location[1]).toFloat()
+        log(
+            accountUsername,
+            "ADS: ACCESSIBILITY_CLOSE_FALLBACK_TAP localX=" + localX +
+                " localY=" + localY
+        )
+        dispatchNativeLocalTap(accountUsername, webView, localX, localY)
+        return true
+    }
+
+    /**
      * Finds the real Yandex rewarded "Получить награду" control through the
      * Android accessibility tree exposed by Chromium/WebView. This is needed
      * because the rewarded UI can live in a cross-origin iframe invisible to
@@ -5290,13 +5476,41 @@ class MangaBuffAutomation(
                     )
                     mainHandler.post {
                         try {
-                            dispatchNativeTap(account.username, webView, x, y)
+                            // Prefer the real close control exposed through Chromium's
+                            // accessibility tree. A WebView consuming MotionEvent only
+                            // proves the event was delivered, not that the X received it.
+                            val closedThroughAccessibility =
+                                autoCloseFullscreenAdFromAccessibility(account.username, webView)
+
+                            log(
+                                account.username,
+                                "ADS: ACCESSIBILITY_CLOSE_REQUEST result=" +
+                                    closedThroughAccessibility
+                            )
+
+                            if (!closedThroughAccessibility) {
+                                // JS supplies CSS pixels; use its corrected top-right
+                                // fallback (around x=354,y=64 on a 384x850 viewport).
+                                dispatchNativeTap(account.username, webView, x, y)
+                            }
                         } catch (e: Exception) {
                             log(
                                 account.username,
                                 "ADS: NATIVE_CLOSE_TAP_ERROR error=" + e.message,
                                 true
                             )
+                            // Keep the known-coordinate fallback available even if
+                            // an accessibility scan fails unexpectedly.
+                            try {
+                                dispatchNativeTap(account.username, webView, x, y)
+                            } catch (fallbackError: Exception) {
+                                log(
+                                    account.username,
+                                    "ADS: NATIVE_CLOSE_TAP_FALLBACK_ERROR error=" +
+                                        fallbackError.message,
+                                    true
+                                )
+                            }
                         }
                     }
                 }
