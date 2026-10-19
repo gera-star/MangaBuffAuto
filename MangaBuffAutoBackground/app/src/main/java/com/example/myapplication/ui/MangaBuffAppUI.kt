@@ -80,6 +80,7 @@ fun MangaBuffAppUI(
     var promoCodeText by remember { mutableStateOf("") }
     var showBackgroundSettings by remember { mutableStateOf(false) }
     var showSupportDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
     var showWebViewAccountMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
@@ -212,6 +213,14 @@ fun MangaBuffAppUI(
                                 contentDescription = "Добавить аккаунт"
                             )
                         },
+                        label = null,
+                        alwaysShowLabel = false,
+                        colors = navColors
+                    )
+                    NavigationBarItem(
+                        selected = false,
+                        onClick = { showAboutDialog = true },
+                        icon = { Icon(Icons.Default.Info, contentDescription = "О программе") },
                         label = null,
                         alwaysShowLabel = false,
                         colors = navColors
@@ -364,6 +373,44 @@ fun MangaBuffAppUI(
             },
             dismissButton = {
                 TextButton(onClick = { showSupportDialog = false }) {
+                    Text("Закрыть")
+                }
+            }
+        )
+    }
+
+    if (showAboutDialog) {
+        AlertDialog(
+            onDismissRequest = { showAboutDialog = false },
+            icon = { Icon(Icons.Default.Info, contentDescription = null) },
+            title = { Text("О программе") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "MangaBuffAutoBackground",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "© 2026 2R2R. Все права защищены.",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Проприетарная лицензия. Копирование, изменение, публикация, распространение и перепродажа оригинальных материалов 2R2R без предварительного письменного разрешения запрещены."
+                    )
+                    Text(
+                        "Сторонние библиотеки и материалы сохраняют собственные авторские права и условия лицензий.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "Лицензия: LICENSE в корне репозитория.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAboutDialog = false }) {
                     Text("Закрыть")
                 }
             }
