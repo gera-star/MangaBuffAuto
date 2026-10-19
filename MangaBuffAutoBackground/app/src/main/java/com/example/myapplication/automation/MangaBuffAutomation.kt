@@ -3470,7 +3470,10 @@ class MangaBuffAutomation(
                                         // Give the site time to spawn the pumpkin after the candy
                                         // was collected, without getting stuck forever if none appears.
                                         var phaseStarted = Number(window.__mbPumpkinPhaseStartedAt || 0);
-                                        if (phaseStarted > 0 && Date.now() - phaseStarted >= 12000) {
+                                        // The cycle checks for a pumpkin first on every 220ms pass,
+                                        // even while collecting candy. No long waiting phase is needed
+                                        // when a pumpkin has not spawned yet.
+                                        if (phaseStarted > 0 && Date.now() - phaseStarted >= 900) {
                                             returnToCandyPhase('spawn_timeout');
                                         }
                                     }
