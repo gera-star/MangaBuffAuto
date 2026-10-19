@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Column
@@ -251,10 +252,18 @@ class MainActivity : ComponentActivity() {
                                     },
                                     // Keep the debug WebView inside the safe area so it never covers
                                     // the Android status bar (clock, battery, camera cutout) or nav bar.
-                                    modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(),
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .statusBarsPadding()
+                                        .navigationBarsPadding()
+                                        .zIndex(if (debugWebViewVisible) 0f else -1f),
                                     update = { container ->
-                                        webView.visibility =
-                                            if (debugWebViewVisible) View.VISIBLE else View.INVISIBLE
+                                        // The toggle controls whether the user sees the page, not whether
+                                        // Chromium considers the WebView visible. INVISIBLE can throttle
+                                        // visibility-sensitive reader work and native fallbacks.
+                                        // Keep it VISIBLE, fade it out, and put it behind app UI when hidden.
+                                        webView.visibility = View.VISIBLE
+                                        webView.alpha = if (debugWebViewVisible) 1f else 0f
                                     }
                                 )
                             }
