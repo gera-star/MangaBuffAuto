@@ -1053,17 +1053,10 @@ fun AccountCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = account.username.ifBlank { "Аккаунт" },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onOpenBalance() },
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1353,7 +1346,7 @@ fun AccountCard(
             title = { Text("Удалить аккаунт?") },
             text = {
                 Text(
-                    "Аккаунт «${account.username.ifBlank { "Аккаунт" }}» будет удалён из приложения. Продолжить?"
+                    "Этот аккаунт будет удалён из приложения. Продолжить?"
                 )
             },
             confirmButton = {
