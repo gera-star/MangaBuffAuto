@@ -5400,12 +5400,10 @@ class MangaBuffAutomation(
                     log(account.username, "ADS: $state $details")
 
                     if (state == "WATCH_CLICKED") {
-                        // The fullscreen viewing window starts only after the ad
-                        // button was actually clicked. From this moment until the
-                        // 32s deadline the WebView must remain untouched.
+                        // Keep the WebView untouched until the shortened 25s ad timer expires.
                         adViewingLockedUntilElapsed =
-                            SystemClock.elapsedRealtime() + 32_000L
-                        log(account.username, "ADS: VIEWING_LOCK_ACQUIRED until=32s")
+                            SystemClock.elapsedRealtime() + 25_000L
+                        log(account.username, "ADS: VIEWING_LOCK_ACQUIRED until=25s")
                     }
 
                     onStep(details)
@@ -6056,6 +6054,22 @@ class MangaBuffAutomation(
 
                                     var tapX = exact.left + exact.width / 2;
                                     var tapY = exact.top + exact.height / 2;
+                                    var closePoint = closeTapPoint(
+                                        tapX,
+                                        tapY,
+                                        nativeCloseAttempts,
+                                        width,
+                                        height
+                                    );
+                                    tapX = closePoint.x;
+                                    tapY = closePoint.y;
+
+                                    AndroidAds.onStateLog(
+                                        "NATIVE_CLOSE_RING_POINT",
+                                        "attempt=" + nativeCloseAttempts +
+                                            " point=" + tapX + "," + tapY +
+                                            " radius=10css"
+                                    );
 
                                     /*
                                      * The measured manual close tap is at the top-right:
@@ -6288,21 +6302,124 @@ class MangaBuffAutomation(
                                     Math.min(verifiedViewportHeight - 2.0, 810.76);
                                 var verifiedFallbackRequested = false;
 
+                                /*
+                                 * One center tap followed by eight taps on a 10 CSS-pixel
+                                 * radius. The close control is about 40x40 CSS pixels, so the
+                                 * surrounding points stay inside its intended hit area.
+                                 */
+                                var CLOSE_TAP_RING_OFFSETS = [
+                                    { x: 0.0, y: 0.0 },
+                                    { x: 10.0, y: 0.0 },
+                                    { x: 7.07, y: 7.07 },
+                                    { x: 0.0, y: 10.0 },
+                                    { x: -7.07, y: 7.07 },
+                                    { x: -10.0, y: 0.0 },
+                                    { x: -7.07, y: -7.07 },
+                                    { x: 0.0, y: -10.0 },
+                                    { x: 7.07, y: -7.07 }
+                                ];
+
+                                function closeTapPoint(centerX, centerY, attempt, width, height) {
+                                    var index = Math.max(
+                                        0,
+                                        Math.min(CLOSE_TAP_RING_OFFSETS.length - 1, attempt - 1)
+                                    );
+                                    var offset = CLOSE_TAP_RING_OFFSETS[index];
+                                    return {
+                                        x: Math.max(1, Math.min(width - 1, centerX + offset.x)),
+                                        y: Math.max(1, Math.min(height - 1, centerY + offset.y))
+                                    };
+                                }
+
+                                /*
+                                 * After each failed tap, only continue the ring if there is
+                                 * evidence the fullscreen ad is still on screen. This prevents
+                                 * the remaining points from tapping the manga page after a close.
+                                 */
+                                function hasFullscreenAdSurface() {
+                                    try {
+                                        var close = findCloseButton();
+                                        if (close && isVisibleElement(close)) return true;
+
+                                        var timer = findTimer();
+                                        if (timer) {
+                                            var timerStyle = getComputedStyle(timer);
+                                            if (
+                                                timerStyle.display !== "none" &&
+                                                timerStyle.visibility !== "hidden" &&
+                                                timerStyle.opacity !== "0"
+                                            ) {
+                                                return true;
+                                            }
+                                        }
+
+                                        var viewportWidth =
+                                            window.innerWidth ||
+                                            document.documentElement.clientWidth ||
+                                            0;
+                                        var viewportHeight =
+                                            window.innerHeight ||
+                                            document.documentElement.clientHeight ||
+                                            0;
+                                        if (viewportWidth <= 0 || viewportHeight <= 0) return false;
+
+                                        var frames = Array.from(document.querySelectorAll("iframe"));
+                                        return frames.some(function(frame) {
+                                            var rect = frame.getBoundingClientRect();
+                                            var style = getComputedStyle(frame);
+                                            var visible =
+                                                rect.width > 0 &&
+                                                rect.height > 0 &&
+                                                style.display !== "none" &&
+                                                style.visibility !== "hidden" &&
+                                                style.opacity !== "0";
+                                            if (!visible) return false;
+
+                                            var coversScreen =
+                                                rect.width >= viewportWidth * 0.70 &&
+                                                rect.height >= viewportHeight * 0.60;
+                                            if (!coversScreen) return false;
+
+                                            var src = String(
+                                                frame.src || frame.getAttribute("src") || ""
+                                            ).toLowerCase();
+                                            var zIndex = parseInt(style.zIndex, 10);
+                                            var looksLikeOverlay =
+                                                style.position === "fixed" ||
+                                                (!isNaN(zIndex) && zIndex >= 10) ||
+                                                /yandex|adfox|advert|fullscreen|\/ads?\//.test(src);
+                                            return looksLikeOverlay;
+                                        });
+                                    } catch (e) {
+                                        AndroidAds.onStateLog(
+                                            "CLOSE_RETRY_SURFACE_CHECK_ERROR",
+                                            "error=" + (e && e.message ? e.message : String(e))
+                                        );
+                                        return false;
+                                    }
+                                }
+
                                 function verifyAfterNativeClose() {
                                     setTimeout(function() {
                                         if (!finished) verifyReward(0);
 
-                                        /*
-                                         * A dispatched tap is not proof that the fullscreen
-                                         * overlay closed. Retry the same verified close point
-                                         * a limited number of times before trying accessibility.
-                                         */
-                                        if (!finished && nativeCloseAttempts < 3) {
+                                        var adStillVisible = !finished && hasFullscreenAdSurface();
+                                        AndroidAds.onStateLog(
+                                            "CLOSE_RETRY_SURFACE",
+                                            "attempt=" + nativeCloseAttempts +
+                                                " visible=" + adStillVisible
+                                        );
+
+                                        if (
+                                            !finished &&
+                                            adStillVisible &&
+                                            nativeCloseAttempts < CLOSE_TAP_RING_OFFSETS.length
+                                        ) {
                                             nativeCloseRequested = false;
                                             AndroidAds.onStateLog(
                                                 "AUTO_CLOSE_RETRY",
                                                 "nextAttempt=" + (nativeCloseAttempts + 1) +
-                                                    " reason=reward_not_confirmed"
+                                                    " ringRadius=10css reason=ad_still_visible"
                                             );
                                             attemptAutoClose();
                                             return;
@@ -6315,7 +6432,9 @@ class MangaBuffAutomation(
                                             window.__mbAdsRewardFallbackStarted = true;
                                             AndroidAds.onStateLog(
                                                 "AD_REWARD_FALLBACK",
-                                                "close_retries_exhausted_reward_not_confirmed"
+                                                adStillVisible
+                                                    ? "close_ring_exhausted_reward_not_confirmed"
+                                                    : "close_surface_disappeared_reward_not_yet_confirmed"
                                             );
                                             requestRewardClaim();
                                         }
@@ -6326,7 +6445,7 @@ class MangaBuffAutomation(
                                     if (
                                         finished ||
                                         nativeCloseRequested ||
-                                        nativeCloseAttempts >= 3
+                                        nativeCloseAttempts >= CLOSE_TAP_RING_OFFSETS.length
                                     ) {
                                         return;
                                     }
@@ -6389,21 +6508,29 @@ class MangaBuffAutomation(
                                         nativeCloseAttempts = attempt;
                                     }
                                     if (!nativeCloseRequested) {
+                                        var fallbackPoint = closeTapPoint(
+                                            VERIFIED_CLOSE_FALLBACK_X,
+                                            VERIFIED_CLOSE_FALLBACK_Y,
+                                            attempt,
+                                            verifiedViewportWidth,
+                                            verifiedViewportHeight
+                                        );
                                         AndroidAds.onStateLog(
                                             "NATIVE_CLOSE_FALLBACK",
-                                            "x=" + VERIFIED_CLOSE_FALLBACK_X +
-                                                " y=" + VERIFIED_CLOSE_FALLBACK_Y +
+                                            "attempt=" + attempt +
+                                                " point=" + fallbackPoint.x + "," + fallbackPoint.y +
+                                                " ringRadius=10css" +
                                                 " viewport=" +
                                                 (window.innerWidth || 0) + "x" +
                                                 (window.innerHeight || 0) +
-                                                " source=fullscreen_top_right_fallback"
+                                                " source=fullscreen_close_ring"
                                         );
 
                                         try {
                                             AndroidAds.onCloseTapRequested(
-                                                VERIFIED_CLOSE_FALLBACK_X,
-                                                VERIFIED_CLOSE_FALLBACK_Y,
-                                                "fullscreen_top_right_fallback"
+                                                fallbackPoint.x,
+                                                fallbackPoint.y,
+                                                "fullscreen_close_ring_attempt_" + attempt
                                             );
 
                                             nativeCloseRequested = true;
@@ -6474,14 +6601,13 @@ class MangaBuffAutomation(
                                      * exposed to page JavaScript.
                                      */
                                     var adStartedAt = Date.now();
-                                    // Keep the ad open for the known 32-second reward window
-                                    // before the first automatic close attempt.
-                                    var ownWatchDurationMs = 32000;
+                                    // Use the previously tested shortened 25-second timer.
+                                    var ownWatchDurationMs = 25000;
                                     var lastSecondLogged = -1;
 
                                     AndroidAds.onStateLog(
                                         "OUR_TIMER_STARTED",
-                                        "duration=32s"
+                                        "duration=25s"
                                     );
 
                                     watchTimer = setInterval(function() {
