@@ -3080,6 +3080,80 @@ class MangaBuffAutomation(
     }
 
     /**
+     * Keeps the reader's visible daily total in sync with actual DOM collections while
+     * reconciling them with the successful server claim for the same drop. The DOM and
+     * server callbacks can arrive in either order, so a short-lived per-kind pairing
+     * marker prevents counting the same candy/pumpkin twice.
+     */
+    private fun recordReadingEventDropCounter(
+        account: MangaBuffAccount,
+        webView: WebView,
+        kind: String,
+        source: String
+    ): Int {
+        val normalizedKind = if (kind.equals("pumpkin", ignoreCase = true)) "pumpkin" else "candy"
+        val reward = if (normalizedKind == "pumpkin") 3 else 1
+        val safeSource = if (source == "dom") "dom" else "api"
+        val otherSource = if (safeSource == "dom") "api" else "dom"
+        val day = dailyCalendarDate()
+        val prefs = context.getSharedPreferences("mangabuff_event_candy_totals", Context.MODE_PRIVATE)
+        val totalKey = "candies_${account.id}_$day"
+        val pairPrefix = "drop_pair_${account.id}_${day}_$normalizedKind"
+        val ownCountKey = "${pairPrefix}_unpaired_${safeSource}"
+        val ownAtKey = "${ownCountKey}_at"
+        val otherCountKey = "${pairPrefix}_unpaired_${otherSource}"
+        val otherAtKey = "${otherCountKey}_at"
+        val now = System.currentTimeMillis()
+        val pairWindowMs = 180_000L
+        var paired = false
+
+        val total = synchronized(eventDropClaimLock) {
+            val otherCount = prefs.getInt(otherCountKey, 0).coerceAtLeast(0)
+            val otherAt = prefs.getLong(otherAtKey, 0L)
+            val hasRecentCounterpart = otherCount > 0 &&
+                otherAt > 0L &&
+                now >= otherAt &&
+                now - otherAt <= pairWindowMs
+
+            if (hasRecentCounterpart) {
+                // The opposite source already counted this same event.
+                val left = (otherCount - 1).coerceAtLeast(0)
+                prefs.edit()
+                    .putInt(otherCountKey, left)
+                    .putLong(otherAtKey, if (left > 0) otherAt else 0L)
+                    .apply()
+                paired = true
+                prefs.getInt(totalKey, 0).coerceAtLeast(0)
+            } else {
+                val ownAt = prefs.getLong(ownAtKey, 0L)
+                val ownCount = if (
+                    ownAt > 0L && now >= ownAt && now - ownAt <= pairWindowMs
+                ) {
+                    prefs.getInt(ownCountKey, 0).coerceAtLeast(0)
+                } else {
+                    0
+                }
+                val updated = prefs.getInt(totalKey, 0).coerceAtLeast(0) + reward
+                prefs.edit()
+                    .putInt(totalKey, updated)
+                    .putInt(ownCountKey, ownCount + 1)
+                    .putLong(ownAtKey, now)
+                    .putInt(otherCountKey, 0)
+                    .putLong(otherAtKey, 0L)
+                    .apply()
+                updated
+            }
+        }
+
+        updateReadingEventCandyCounter(webView, total, day)
+        log(
+            account.username,
+            "EVENTS: READER_COUNTER kind=$normalizedKind source=$safeSource paired=$paired reward=$reward total=$total day=$day"
+        )
+        return total
+    }
+
+    /**
      * Coordinates the existing reader candy collector with pumpkin collection.
      *
      * Candy clicks are handled by the reader's established event-gift-ball routine below.
@@ -3148,6 +3222,22 @@ class MangaBuffAutomation(
                             }
 
                             function returnToCandyPhase(reason) {
+                                // A pumpkin is counted only after it was detected and then disappeared
+                                // following repeated taps. The API/DOM pairing guard prevents doubles.
+                                if (reason === 'element_disappeared' &&
+                                    lastSeenPumpkin &&
+                                    !window.__mbPumpkinCounterReported) {
+                                    window.__mbPumpkinCounterReported = true;
+                                    try {
+                                        if (window.AndroidReaderBridge &&
+                                            window.AndroidReaderBridge.onReaderEventDropDomCollected) {
+                                            window.AndroidReaderBridge.onReaderEventDropDomCollected(
+                                                'pumpkin',
+                                                'div.event-bag'
+                                            );
+                                        }
+                                    } catch (_) {}
+                                }
                                 window.__mbEventDropPhase = 'candy';
                                 window.__mbPumpkinPhaseStartedAt = 0;
                                 lastSeenPumpkin = false;
@@ -3225,6 +3315,9 @@ class MangaBuffAutomation(
                                     return;
                                 }
 
+                                if (!lastSeenPumpkin) {
+                                    window.__mbPumpkinCounterReported = false;
+                                }
                                 lastSeenPumpkin = true;
                                 pumpkinAbsentSince = 0;
                                 if (Date.now() - lastTapAt < 260) return;
@@ -3308,19 +3401,21 @@ class MangaBuffAutomation(
                 val pumpkin = type.equals("pumpkin", ignoreCase = true)
                 val kind = if (pumpkin) "pumpkin" else "candy"
                 val reward = if (pumpkin) 3 else 1
+                val kind = if (pumpkin) "pumpkin" else "candy"
                 val dailyKey = dailyCalendarDate()
-                val candyTotalKey = "candies_${account.id}_$dailyKey"
-                val totalsPrefs = context.getSharedPreferences("mangabuff_event_candy_totals", Context.MODE_PRIVATE)
-                val totals = synchronized(eventDropClaimLock) {
+                val count = synchronized(eventDropClaimLock) {
                     val drops = (prefs.getInt(countKey, 0) + 1).coerceAtMost(EVENTS_CANDY_DAILY_LIMIT)
-                    val candies = (totalsPrefs.getInt(candyTotalKey, 0) + reward)
                     prefs.edit().putInt(countKey, drops).apply()
-                    totalsPrefs.edit().putInt(candyTotalKey, candies).apply()
-                    drops to candies
+                    drops
                 }
-                val count = totals.first
-                val candyTotal = totals.second
-                updateReadingEventCandyCounter(webView, candyTotal, dailyKey)
+                // Server claims and visual DOM collection both contribute to the counter,
+                // but a short-lived pairing guard ensures one drop is counted only once.
+                val candyTotal = recordReadingEventDropCounter(
+                    account = account,
+                    webView = webView,
+                    kind = kind,
+                    source = "api"
+                )
                 log(
                     account.username,
                     "EVENTS: DROP_CLAIMED kind=$kind reward=$reward candiesToday=$candyTotal drops=$count/$EVENTS_CANDY_DAILY_LIMIT day=$dailyKey"
@@ -7322,6 +7417,21 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun onReaderEventDropDomCollected(kind: String, classes: String) {
+                    val normalizedKind = if (kind.equals("pumpkin", ignoreCase = true)) "pumpkin" else "candy"
+                    log(
+                        account.username,
+                        "EVENTS: DROP_DOM_COLLECTED kind=$normalizedKind class=${classes.take(160)}"
+                    )
+                    recordReadingEventDropCounter(
+                        account = account,
+                        webView = webView,
+                        kind = normalizedKind,
+                        source = "dom"
+                    )
+                }
+
+                @JavascriptInterface
                 fun onReadButtonUrlAudit(locHref: String, baseURI: String, rawHref: String, elemHref: String) {
                     log(account.username, "READ_BUTTON_URL_AUDIT:\nlocation.href=$locHref\ndocument.baseURI=$baseURI\nrawHref=$rawHref\nelement.href=$elemHref")
                 }
@@ -10070,6 +10180,52 @@ class MangaBuffAutomation(
 
                                         window.__mbFastScrollFrame = requestAnimationFrame(tick);
                                     }
+
+                                    // Observe the site's confirmed collected-class transition. This
+                                    // updates the daily counter for every event-gift-ball-N variant and
+                                    // also covers a manual tap; no hardcoded numeric suffix is used.
+                                    (function installEventCandyCollectionObserver() {
+                                        if (window.__mbEventCandyCounterObserver) return;
+                                        var root = document.documentElement;
+                                        if (!root || !window.MutationObserver) return;
+
+                                        function reportCollectedCandy(el) {
+                                            if (!el || !el.matches ||
+                                                !el.matches('div.event-gift-ball.event-gift-ball--collected') ||
+                                                el.__mbCandyCounterReported) return;
+                                            el.__mbCandyCounterReported = true;
+                                            try {
+                                                AndroidReaderBridge.onReaderEventDropDomCollected(
+                                                    'candy',
+                                                    String(el.className || '')
+                                                );
+                                            } catch (error) {
+                                                try {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'EVENTS: CANDY_COUNTER_CALLBACK_ERROR ' + String(error)
+                                                    );
+                                                } catch(ignore) {}
+                                            }
+                                        }
+
+                                        var observer = new MutationObserver(function(records) {
+                                            records.forEach(function(record) {
+                                                if (record.type !== 'attributes' ||
+                                                    record.attributeName !== 'class') return;
+                                                var el = record.target;
+                                                var oldClass = String(record.oldValue || '');
+                                                if (/(^|\\s)event-gift-ball--collected(\\s|$)/.test(oldClass)) return;
+                                                reportCollectedCandy(el);
+                                            });
+                                        });
+                                        observer.observe(root, {
+                                            attributes: true,
+                                            attributeFilter: ['class'],
+                                            attributeOldValue: true,
+                                            subtree: true
+                                        });
+                                        window.__mbEventCandyCounterObserver = observer;
+                                    })();
 
                                     var interval = setInterval(function() {
                                         checkEnd();
