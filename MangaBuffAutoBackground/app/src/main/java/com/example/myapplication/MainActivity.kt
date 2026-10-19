@@ -338,40 +338,206 @@ private fun VideoStartupSplash(
     modifier: Modifier = Modifier,
     onFinished: () -> Unit
 ) {
-    var videoView by remember { mutableStateOf<VideoView?>(null) }
+    var firstVideoFrameVisible by remember { mutableStateOf(false) }
+    var playbackFailed by remember { mutableStateOf(false) }
 
-    AndroidView(
-        modifier = modifier.background(Color.Black),
-        factory = { context ->
-            VideoView(context).apply {
-                setBackgroundColor(android.graphics.Color.BLACK)
-                setOnPreparedListener { player ->
-                    player.isLooping = false
-                    start()
-                }
-                setOnCompletionListener {
-                    onFinished()
-                }
-                setOnErrorListener { _, _, _ ->
-                    onFinished()
-                    true
-                }
-                setVideoURI(
-                    Uri.parse("android.resource://${context.packageName}/${R.raw.mangabuff_splash}")
-                )
-                videoView = this
-            }
-        },
-        update = { }
-    )
-
-    DisposableEffect(videoView) {
-        onDispose {
-            videoView?.stopPlayback()
+    // If the decoder or video surface fails, keep a visible branded fallback
+    // briefly, then allow the main screen to open. Never leave a black splash.
+    LaunchedEffect(playbackFailed) {
+        if (playbackFailed) {
+            kotlinx.coroutines.delay(2_200L)
+            onFinished()
         }
     }
-}
 
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF070A13))
+    ) {
+        if (!firstVideoFrameVisible) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF10182B),
+                                Color(0xFF080D1B),
+                                Color(0xFF160F1A)
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val sparks = listOf(
+                        Offset(size.width * 0.12f, size.height * 0.18f),
+                        Offset(size.width * 0.83f, size.height * 0.25f),
+                        Offset(size.width * 0.21f, size.height * 0.73f),
+                        Offset(size.width * 0.88f, size.height * 0.81f),
+                        Offset(size.width * 0.66f, size.height * 0.12f)
+                    )
+                    sparks.forEachIndexed { index, point ->
+                        drawCircle(
+                            color = if (index % 2 == 0) Color(0x88FF9A45) else Color(0x6678DFFF),
+                            radius = if (index % 2 == 0) 3.5f else 2.5f,
+                            center = point
+                        )
+                    }
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "MANGA",
+                        style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "2R2R",
+                        style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
+                        color = Color(0xFFFF9148)
+                    )
+                    Spacer(modifier = Modifier.height(22.dp))
+                    Text(
+                        text = "Загружаем твой мир манги…",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFD5DCEC)
+                    )
+                }
+            }
+        }
+
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                android.view.TextureView(context).apply {
+                    val textureView = this
+                    isOpaque = false
+                    alpha = 0f
+
+                    surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+                        private var mediaPlayer: android.media.MediaPlayer? = null
+                        private var outputSurface: android.view.Surface? = null
+
+                        private fun revealVideoFrame() {
+                            if (!playbackFailed && !firstVideoFrameVisible) {
+                                firstVideoFrameVisible = true
+                                textureView.alpha = 1f
+                            }
+                        }
+
+                        override fun onSurfaceTextureAvailable(
+                            surfaceTexture: android.graphics.SurfaceTexture,
+                            width: Int,
+                            height: Int
+                        ) {
+                            val player = android.media.MediaPlayer()
+                            mediaPlayer = player
+                            val surface = android.view.Surface(surfaceTexture)
+                            outputSurface = surface
+
+                            try {
+                                player.setSurface(surface)
+                                player.setOnPreparedListener { preparedPlayer ->
+                                    preparedPlayer.isLooping = false
+                                    preparedPlayer.start()
+                                }
+                                player.setOnInfoListener { _, what, _ ->
+                                    if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                                        revealVideoFrame()
+                                    }
+                                    false
+                                }
+                                player.setOnVideoSizeChangedListener { _, videoWidth, videoHeight ->
+                                    val viewWidth = textureView.width
+                                    val viewHeight = textureView.height
+                                    if (videoWidth > 0 && videoHeight > 0 &&
+                                        viewWidth > 0 && viewHeight > 0
+                                    ) {
+                                        surfaceTexture.setDefaultBufferSize(videoWidth, videoHeight)
+                                        val source = android.graphics.RectF(
+                                            0f, 0f, videoWidth.toFloat(), videoHeight.toFloat()
+                                        )
+                                        val destination = android.graphics.RectF(
+                                            0f, 0f, viewWidth.toFloat(), viewHeight.toFloat()
+                                        )
+                                        val transform = android.graphics.Matrix().apply {
+                                            setRectToRect(
+                                                source,
+                                                destination,
+                                                android.graphics.Matrix.ScaleToFit.CENTER
+                                            )
+                                        }
+                                        textureView.setTransform(transform)
+                                    }
+                                }
+                                player.setOnCompletionListener {
+                                    onFinished()
+                                }
+                                player.setOnErrorListener { _, _, _ ->
+                                    playbackFailed = true
+                                    true
+                                }
+                                player.setDataSource(
+                                    context,
+                                    Uri.parse("android.resource://${context.packageName}/${R.raw.mangabuff_splash}")
+                                )
+                                player.prepareAsync()
+                            } catch (_: Exception) {
+                                playbackFailed = true
+                                try {
+                                    player.release()
+                                } catch (_: Exception) {
+                                    // Ignore cleanup errors during startup failure.
+                                }
+                                mediaPlayer = null
+                                outputSurface?.release()
+                                outputSurface = null
+                            }
+                        }
+
+                        override fun onSurfaceTextureSizeChanged(
+                            surfaceTexture: android.graphics.SurfaceTexture,
+                            width: Int,
+                            height: Int
+                        ) = Unit
+
+                        override fun onSurfaceTextureDestroyed(
+                            surfaceTexture: android.graphics.SurfaceTexture
+                        ): Boolean {
+                            mediaPlayer?.let { playerToRelease ->
+                                try {
+                                    if (playerToRelease.isPlaying) playerToRelease.stop()
+                                } catch (_: Exception) {
+                                    // The player may already be in an error state.
+                                }
+                                try {
+                                    playerToRelease.release()
+                                } catch (_: Exception) {
+                                    // Ignore cleanup errors while destroying the surface.
+                                }
+                            }
+                            mediaPlayer = null
+                            outputSurface?.release()
+                            outputSurface = null
+                            return true
+                        }
+
+                        override fun onSurfaceTextureUpdated(
+                            surfaceTexture: android.graphics.SurfaceTexture
+                        ) {
+                            revealVideoFrame()
+                        }
+                    }
+                }
+            },
+            update = { textureView ->
+                textureView.alpha = if (firstVideoFrameVisible && !playbackFailed) 1f else 0f
+            }
+        )
+    }
+}
 
 @Composable
 private fun LiquidGlassBackdrop() {
