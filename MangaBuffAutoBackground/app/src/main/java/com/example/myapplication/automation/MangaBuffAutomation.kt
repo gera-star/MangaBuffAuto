@@ -3186,6 +3186,7 @@ class MangaBuffAutomation(
                             var lastTapAt = 0;
                             var lastSeenPumpkin = false;
                             var pumpkinAbsentSince = 0;
+                            var lastPumpkinProbeLogAt = 0;
                             var tapCount = 0;
 
                             function logStep(message) {
@@ -3287,8 +3288,44 @@ class MangaBuffAutomation(
                                     return;
                                 }
 
-                                // The reader's original candy routine owns this phase.
-                                // Do not independently click candies here.
+                                // Always prioritize a visible pumpkin, even when the controller is
+                                // waiting for a candy. The site may spawn the pumpkin independently,
+                                // and an early phase return must never cause us to miss it.
+                                var pumpkin = document.querySelector('div.event-bag');
+                                var pumpkinVisible = visible(pumpkin);
+
+                                if (pumpkin && !pumpkinVisible &&
+                                    Date.now() - lastPumpkinProbeLogAt >= 3000) {
+                                    lastPumpkinProbeLogAt = Date.now();
+                                    try {
+                                        var probeRect = pumpkin.getBoundingClientRect();
+                                        var probeStyle = getComputedStyle(pumpkin);
+                                        logStep(
+                                            'EVENTS: PUMPKIN_PRESENT_NOT_VISIBLE class=' + String(pumpkin.className || '') +
+                                            ' rect=' + Math.round(probeRect.width) + 'x' + Math.round(probeRect.height) +
+                                            '@' + Math.round(probeRect.left) + ',' + Math.round(probeRect.top) +
+                                            ' display=' + probeStyle.display +
+                                            ' visibility=' + probeStyle.visibility +
+                                            ' opacity=' + probeStyle.opacity +
+                                            ' pointerEvents=' + probeStyle.pointerEvents
+                                        );
+                                    } catch (_) {}
+                                }
+
+                                if (pumpkinVisible && window.__mbEventDropPhase !== 'pumpkin') {
+                                    var previousPhase = window.__mbEventDropPhase;
+                                    window.__mbEventDropPhase = 'pumpkin';
+                                    window.__mbPumpkinPhaseStartedAt = Date.now();
+                                    window.__mbPumpkinTapCount = 0;
+                                    tapCount = 0;
+                                    pumpkinAbsentSince = 0;
+                                    logStep(
+                                        'EVENTS: PHASE -> pumpkin reason=visible_event_bag previous=' +
+                                        String(previousPhase || 'unset')
+                                    );
+                                }
+
+                                // Candy collection stays in its own interval; this loop never clicks candy.
                                 if (window.__mbEventDropPhase !== 'pumpkin') {
                                     lastSeenPumpkin = false;
                                     pumpkinAbsentSince = 0;
@@ -3297,8 +3334,7 @@ class MangaBuffAutomation(
 
                                 // Exact selector confirmed by DevTools; never guess by position
                                 // or search generic images/classes that might be manga cards.
-                                var pumpkin = document.querySelector('div.event-bag');
-                                if (!visible(pumpkin)) {
+                                if (!pumpkinVisible) {
                                     if (lastSeenPumpkin) {
                                         if (!pumpkinAbsentSince) pumpkinAbsentSince = Date.now();
                                         if (Date.now() - pumpkinAbsentSince >= 900) {
@@ -3327,13 +3363,24 @@ class MangaBuffAutomation(
                                 if (tapPumpkin(pumpkin)) {
                                     tapCount++;
                                     if (tapCount === 1 || tapCount % 5 === 0) {
-                                        logStep('EVENTS: PUMPKIN_TAP count=' + tapCount);
+                                        var tapRect = pumpkin.getBoundingClientRect();
+                                        logStep(
+                                            'EVENTS: PUMPKIN_TAP count=' + tapCount +
+                                            ' class=' + String(pumpkin.className || '') +
+                                            ' at=' + Math.round(tapRect.left + tapRect.width / 2) +
+                                            ',' + Math.round(tapRect.top + tapRect.height / 2)
+                                        );
                                     }
                                 } else {
                                     logStep('EVENTS: PUMPKIN_CLICK_ERROR target_unavailable');
                                 }
                             }
 
+                            logStep(
+                                'EVENTS: PUMPKIN_AUTO_TAP_READY phase=' +
+                                String(window.__mbEventDropPhase || 'unset') +
+                                ' selector=div.event-bag intervalMs=220'
+                            );
                             scan();
                             window.__mbPumpkinAutoTapTimer = setInterval(scan, 220);
                         } catch (_) {}
