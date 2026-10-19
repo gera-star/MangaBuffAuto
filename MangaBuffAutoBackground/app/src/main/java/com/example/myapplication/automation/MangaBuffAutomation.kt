@@ -3099,7 +3099,8 @@ class MangaBuffAutomation(
 
                             // Keep state when the controller is reinjected into the same document.
                             if (window.__mbEventDropPhase !== 'candy' &&
-                                window.__mbEventDropPhase !== 'pumpkin') {
+                                window.__mbEventDropPhase !== 'pumpkin' &&
+                                window.__mbEventDropPhase !== 'collecting') {
                                 window.__mbEventDropPhase = 'candy';
                             }
                             if (window.__mbEventDropPhase === 'pumpkin' &&
