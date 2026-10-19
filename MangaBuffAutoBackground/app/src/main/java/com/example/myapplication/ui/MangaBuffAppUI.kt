@@ -515,6 +515,8 @@ fun MangaBuffAppUI(
                                                         if (r.width < 70 || r.height < 30 ||
                                                             r.width > window.innerWidth * 0.92 ||
                                                             r.height > window.innerHeight * 0.88) continue;
+                                                        // The user/profile menu is anchored on the right; don't move left-side navigation.
+                                                        if (r.right < window.innerWidth * 0.55) continue;
 
                                                         // Only adjust small popups near/outside the viewport edges.
                                                         if (r.top >= 80 && r.left >= 4 &&
