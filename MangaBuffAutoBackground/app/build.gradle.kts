@@ -3,6 +3,24 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// The video is stored at the repository root in .idea. Copy it into generated
+// Android raw resources so it is bundled in the APK and plays fully offline.
+val startupSplashSource = rootProject.projectDir.parentFile.resolve(
+    ".idea/video-26f8f8a9-cb79-477d-8d32-c284da329fb5.mp4"
+)
+val generatedSplashResDir = layout.buildDirectory.dir("generated/splashVideoResources/main")
+
+val generateSplashVideoResource by tasks.registering(Copy::class) {
+    from(startupSplashSource)
+    into(generatedSplashResDir.map { it.dir("raw") })
+    rename { "mangabuff_splash.mp4" }
+    doFirst {
+        check(startupSplashSource.isFile) {
+            "Startup splash video not found: ${startupSplashSource.absolutePath}"
+        }
+    }
+}
+
 android {
     namespace = "com.example.myapplication"
     compileSdk {
@@ -33,6 +51,8 @@ android {
     buildFeatures {
         compose = true
     }
+
+    sourceSets.getByName("main").res.srcDir(generatedSplashResDir)
 }
 
 dependencies {
@@ -60,4 +80,8 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+// Ensure the generated raw video resource exists before Android resource processing.
+tasks.named("preBuild").configure {
+    dependsOn(generateSplashVideoResource)
 }
