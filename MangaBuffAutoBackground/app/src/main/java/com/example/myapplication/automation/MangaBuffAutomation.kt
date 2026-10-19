@@ -10088,7 +10088,8 @@ class MangaBuffAutomation(
                                         // The reader's existing click path is the sole candy collector.
                                         // Pause it while the pumpkin is being tapped so both automations
                                         // cannot race or switch phases independently.
-                                        if (window.__mbEventDropPhase !== 'pumpkin') {
+                                        if (window.__mbEventDropPhase !== 'pumpkin' &&
+                                            window.__mbEventDropPhase !== 'collecting') {
                                             try {
                                                 var drop = document.querySelector(
                                                     'div.event-gift-ball:not(.event-gift-ball--collected)'
@@ -10132,14 +10133,61 @@ class MangaBuffAutomation(
                                                                 var removed = !drop || !drop.isConnected;
                                                                 var collected = !removed &&
                                                                     drop.classList.contains('event-gift-ball--collected');
-                                                                if (removed || collected) {
-                                                                    if (window.__mbEventDropPhase !== 'pumpkin') {
+                                                                if (collected && !removed) {
+                                                                    // MangaBuff adds event-gift-ball--collected immediately,
+                                                                    // then runs event-gift-ball--collect for about 0.9 seconds.
+                                                                    // Freeze candy clicks during that animation, then start the
+                                                                    // pumpkin phase at animationend (with a safe timeout fallback).
+                                                                    if (window.__mbEventDropPhase !== 'pumpkin' &&
+                                                                        window.__mbEventDropPhase !== 'collecting') {
+                                                                        window.__mbEventDropPhase = 'collecting';
+                                                                        AndroidReaderBridge.onLogStep(
+                                                                            'EVENTS: CANDY_RESULT collected=true animation=event-gift-ball--collect'
+                                                                        );
+
+                                                                        var phaseTransitionDone = false;
+                                                                        var transitionToPumpkin = function(reason) {
+                                                                            if (phaseTransitionDone) return;
+                                                                            phaseTransitionDone = true;
+                                                                            try {
+                                                                                drop.removeEventListener('animationend', onCandyAnimationEnd);
+                                                                            } catch(ignore) {}
+                                                                            if (window.__mbEventDropPhase !== 'collecting') return;
+                                                                            window.__mbEventDropPhase = 'pumpkin';
+                                                                            window.__mbPumpkinPhaseStartedAt = Date.now();
+                                                                            window.__mbPumpkinTapCount = 0;
+                                                                            AndroidReaderBridge.onLogStep(
+                                                                                'EVENTS: PHASE collecting -> pumpkin reason=' + reason
+                                                                            );
+                                                                        };
+                                                                        var onCandyAnimationEnd = function(event) {
+                                                                            if (event && event.target !== drop) return;
+                                                                            if (event && event.animationName &&
+                                                                                event.animationName !== 'event-gift-ball--collect') return;
+                                                                            transitionToPumpkin('animationend');
+                                                                        };
+
+                                                                        try {
+                                                                            drop.addEventListener('animationend', onCandyAnimationEnd);
+                                                                        } catch(ignore) {}
+                                                                        // The observed inline animation is 0.9s. A 1.2s fallback
+                                                                        // handles missed animationend events and reduced-motion cases.
+                                                                        setTimeout(function() {
+                                                                            transitionToPumpkin('animation_timeout');
+                                                                        }, 1200);
+                                                                    }
+                                                                    return;
+                                                                }
+
+                                                                if (removed) {
+                                                                    // Some site versions remove the candy instead of animating it.
+                                                                    if (window.__mbEventDropPhase !== 'pumpkin' &&
+                                                                        window.__mbEventDropPhase !== 'collecting') {
                                                                         window.__mbEventDropPhase = 'pumpkin';
                                                                         window.__mbPumpkinPhaseStartedAt = Date.now();
                                                                         window.__mbPumpkinTapCount = 0;
                                                                         AndroidReaderBridge.onLogStep(
-                                                                            'EVENTS: CANDY_RESULT collected=true removed=' + removed +
-                                                                            ' -> pumpkin phase'
+                                                                            'EVENTS: CANDY_RESULT element_removed=true -> pumpkin phase'
                                                                         );
                                                                     }
                                                                     return;
