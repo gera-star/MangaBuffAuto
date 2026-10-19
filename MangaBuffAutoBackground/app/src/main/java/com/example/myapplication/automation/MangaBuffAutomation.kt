@@ -6267,27 +6267,25 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * Screenshot-verified position of the Yandex fullscreen close
-                                 * cross on the actual 384x850 CSS viewport:
-                                 *
-                                 *   cross center ~= (354, 64) CSS px
-                                 *
-                                 * It is immediately above the "U" in our overlaid
-                                 * "Вернуться в UI" button. The previous (364,20) point was
-                                 * demonstrably wrong: it landed in the status-bar area and did
-                                 * not close the ad.
-                                 *
-                                 * Do not use getBoundingClientRect() from the injected page here:
-                                 * that rect may belong to a nested/cross-origin Yandex frame and is
-                                 * not necessarily in the parent WebView coordinate space.
+                                 * Restore the previously tested mobile close point from the
+                                 * actual ad WebView: x≈349.29, y≈810.76 CSS px on a 384x850
+                                 * viewport. This build's newer top-right (y=64) fallback did
+                                 * not close the X on the user's current mobile layout.
+                                 * Keep the exact Yandex DOM close-control attempt first; use
+                                 * this measured point only as the fallback after the wait timer.
                                  */
+                                var verifiedViewportHeight =
+                                    window.visualViewport && window.visualViewport.height
+                                        ? window.visualViewport.height
+                                        : (window.innerHeight || 850);
                                 var verifiedViewportWidth =
                                     window.visualViewport && window.visualViewport.width
                                         ? window.visualViewport.width
                                         : (window.innerWidth || 384);
                                 var VERIFIED_CLOSE_FALLBACK_X =
-                                    Math.max(20.0, verifiedViewportWidth - 30.0);
-                                var VERIFIED_CLOSE_FALLBACK_Y = 64.0;
+                                    Math.min(verifiedViewportWidth - 2.0, 349.29);
+                                var VERIFIED_CLOSE_FALLBACK_Y =
+                                    Math.min(verifiedViewportHeight - 2.0, 810.76);
                                 var verifiedFallbackRequested = false;
 
                                 function verifyAfterNativeClose() {
@@ -6476,12 +6474,14 @@ class MangaBuffAutomation(
                                      * exposed to page JavaScript.
                                      */
                                     var adStartedAt = Date.now();
-                                    var ownWatchDurationMs = 25000;
+                                    // Keep the ad open for the known 32-second reward window
+                                    // before the first automatic close attempt.
+                                    var ownWatchDurationMs = 32000;
                                     var lastSecondLogged = -1;
 
                                     AndroidAds.onStateLog(
                                         "OUR_TIMER_STARTED",
-                                        "duration=25s"
+                                        "duration=32s"
                                     );
 
                                     watchTimer = setInterval(function() {
