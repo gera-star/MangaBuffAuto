@@ -3311,8 +3311,10 @@ class MangaBuffAutomation(
                                     var verificationFinished = false;
 
                                     function transitionToPumpkin(reason) {
-                                        if (window.__mbEventDropPhase !== 'collecting') return;
+                                        // Always release the transition guard, even if a visible pumpkin
+                                        // already changed the phase while this candy's animation was running.
                                         window.__mbEventCollectionTransitionPending = false;
+                                        if (window.__mbEventDropPhase !== 'collecting') return;
                                         window.__mbEventDropPhase = 'pumpkin';
                                         window.__mbPumpkinPhaseStartedAt = Date.now();
                                         window.__mbPumpkinTapCount = 0;
