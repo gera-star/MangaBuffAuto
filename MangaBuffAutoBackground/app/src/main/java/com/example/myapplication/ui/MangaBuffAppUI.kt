@@ -219,14 +219,6 @@ fun MangaBuffAppUI(
                     )
                     NavigationBarItem(
                         selected = false,
-                        onClick = { showAboutDialog = true },
-                        icon = { Icon(Icons.Default.Info, contentDescription = "О программе") },
-                        label = null,
-                        alwaysShowLabel = false,
-                        colors = navColors
-                    )
-                    NavigationBarItem(
-                        selected = false,
                         onClick = { showBackgroundSettings = true },
                         icon = {
                             Icon(
@@ -279,7 +271,8 @@ fun MangaBuffAppUI(
 
     if (showBackgroundSettings) {
         BackgroundSettingsDialog(
-            onDismiss = { showBackgroundSettings = false }
+            onDismiss = { showBackgroundSettings = false },
+            onOpenAbout = { showAboutDialog = true }
         )
     }
 
