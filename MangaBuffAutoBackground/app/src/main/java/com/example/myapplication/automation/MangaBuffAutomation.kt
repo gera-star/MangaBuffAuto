@@ -3228,7 +3228,7 @@ class MangaBuffAutomation(
                             }
 
                             function findMarked(kind) {
-                                var selectors = [
+                                var selectors = kind === 'pumpkin' ? [
                                     '[class*="pumpkin" i]', '[id*="pumpkin" i]',
                                     '[alt*="pumpkin" i]', '[title*="pumpkin" i]',
                                     '[aria-label*="pumpkin" i]',
@@ -3237,16 +3237,26 @@ class MangaBuffAutomation(
                                     '[class*="event-drop" i]', '[id*="event-drop" i]',
                                     '[src*="pumpkin" i]', '[src*="halloween" i]', '[src*="event-drop" i]',
                                     '[style*="pumpkin" i]', '[style*="halloween" i]'
+                                ] : [
+                                    '[class*="event-candy" i]', '[id*="event-candy" i]',
+                                    '[class*="candy-drop" i]', '[id*="candy-drop" i]',
+                                    '[class*="candy-pickup" i]', '[id*="candy-pickup" i]',
+                                    '[class*="конфетк" i]', '[id*="конфетк" i]',
+                                    '[alt*="candy" i]', '[title*="candy" i]',
+                                    '[aria-label*="candy" i]', '[src*="candy" i]',
+                                    '[style*="candy" i]'
                                 ];
                                 var nodes = document.querySelectorAll(selectors.join(','));
                                 var candidates = [];
                                 for (var i = 0; i < nodes.length; i++) {
                                     var el = nodes[i];
                                     if (!visible(el) || isHeartOrReaction(el) || isMangaCard(el)) continue;
+                                    if (el.id === 'mangabuff-reading-candy-counter') continue;
                                     var marked = kind === 'pumpkin' ? isPumpkinMarked(el) : isCandyMarked(el);
                                     if (!marked) continue;
                                     var target = clickTarget(el);
                                     if (!visible(target) || isHeartOrReaction(target) || isMangaCard(target)) continue;
+                                    if (target.id === 'mangabuff-reading-candy-counter') continue;
                                     var r = target.getBoundingClientRect();
                                     if (r.width > window.innerWidth * 0.45 || r.height > window.innerHeight * 0.22) continue;
                                     candidates.push({el: target, area: r.width * r.height});
