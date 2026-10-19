@@ -16,6 +16,8 @@ class AccountRepository(context: Context) {
         private const val KEY_ACCOUNTS = "key_accounts"
         private const val KEY_SETTINGS = "key_settings"
         private const val KEY_MINE_AUTO_EXCHANGE_MIGRATED = "key_mine_auto_exchange_manual_migrated"
+        private const val KEY_TASK_DEFAULTS_MIGRATED = "key_task_defaults_20261019_migrated"
+        private const val KEY_DECK_COMMENTS_DEFAULTS_MIGRATED = "key_deck_comments_default_on_migrated"
     }
 
     fun getAccounts(): List<MangaBuffAccount> = synchronized(ACCOUNTS_LOCK) {
@@ -23,11 +25,16 @@ class AccountRepository(context: Context) {
     }
 
     private fun readAccountsUnsafe(): List<MangaBuffAccount> {
-        val json = prefs.getString(KEY_ACCOUNTS, null) ?: return emptyList()
+        val json = prefs.getString(KEY_ACCOUNTS, null) ?: run {
+            // No existing accounts to migrate; new accounts already use the current defaults.
+            prefs.edit().putBoolean(KEY_DECK_COMMENTS_DEFAULTS_MIGRATED, true).apply()
+            return emptyList()
+        }
         val type = object : TypeToken<List<MangaBuffAccount>>() {}.type
         return try {
             // Migrate the account's previous quiz setting to the new Tower setting.
             val root = JsonParser.parseString(json)
+            val migrateDeckCommentsOn = !prefs.getBoolean(KEY_DECK_COMMENTS_DEFAULTS_MIGRATED, false)
             val normalizedJson = if (root.isJsonArray) {
                 var changed = false
                 root.asJsonArray.forEach { element ->
@@ -41,12 +48,22 @@ class AccountRepository(context: Context) {
                             accountJson.remove("quizEnabled")
                             changed = true
                         }
+                        if (!accountJson.has("deckCommentEnabled") ||
+                            (migrateDeckCommentsOn && !accountJson.get("deckCommentEnabled").isJsonNull &&
+                                !accountJson.get("deckCommentEnabled").asBoolean)
+                        ) {
+                            accountJson.add("deckCommentEnabled", JsonPrimitive(true))
+                            changed = true
+                        }
                     }
                 }
                 if (changed) prefs.edit().putString(KEY_ACCOUNTS, root.toString()).apply()
                 root.toString()
             } else {
                 json
+            }
+            if (migrateDeckCommentsOn) {
+                prefs.edit().putBoolean(KEY_DECK_COMMENTS_DEFAULTS_MIGRATED, true).apply()
             }
             val list: List<MangaBuffAccount>? = gson.fromJson(normalizedJson, type)
             list?.map { acc ->
@@ -69,6 +86,7 @@ class AccountRepository(context: Context) {
                     dailyMineDiamonds = if (statsFresh) acc.dailyMineDiamonds else 0,
                     dailyReaderChapters = if (statsFresh) acc.dailyReaderChapters else 0,
                     dailyComments = if (statsFresh) acc.dailyComments else 0,
+                    dailyDeckComments = if (statsFresh) acc.dailyDeckComments else 0,
                     isRunning = false, // При перезапуске приложения статус выполнения всегда сбрасывается в false
                     taskProgress = 0f,
                     statusMessage = cleanStatus,
@@ -129,19 +147,43 @@ class AccountRepository(context: Context) {
     }
 
     fun getSettings(): GlobalSettings {
-        val json = prefs.getString(KEY_SETTINGS, null) ?: return GlobalSettings()
+        val json = prefs.getString(KEY_SETTINGS, null) ?: run {
+            // The model defaults are authoritative for a fresh installation.
+            prefs.edit().putBoolean(KEY_TASK_DEFAULTS_MIGRATED, true).apply()
+            return GlobalSettings()
+        }
         return try {
             val parsed = gson.fromJson(json, GlobalSettings::class.java) ?: GlobalSettings()
+            var migrated = parsed
+            var shouldSave = false
+            val editor = prefs.edit()
+
             if (!prefs.getBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, false)) {
-                val migrated = parsed.copy(mineAutoExchange = false)
-                prefs.edit()
-                    .putString(KEY_SETTINGS, gson.toJson(migrated))
-                    .putBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, true)
-                    .apply()
-                migrated
-            } else {
-                parsed
+                migrated = migrated.copy(mineAutoExchange = false)
+                editor.putBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, true)
+                shouldSave = true
             }
+
+            if (!prefs.getBoolean(KEY_TASK_DEFAULTS_MIGRATED, false)) {
+                // Move only values that matched the previous factory defaults; retain custom counts.
+                migrated = migrated.copy(
+                    battleTargetCount = if (migrated.battleTargetCount == 20 || migrated.battleTargetCount <= 0) {
+                        25
+                    } else migrated.battleTargetCount,
+                    readerChapters = if (migrated.readerChapters == 10 || migrated.readerChapters <= 0) {
+                        45
+                    } else migrated.readerChapters,
+                    readerSiteAutoscroll = false,
+                    eventsEnabled = true
+                )
+                editor.putBoolean(KEY_TASK_DEFAULTS_MIGRATED, true)
+                shouldSave = true
+            }
+
+            if (shouldSave) {
+                editor.putString(KEY_SETTINGS, gson.toJson(migrated)).apply()
+            }
+            migrated
         } catch (e: Exception) {
             GlobalSettings()
         }
