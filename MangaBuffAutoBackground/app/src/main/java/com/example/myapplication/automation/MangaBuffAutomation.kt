@@ -134,8 +134,9 @@ class MangaBuffAutomation(
         diamonds: String,
         cardDrop: String,
         chapters: String,
-        comments: String
-    ) -> Unit = { _, _, _, _, _ -> },
+        comments: String,
+        eventCandies: String
+    ) -> Unit = { _, _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     private val onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
@@ -1334,10 +1335,14 @@ class MangaBuffAutomation(
                 mineExchangeOre = account.dailyMineExchangeOre,
                 mineDiamonds = account.dailyMineDiamonds,
                 readerChapters = account.dailyReaderChapters,
-                comments = account.dailyComments
+                comments = account.dailyComments,
+                totalBattleAttempts = account.totalBattleAttempts
             )
         } else {
-            DailyStats(day = currentStatsDay())
+            DailyStats(
+                day = currentStatsDay(),
+                totalBattleAttempts = account.totalBattleAttempts
+            )
         }
         onDailyStatsUpdate(account.id, dailyStats)
     }
@@ -1353,7 +1358,10 @@ class MangaBuffAutomation(
                 "SYSTEM",
                 "DAILY_STATS: RESET oldDay=${dailyStats.day} newDay=$today"
             )
-            dailyStats = DailyStats(day = today)
+            dailyStats = DailyStats(
+                day = today,
+                totalBattleAttempts = dailyStats.totalBattleAttempts
+            )
         }
         return dailyStats
     }
@@ -1370,7 +1378,10 @@ class MangaBuffAutomation(
                 "SYSTEM",
                 "DAILY_STATS: RESET oldDay=${dailyStats.day} newDay=$today"
             )
-            DailyStats(day = today)
+            DailyStats(
+                day = today,
+                totalBattleAttempts = dailyStats.totalBattleAttempts
+            )
         }
         dailyStats = update(current).copy(day = today)
         publishDailyStats(account)
@@ -1416,7 +1427,7 @@ class MangaBuffAutomation(
     }
 
     @Volatile
-    private var lastBalanceSummary = "💎 0  🃏 0/10  📖 0/75  💬 0/13"
+    private var lastBalanceSummary = "💎 0  🃏 0/10  📖 0/75  💬 0/13  🍬 —"
 
     private val commentPhrases = listOf(
         "Спасибо за главу! Было интересно читать.",
@@ -1793,7 +1804,8 @@ class MangaBuffAutomation(
                     diamonds: String,
                     dropRaw: String,
                     chapters: String,
-                    comments: String
+                    comments: String,
+                    eventCandies: String
                 ) {
                     if (resumed) return
                     val before = lastKnownReadQuest
@@ -1818,7 +1830,7 @@ class MangaBuffAutomation(
                             publishDailyStats(account)
                         }
                     }
-                    log(account.username, "STAT: BALANCE_PARSED diamonds=$diamonds cards=$dropRaw chapters=$chapters comments=$comments")
+                    log(account.username, "STAT: BALANCE_PARSED diamonds=$diamonds cards=$dropRaw chapters=$chapters comments=$comments candies=${eventCandies.ifBlank { "unavailable" }}")
 
                     val dropMatch = Regex("(\\d+)\\s+из\\s+(\\d+)").find(dropRaw)
                     val cardDropShort = if (dropMatch != null) {
@@ -1836,9 +1848,13 @@ class MangaBuffAutomation(
                     log(account.username, "STAT: CARDS=$cardDropShort")
                     log(account.username, "STAT: READ_QUEST=$chapters")
                     log(account.username, "STAT: COMMENT_QUEST=$comments")
+                    if (eventCandies.toIntOrNull() != null) {
+                        log(account.username, "STAT: EVENT_CANDIES=$eventCandies")
+                    }
                     log(account.username, "STAT: DOM_SCAN_SUCCESS")
 
-                    val summaryStr = "💎 $diamonds  🃏 $cardDropShort  📖 $chapters  💬 $comments"
+                    val candyDisplay = eventCandies.toIntOrNull()?.toString() ?: "—"
+                    val summaryStr = "💎 $diamonds  🃏 $cardDropShort  📖 $chapters  💬 $comments  🍬 $candyDisplay"
                     lastBalanceSummary = summaryStr
                     log(account.username, "STAT: $summaryStr")
 
@@ -1848,7 +1864,8 @@ class MangaBuffAutomation(
                             diamonds,
                             cardDropShort,
                             chapters,
-                            comments
+                            comments,
+                            eventCandies
                         )
                         log(account.username, "STAT: BALANCE_CALLBACK_INVOKED")
                     } catch (e: Exception) {
@@ -1881,14 +1898,14 @@ class MangaBuffAutomation(
                     if (resumed) return
                     log(account.username, "AUTH: EXPIRED_OR_LOGGED_OUT ($msg)", true)
                     updateStatus(account, "Требуется повторный вход", false, "", 0f)
-                    safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13")
+                    safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13  🍬 —")
                 }
 
                 @JavascriptInterface
                 fun onBalanceError(msg: String) {
                     if (resumed) return
                     log(account.username, "STAT: DOM_SCAN_FAILED reason=$msg", true)
-                    safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13")
+                    safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13  🍬 —")
                 }
 
                 @JavascriptInterface
@@ -1922,7 +1939,7 @@ class MangaBuffAutomation(
                     if (currentUrl.contains("/login")) {
                         log(account.username, "AUTH: EXPIRED_OR_LOGGED_OUT (Redirected to /login)", true)
                         updateStatus(account, "Требуется повторный вход", false, "", 0f)
-                        safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13")
+                        safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13  🍬 —")
                         return
                     }
 
@@ -2047,12 +2064,50 @@ class MangaBuffAutomation(
                                         if (!chaptersVal) chaptersVal = '0/75';
                                         if (!commentsVal) commentsVal = '0/13';
 
-                                        AndroidBalanceBridge.onBalanceInfoParsed(
-                                            diamondVal,
-                                            dropVal,
-                                            chaptersVal,
-                                            commentsVal
-                                        );
+                                        var candyReportFinished = false;
+                                        var candyTimeout = null;
+
+                                        function reportBalance(candyValue) {
+                                            if (candyReportFinished) return;
+                                            candyReportFinished = true;
+                                            if (candyTimeout !== null) clearTimeout(candyTimeout);
+                                            AndroidBalanceBridge.onBalanceInfoParsed(
+                                                diamondVal,
+                                                dropVal,
+                                                chaptersVal,
+                                                commentsVal,
+                                                candyValue || ''
+                                            );
+                                        }
+
+                                        candyTimeout = setTimeout(function() {
+                                            AndroidBalanceBridge.onBalanceDiag('STAT: EVENT_CANDY_FETCH_TIMEOUT');
+                                            reportBalance('');
+                                        }, 5000);
+
+                                        fetch('/event/pack', {
+                                            method: 'GET',
+                                            credentials: 'same-origin',
+                                            cache: 'no-store',
+                                            headers: { 'Accept': 'text/html' }
+                                        }).then(function(response) {
+                                            if (!response.ok) throw new Error('HTTP_' + response.status);
+                                            return response.text();
+                                        }).then(function(html) {
+                                            var eventDoc = new DOMParser().parseFromString(html, 'text/html');
+                                            var candyNode = eventDoc.querySelector('.js-event-balance');
+                                            var candyText = textOf(candyNode);
+                                            var candyMatch = candyText.match(/\d+/);
+                                            if (!candyMatch) throw new Error('CANDY_BALANCE_NOT_FOUND');
+                                            AndroidBalanceBridge.onBalanceDiag('STAT: EVENT_CANDY_FETCH_SUCCESS value=' + candyMatch[0]);
+                                            reportBalance(candyMatch[0]);
+                                        }).catch(function(error) {
+                                            AndroidBalanceBridge.onBalanceDiag(
+                                                'STAT: EVENT_CANDY_FETCH_FAILED reason=' +
+                                                (error && error.message ? error.message : String(error))
+                                            );
+                                            reportBalance('');
+                                        });
 
                                     } catch (e) {
                                         AndroidBalanceBridge.onBalanceError(
@@ -3347,6 +3402,7 @@ class MangaBuffAutomation(
                     addDaily(account) {
                         it.copy(
                             battleAttempts = it.battleAttempts + 1,
+                            totalBattleAttempts = it.totalBattleAttempts + 1,
                             battles = it.battles + 1
                         )
                     }
@@ -3363,7 +3419,8 @@ class MangaBuffAutomation(
                     battleCount++
                     addDaily(account) {
                         it.copy(
-                            battleAttempts = it.battleAttempts + 1
+                            battleAttempts = it.battleAttempts + 1,
+                            totalBattleAttempts = it.totalBattleAttempts + 1
                         )
                     }
                     log(

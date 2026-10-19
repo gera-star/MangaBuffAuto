@@ -10,6 +10,8 @@ data class DailyStats(
     val day: String = "",
     val battles: Int = 0,
     val battleAttempts: Int = 0,
+    /** Lifetime completed battles; this counter survives the daily rollover. */
+    val totalBattleAttempts: Int = 0,
     val quiz: Int = 0,
     val ads: Int = 0,
     val mineOre: Int = 0,
@@ -52,9 +54,13 @@ data class MangaBuffAccount(
     val cardDrop: String = "0/10",
     val chapterProgress: String = "0/75",
     val commentProgress: String = "0/13",
+    /** Latest known Halloween/event candy balance from /event/pack; null means not read yet. */
+    val eventCandies: String? = null,
     val dailyStatsDay: String = "",
     val dailyBattles: Int = 0,
     val dailyBattleAttempts: Int = 0,
+    /** Lifetime number of completed battles (wins + losses), never reset daily. */
+    val totalBattleAttempts: Int = 0,
     val dailyQuiz: Int = 0,
     val dailyAds: Int = 0,
     val dailyMineOre: Int = 0,

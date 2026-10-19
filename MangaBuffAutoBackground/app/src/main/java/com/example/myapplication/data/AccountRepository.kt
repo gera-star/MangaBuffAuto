@@ -41,6 +41,18 @@ class AccountRepository(context: Context) {
                             accountJson.remove("quizEnabled")
                             changed = true
                         }
+                        if (!accountJson.has("totalBattleAttempts")) {
+                            val legacyAttempts = try {
+                                accountJson.get("dailyBattleAttempts")?.asInt ?: 0
+                            } catch (_: Exception) {
+                                0
+                            }
+                            accountJson.add(
+                                "totalBattleAttempts",
+                                JsonPrimitive(legacyAttempts.coerceAtLeast(0))
+                            )
+                            changed = true
+                        }
                     }
                 }
                 if (changed) prefs.edit().putString(KEY_ACCOUNTS, root.toString()).apply()

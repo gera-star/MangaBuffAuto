@@ -97,9 +97,11 @@ class MangaBuffForegroundService : Service() {
         const val EXTRA_CARD_DROP = "EXTRA_CARD_DROP"
         const val EXTRA_CHAPTERS = "EXTRA_CHAPTERS"
         const val EXTRA_COMMENTS = "EXTRA_COMMENTS"
+        const val EXTRA_EVENT_CANDIES = "EXTRA_EVENT_CANDIES"
         const val EXTRA_DAY = "EXTRA_DAY"
         const val EXTRA_BATTLES = "EXTRA_BATTLES"
         const val EXTRA_BATTLE_ATTEMPTS = "EXTRA_BATTLE_ATTEMPTS"
+        const val EXTRA_TOTAL_BATTLE_ATTEMPTS = "EXTRA_TOTAL_BATTLE_ATTEMPTS"
         const val EXTRA_QUIZ = "EXTRA_QUIZ"
         const val EXTRA_ADS = "EXTRA_ADS"
         const val EXTRA_MINE_ORE = "EXTRA_MINE_ORE"
@@ -1176,7 +1178,8 @@ class MangaBuffForegroundService : Service() {
         diamonds: String,
         cardDrop: String,
         chapters: String,
-        comments: String
+        comments: String,
+        eventCandies: String
     ) {
         sendRuntimeEvent(
             EVENT_STATS,
@@ -1186,6 +1189,7 @@ class MangaBuffForegroundService : Service() {
                 putExtra(EXTRA_CARD_DROP, cardDrop)
                 putExtra(EXTRA_CHAPTERS, chapters)
                 putExtra(EXTRA_COMMENTS, comments)
+                putExtra(EXTRA_EVENT_CANDIES, eventCandies)
             }
         )
     }
@@ -1198,6 +1202,7 @@ class MangaBuffForegroundService : Service() {
                 putExtra(EXTRA_DAY, stats.day)
                 putExtra(EXTRA_BATTLES, stats.battles)
                 putExtra(EXTRA_BATTLE_ATTEMPTS, stats.battleAttempts)
+                putExtra(EXTRA_TOTAL_BATTLE_ATTEMPTS, stats.totalBattleAttempts)
                 putExtra(EXTRA_QUIZ, stats.quiz)
                 putExtra(EXTRA_ADS, stats.ads)
                 putExtra(EXTRA_MINE_ORE, stats.mineOre)

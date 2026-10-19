@@ -80,7 +80,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         intent?.getStringExtra(MangaBuffForegroundService.EXTRA_DIAMONDS).orEmpty(),
                         intent?.getStringExtra(MangaBuffForegroundService.EXTRA_CARD_DROP).orEmpty(),
                         intent?.getStringExtra(MangaBuffForegroundService.EXTRA_CHAPTERS).orEmpty(),
-                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_COMMENTS).orEmpty()
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_COMMENTS).orEmpty(),
+                        intent?.getStringExtra(MangaBuffForegroundService.EXTRA_EVENT_CANDIES).orEmpty()
                     )
                 }
                 MangaBuffForegroundService.EVENT_DAILY_STATS -> {
@@ -90,6 +91,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             day = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_DAY).orEmpty(),
                             battles = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_BATTLES, 0) ?: 0,
                             battleAttempts = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_BATTLE_ATTEMPTS, 0) ?: 0,
+                            totalBattleAttempts = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_TOTAL_BATTLE_ATTEMPTS, 0) ?: 0,
                             quiz = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_QUIZ, 0) ?: 0,
                             ads = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_ADS, 0) ?: 0,
                             mineOre = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_MINE_ORE, 0) ?: 0,
@@ -357,14 +359,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         diamonds: String,
         cardDrop: String,
         chapters: String,
-        comments: String
+        comments: String,
+        eventCandies: String
     ) {
         val updated = repository.updateAccount(accountId) {
             it.copy(
                 diamonds = diamonds,
                 cardDrop = cardDrop,
                 chapterProgress = chapters,
-                commentProgress = comments
+                commentProgress = comments,
+                eventCandies = eventCandies.toIntOrNull()?.toString() ?: it.eventCandies
             )
         } ?: return
 
@@ -389,6 +393,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 dailyStatsDay = stats.day,
                 dailyBattles = stats.battles,
                 dailyBattleAttempts = stats.battleAttempts,
+                totalBattleAttempts = maxOf(it.totalBattleAttempts, stats.totalBattleAttempts),
                 dailyQuiz = stats.quiz,
                 dailyAds = stats.ads,
                 dailyMineOre = stats.mineOre,

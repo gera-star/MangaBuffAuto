@@ -27,7 +27,7 @@ class AutomationRuntime(
     private val onLog: (LogEntry) -> Unit,
     private val onAccountStatusUpdate: (accountId: String, statusMessage: String, isRunning: Boolean, currentTask: String, progress: Float) -> Unit,
     private val onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
-    private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
+    private val onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String, eventCandies: String) -> Unit = { _, _, _, _, _, _ -> },
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     private val onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     private val onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },

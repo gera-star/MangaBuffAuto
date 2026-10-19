@@ -13,7 +13,7 @@ class MultiAccountAutomationRunner(
     private val onLog: (LogEntry) -> Unit,
     onAccountStatusUpdate: (accountId: String, statusMessage: String, isRunning: Boolean, currentTask: String, progress: Float) -> Unit,
     onMangaActiveUrlUpdate: (accountId: String, url: String, title: String) -> Unit,
-    onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String) -> Unit = { _, _, _, _, _ -> },
+    onAccountStatsUpdate: (accountId: String, diamonds: String, cardDrop: String, chapters: String, comments: String, eventCandies: String) -> Unit = { _, _, _, _, _, _ -> },
     onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
