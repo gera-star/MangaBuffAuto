@@ -11080,31 +11080,146 @@ class MangaBuffAutomation(
 
                                     (function scanReaderChapterTotal() {
                                         try {
-                                            // Never open the site's chapter picker just to count chapters.
-                                            // The old synthetic menuButton.click() could leave the picker open
-                                            // when the reader UI handled the toggle asynchronously.
-                                            // Read the count from DOM only, retrying briefly for late rendering.
                                             var attempts = 0;
-                                            function pollReaderChapterList() {
-                                                attempts++;
-                                                if (reportReaderChapterTotal('DOM_ONLY_ATTEMPT_' + attempts) > 0) {
+                                            var scanFinished = false;
+                                            var shouldCloseChapterPopup = false;
+                                            var chapterMenuButton = document.querySelector(
+                                                'button.reader-menu__item.reader-menu__item--chapters[data-popup="popup--chapters-select"]'
+                                            );
+
+                                            function isVisibleElement(element) {
+                                                if (!element || !element.isConnected) return false;
+                                                var style = getComputedStyle(element);
+                                                var rect = element.getBoundingClientRect();
+                                                return style.display !== 'none' &&
+                                                    style.visibility !== 'hidden' &&
+                                                    Number(style.opacity || 1) > 0 &&
+                                                    rect.width > 0 && rect.height > 0 &&
+                                                    rect.bottom > 0 && rect.top < innerHeight &&
+                                                    rect.right > 0 && rect.left < innerWidth;
+                                            }
+
+                                            function findVisibleChapterPopupClose() {
+                                                return Array.prototype.slice.call(
+                                                    document.querySelectorAll('.popup__close')
+                                                ).find(isVisibleElement) || null;
+                                            }
+
+                                            function finishChapterScan(reason) {
+                                                if (scanFinished) return;
+                                                scanFinished = true;
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_TOTAL_SCAN_FINISH reason=' + reason +
+                                                    ' total=' + attempts
+                                                );
+
+                                                if (shouldCloseChapterPopup) {
+                                                    closeChapterPopup(reason, 0);
+                                                } else {
                                                     startReaderScrollOnce();
+                                                }
+                                            }
+
+                                            function closeChapterPopup(reason, retry) {
+                                                var closeButton = findVisibleChapterPopupClose();
+                                                if (closeButton) {
+                                                    try {
+                                                        closeButton.click();
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'READER: CHAPTER_POPUP_CLOSE_CLICK selector=.popup__close reason=' +
+                                                            reason + ' retry=' + retry
+                                                        );
+                                                    } catch(e) {
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'READER: CHAPTER_POPUP_CLOSE_ERROR ' +
+                                                            (e.message || String(e))
+                                                        );
+                                                    }
+
+                                                    setTimeout(function() {
+                                                        if (findVisibleChapterPopupClose() && retry < 2) {
+                                                            closeChapterPopup(reason, retry + 1);
+                                                            return;
+                                                        }
+                                                        if (findVisibleChapterPopupClose()) {
+                                                            AndroidReaderBridge.onLogStep(
+                                                                'READER: CHAPTER_POPUP_STILL_VISIBLE retries=' + retry
+                                                            );
+                                                        } else {
+                                                            AndroidReaderBridge.onLogStep(
+                                                                'READER: CHAPTER_POPUP_CLOSED selector=.popup__close'
+                                                            );
+                                                        }
+                                                        startReaderScrollOnce();
+                                                    }, 180);
                                                     return;
                                                 }
 
-                                                if (attempts < 6) {
-                                                    setTimeout(pollReaderChapterList, 120);
+                                                if (retry < 2) {
+                                                    setTimeout(function() {
+                                                        closeChapterPopup(reason, retry + 1);
+                                                    }, 120);
                                                     return;
                                                 }
 
                                                 AndroidReaderBridge.onLogStep(
-                                                    'READER: CHAPTER_TOTAL_NOT_FOUND attempts=' + attempts +
-                                                    ' action=SKIP_MENU_CLICK'
+                                                    'READER: CHAPTER_POPUP_CLOSE_NOT_FOUND selector=.popup__close reason=' +
+                                                    reason
                                                 );
                                                 startReaderScrollOnce();
                                             }
 
-                                            pollReaderChapterList();
+                                            // If the chapter popup is already open, count it and close it
+                                            // without toggling it closed accidentally via the menu button.
+                                            if (findVisibleChapterPopupClose()) {
+                                                shouldCloseChapterPopup = true;
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_POPUP_ALREADY_OPEN'
+                                                );
+                                            } else if (chapterMenuButton) {
+                                                try {
+                                                    chapterMenuButton.click();
+                                                    shouldCloseChapterPopup = true;
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: CHAPTER_POPUP_OPEN_CLICK'
+                                                    );
+                                                } catch(e) {
+                                                    AndroidReaderBridge.onLogStep(
+                                                        'READER: CHAPTER_POPUP_OPEN_ERROR ' +
+                                                        (e.message || String(e))
+                                                    );
+                                                }
+                                            } else {
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_TOTAL_MENU_BUTTON_NOT_FOUND'
+                                                );
+                                            }
+
+                                            function pollReaderChapterList() {
+                                                attempts++;
+                                                if (reportReaderChapterTotal('POPUP_ATTEMPT_' + attempts) > 0) {
+                                                    finishChapterScan('COUNTED');
+                                                    return;
+                                                }
+
+                                                if (attempts < 12) {
+                                                    setTimeout(pollReaderChapterList, 150);
+                                                    return;
+                                                }
+
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_TOTAL_NOT_FOUND attempts=' + attempts
+                                                );
+                                                finishChapterScan('TIMEOUT');
+                                            }
+
+                                            if (shouldCloseChapterPopup) {
+                                                setTimeout(pollReaderChapterList, 120);
+                                            } else if (reportReaderChapterTotal('DOM_FALLBACK') > 0) {
+                                                finishChapterScan('COUNTED_WITHOUT_POPUP');
+                                            } else {
+                                                finishChapterScan('MENU_BUTTON_NOT_FOUND');
+                                            }
                                         } catch(e) {
                                             AndroidReaderBridge.onLogStep(
                                                 'READER: CHAPTER_TOTAL_SCAN_ERROR ' + (e.message || String(e))
