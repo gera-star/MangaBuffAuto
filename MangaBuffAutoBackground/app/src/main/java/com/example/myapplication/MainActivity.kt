@@ -194,24 +194,17 @@ class MainActivity : ComponentActivity() {
 
                     var showKeenySplash by remember { mutableStateOf(true) }
                     var splashPlaybackStarted by remember { mutableStateOf(false) }
-                    var splashPlaybackFailed by remember { mutableStateOf(false) }
 
-                    // Keep the intro visible long enough to see the animation, but never
-                    // let a slow/unreachable video delay the main screen indefinitely.
+                    // Keep the animated intro on screen for about five seconds, with a hard
+                    // timeout so the main screen can never be blocked by the splash.
                     LaunchedEffect(Unit) {
                         kotlinx.coroutines.delay(10_000L)
                         showKeenySplash = false
                     }
-                    LaunchedEffect(splashPlaybackStarted, splashPlaybackFailed) {
-                        when {
-                            splashPlaybackStarted -> {
-                                kotlinx.coroutines.delay(5_000L)
-                                showKeenySplash = false
-                            }
-                            splashPlaybackFailed -> {
-                                kotlinx.coroutines.delay(1_500L)
-                                showKeenySplash = false
-                            }
+                    LaunchedEffect(splashPlaybackStarted) {
+                        if (splashPlaybackStarted) {
+                            kotlinx.coroutines.delay(5_000L)
+                            showKeenySplash = false
                         }
                     }
 
@@ -262,9 +255,7 @@ class MainActivity : ComponentActivity() {
                             // fillMaxSize works across Compose versions; avoid matchParentSize here.
                             MangaBuffSplash(
                                 modifier = Modifier.fillMaxSize(),
-                                playbackFailed = splashPlaybackFailed,
-                                onPlaybackStarted = { splashPlaybackStarted = true },
-                                onPlaybackFailed = { splashPlaybackFailed = true }
+                                onPlaybackStarted = { splashPlaybackStarted = true }
                             )
                         }
 
