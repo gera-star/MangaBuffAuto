@@ -6500,7 +6500,7 @@ class MangaBuffAutomation(
                                         AndroidAds.onStateLog(
                                             "CLOSE_RETRY_SURFACE",
                                             "attempt=" + nativeCloseAttempts +
-                                                " visible=" + adStillVisible
+                                                " explicitCloseSignal=" + adStillVisible
                                         );
 
                                         if (
@@ -6544,7 +6544,7 @@ class MangaBuffAutomation(
                                     if (
                                         finished ||
                                         nativeCloseRequested ||
-                                        nativeCloseAttempts >= CLOSE_TAP_RING_OFFSETS.length
+                                        nativeCloseAttempts >= MAX_NATIVE_CLOSE_ATTEMPTS
                                     ) {
                                         return;
                                     }
