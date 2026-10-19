@@ -3281,10 +3281,133 @@ class MangaBuffAutomation(
                                 }
                             }
 
+                            function scanCandy() {
+                                if (window.__mbEventDropPhase !== 'candy') return;
+
+                                try {
+                                    var drop = document.querySelector(
+                                        'div.event-gift-ball:not(.event-gift-ball--collected)'
+                                    );
+                                    if (!drop || drop.__mbEventDropClicked || !visible(drop)) return;
+
+                                    drop.__mbEventDropClicked = true;
+                                    try {
+                                        AndroidReaderBridge.onEventDropClickAttempt(
+                                            String(drop.className || ''),
+                                            String(drop.id || ''),
+                                            'event-gift-ball'
+                                        );
+                                    } catch (_) {}
+                                    logStep('EVENTS: CANDY_FOUND class=' + String(drop.className || ''));
+
+                                    // Keep the site's existing, confirmed candy click mechanism.
+                                    try {
+                                        drop.click();
+                                    } catch (clickError) {
+                                        logStep('EVENTS: CANDY_CLICK_ERROR ' + String(clickError));
+                                    }
+
+                                    var verifyStartedAt = Date.now();
+                                    var verificationFinished = false;
+
+                                    function transitionToPumpkin(reason) {
+                                        if (window.__mbEventDropPhase !== 'collecting') return;
+                                        window.__mbEventCollectionTransitionPending = false;
+                                        window.__mbEventDropPhase = 'pumpkin';
+                                        window.__mbPumpkinPhaseStartedAt = Date.now();
+                                        window.__mbPumpkinTapCount = 0;
+                                        tapCount = 0;
+                                        logStep('EVENTS: PHASE collecting -> pumpkin reason=' + reason);
+                                    }
+
+                                    function beginCollectedTransition(reason) {
+                                        if (window.__mbEventDropPhase === 'pumpkin') return;
+                                        if (window.__mbEventDropPhase !== 'collecting') {
+                                            window.__mbEventDropPhase = 'collecting';
+                                            logStep(
+                                                'EVENTS: CANDY_RESULT collected=' + reason +
+                                                ' animation=event-gift-ball--collect'
+                                            );
+                                        }
+
+                                        if (drop && drop.isConnected &&
+                                            !drop.__mbEventCollectAnimationHandler) {
+                                            drop.__mbEventCollectAnimationHandler = true;
+                                            var onCandyAnimationEnd = function(event) {
+                                                if (event && event.target !== drop) return;
+                                                if (event && event.animationName &&
+                                                    event.animationName !== 'event-gift-ball--collect') return;
+                                                try {
+                                                    drop.removeEventListener('animationend', onCandyAnimationEnd);
+                                                } catch (_) {}
+                                                transitionToPumpkin('animationend');
+                                            };
+                                            try {
+                                                drop.addEventListener('animationend', onCandyAnimationEnd);
+                                            } catch (_) {}
+                                        }
+
+                                        if (window.__mbEventCollectionTransitionPending) return;
+                                        window.__mbEventCollectionTransitionPending = true;
+                                        // The observed site animation lasts 0.9s; keep a small safety margin.
+                                        setTimeout(function() {
+                                            transitionToPumpkin('animation_timeout');
+                                        }, 1200);
+                                    }
+
+                                    function verifyCandyResult() {
+                                        if (verificationFinished) return;
+                                        try {
+                                            var removed = !drop || !drop.isConnected;
+                                            var collected = !removed &&
+                                                drop.classList.contains('event-gift-ball--collected');
+
+                                            if (collected) {
+                                                verificationFinished = true;
+                                                beginCollectedTransition('true');
+                                                return;
+                                            }
+
+                                            if (removed) {
+                                                verificationFinished = true;
+                                                beginCollectedTransition('element_removed');
+                                                return;
+                                            }
+
+                                            if (Date.now() - verifyStartedAt < 2500) {
+                                                setTimeout(verifyCandyResult, 200);
+                                                return;
+                                            }
+
+                                            verificationFinished = true;
+                                            logStep(
+                                                'EVENTS: CANDY_RESULT collected=false class=' +
+                                                String(drop && drop.className || '') + '; will retry'
+                                            );
+                                            if (drop && drop.isConnected) {
+                                                drop.__mbEventDropClicked = false;
+                                            }
+                                        } catch (error) {
+                                            verificationFinished = true;
+                                            if (drop && drop.isConnected) {
+                                                drop.__mbEventDropClicked = false;
+                                            }
+                                            logStep('EVENTS: CANDY_VERIFY_ERROR ' + String(error));
+                                        }
+                                    }
+
+                                    setTimeout(verifyCandyResult, 180);
+                                } catch (error) {
+                                    logStep('EVENTS: CANDY_SCAN_ERROR ' + String(error));
+                                }
+                            }
+
                             function scan() {
                                 if (Date.now() - startedAt > 1800000) {
                                     clearInterval(window.__mbPumpkinAutoTapTimer);
                                     window.__mbPumpkinAutoTapTimer = null;
+                                    window.__mbEventDropCycleActive = false;
+                                    logStep('EVENTS: SHARED_CYCLE_STOPPED reason=max_runtime');
                                     return;
                                 }
 
@@ -3325,8 +3448,11 @@ class MangaBuffAutomation(
                                     );
                                 }
 
-                                // Candy collection stays in its own interval; this loop never clicks candy.
+                                // One shared event cycle: a visible pumpkin wins; otherwise collect candy.
                                 if (window.__mbEventDropPhase !== 'pumpkin') {
+                                    if (window.__mbEventDropPhase !== 'collecting') {
+                                        scanCandy();
+                                    }
                                     lastSeenPumpkin = false;
                                     pumpkinAbsentSince = 0;
                                     return;
@@ -3383,6 +3509,8 @@ class MangaBuffAutomation(
                             );
                             scan();
                             window.__mbPumpkinAutoTapTimer = setInterval(scan, 220);
+                            window.__mbEventDropCycleActive = true;
+                            logStep('EVENTS: SHARED_CYCLE_STARTED intervalMs=220 pumpkinFirst=true candySelector=event-gift-ball');
                         } catch (_) {}
                     })();
                     """.trimIndent(),
@@ -10291,7 +10419,8 @@ class MangaBuffAutomation(
                                         // The reader's existing click path is the sole candy collector.
                                         // Pause it while the pumpkin is being tapped so both automations
                                         // cannot race or switch phases independently.
-                                        if (window.__mbEventDropPhase !== 'pumpkin' &&
+                                        if (!window.__mbEventDropCycleActive &&
+                                            window.__mbEventDropPhase !== 'pumpkin' &&
                                             window.__mbEventDropPhase !== 'collecting') {
                                             try {
                                                 var drop = document.querySelector(
