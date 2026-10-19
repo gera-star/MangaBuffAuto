@@ -437,6 +437,40 @@ private fun VideoStartupSplash(
                     isOpaque = false
                     alpha = 0f
 
+                    // Keep the full video frame visible on any screen aspect ratio.
+                    // TextureView's transform is relative to the view content, not raw video pixels.
+                    var currentVideoWidth = 0
+                    var currentVideoHeight = 0
+                    val updateVideoFitTransform = {
+                        val viewWidth = textureView.width
+                        val viewHeight = textureView.height
+                        if (currentVideoWidth > 0 && currentVideoHeight > 0 &&
+                            viewWidth > 0 && viewHeight > 0
+                        ) {
+                            val videoAspect = currentVideoWidth.toFloat() / currentVideoHeight.toFloat()
+                            val viewAspect = viewWidth.toFloat() / viewHeight.toFloat()
+                            var scaleX = 1f
+                            var scaleY = 1f
+
+                            if (videoAspect > viewAspect) {
+                                // Video is relatively wider: fit its width and add vertical letterboxing.
+                                scaleY = viewAspect / videoAspect
+                            } else if (videoAspect < viewAspect) {
+                                // Video is relatively taller: fit its height and add side letterboxing.
+                                scaleX = videoAspect / viewAspect
+                            }
+
+                            val fitMatrix = android.graphics.Matrix().apply {
+                                setScale(scaleX, scaleY, viewWidth / 2f, viewHeight / 2f)
+                            }
+                            textureView.setTransform(fitMatrix)
+                        }
+                    }
+
+                    addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                        updateVideoFitTransform()
+                    }
+
                     surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
                         private var mediaPlayer: android.media.MediaPlayer? = null
                         private var splashAudioPlayer: android.media.MediaPlayer? = null
@@ -493,26 +527,11 @@ private fun VideoStartupSplash(
                                     false
                                 }
                                 player.setOnVideoSizeChangedListener { _, videoWidth, videoHeight ->
-                                    val viewWidth = textureView.width
-                                    val viewHeight = textureView.height
-                                    if (videoWidth > 0 && videoHeight > 0 &&
-                                        viewWidth > 0 && viewHeight > 0
-                                    ) {
+                                    if (videoWidth > 0 && videoHeight > 0) {
+                                        currentVideoWidth = videoWidth
+                                        currentVideoHeight = videoHeight
                                         surfaceTexture.setDefaultBufferSize(videoWidth, videoHeight)
-                                        val source = android.graphics.RectF(
-                                            0f, 0f, videoWidth.toFloat(), videoHeight.toFloat()
-                                        )
-                                        val destination = android.graphics.RectF(
-                                            0f, 0f, viewWidth.toFloat(), viewHeight.toFloat()
-                                        )
-                                        val transform = android.graphics.Matrix().apply {
-                                            setRectToRect(
-                                                source,
-                                                destination,
-                                                android.graphics.Matrix.ScaleToFit.CENTER
-                                            )
-                                        }
-                                        textureView.setTransform(transform)
+                                        updateVideoFitTransform()
                                     }
                                 }
                                 player.setOnCompletionListener {
@@ -551,7 +570,9 @@ private fun VideoStartupSplash(
                             surfaceTexture: android.graphics.SurfaceTexture,
                             width: Int,
                             height: Int
-                        ) = Unit
+                        ) {
+                            updateVideoFitTransform()
+                        }
 
                         override fun onSurfaceTextureDestroyed(
                             surfaceTexture: android.graphics.SurfaceTexture
