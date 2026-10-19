@@ -399,7 +399,6 @@ private fun WebViewReturnOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .statusBarsPadding()
             .padding(top = 78.dp, end = 12.dp),
         contentAlignment = Alignment.TopEnd
     ) {
