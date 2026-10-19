@@ -11080,6 +11080,12 @@ class MangaBuffAutomation(
 
                                     (function scanReaderChapterTotal() {
                                         try {
+                                            var cachedTotal = Number(window.__mbReaderTotalChapters || 0);
+                                            if (cachedTotal > 0) {
+                                                AndroidReaderBridge.onLogStep('READER: CHAPTER_TOTAL_CACHE_HIT total=' + cachedTotal);
+                                                startReaderScrollOnce();
+                                                return;
+                                            }
                                             var attempts = 0;
                                             var chapterCount = 0;
                                             var scanFinished = false;
@@ -11201,6 +11207,7 @@ class MangaBuffAutomation(
                                                 var total = reportReaderChapterTotal('POPUP_ATTEMPT_' + attempts);
                                                 if (total > 0) {
                                                     chapterCount = total;
+                                                    window.__mbReaderTotalChapters = total;
                                                     finishChapterScan('COUNTED');
                                                     return;
                                                 }
@@ -11221,6 +11228,7 @@ class MangaBuffAutomation(
                                             } else {
                                                 chapterCount = reportReaderChapterTotal('DOM_FALLBACK');
                                                 if (chapterCount > 0) {
+                                                    window.__mbReaderTotalChapters = chapterCount;
                                                     finishChapterScan('COUNTED_WITHOUT_POPUP');
                                                 } else {
                                                     finishChapterScan('MENU_BUTTON_NOT_FOUND');
