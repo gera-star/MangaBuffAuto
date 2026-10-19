@@ -997,8 +997,6 @@ fun AccountCard(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = "💎 " + account.diamonds, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, color = Color.White)
-                                Text(text = "🃏 " + account.cardDrop, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, color = Color.White)
                                 Text(
                                     text = "🍬 " + (account.eventCandies?.takeIf { it.isNotBlank() } ?: "—"),
                                     fontSize = 10.sp,
@@ -1006,6 +1004,8 @@ fun AccountCard(
                                     maxLines = 1,
                                     color = Color.White
                                 )
+                                Text(text = "💎 " + account.diamonds, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, color = Color.White)
+                                Text(text = "🃏 " + account.cardDrop, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, color = Color.White)
                             }
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1137,6 +1137,7 @@ fun AccountCard(
                     val today = currentStatsDay()
                     val isToday = account.dailyStatsDay == today
                     val dailyBattles = if (isToday) account.dailyBattles else 0
+                    val dailyBattleAttempts = if (isToday) account.dailyBattleAttempts else 0
                     val dailyAds = if (isToday) account.dailyAds else 0
                     val mineOreBalanceLabel = if (account.mineOreBalanceKnown) {
                         "${account.mineOreBalance} 🪨 на аккаунте"
@@ -1171,7 +1172,7 @@ fun AccountCard(
                         }
                     }
 
-                    TaskSwitchRow("🃏 Бои", "${account.totalBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
+                    TaskSwitchRow("🃏 Бои", "${dailyBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.towerEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, b)
                     }
                     TaskSwitchRow("🗼 Башня Разлома", towerRemainingLabel(account), account.towerEnabled) { tower ->

@@ -41,18 +41,6 @@ class AccountRepository(context: Context) {
                             accountJson.remove("quizEnabled")
                             changed = true
                         }
-                        if (!accountJson.has("totalBattleAttempts")) {
-                            val legacyAttempts = try {
-                                accountJson.get("dailyBattleAttempts")?.asInt ?: 0
-                            } catch (_: Exception) {
-                                0
-                            }
-                            accountJson.add(
-                                "totalBattleAttempts",
-                                JsonPrimitive(legacyAttempts.coerceAtLeast(0))
-                            )
-                            changed = true
-                        }
                     }
                 }
                 if (changed) prefs.edit().putString(KEY_ACCOUNTS, root.toString()).apply()
@@ -73,6 +61,7 @@ class AccountRepository(context: Context) {
                 acc.copy(
                     dailyStatsDay = if (statsFresh) acc.dailyStatsDay else day,
                     dailyBattles = if (statsFresh) acc.dailyBattles else 0,
+                    dailyBattleAttempts = if (statsFresh) acc.dailyBattleAttempts else 0,
                     dailyQuiz = if (statsFresh) acc.dailyQuiz else 0,
                     dailyAds = if (statsFresh) acc.dailyAds else 0,
                     dailyMineOre = if (statsFresh) acc.dailyMineOre else 0,

@@ -1335,14 +1335,10 @@ class MangaBuffAutomation(
                 mineExchangeOre = account.dailyMineExchangeOre,
                 mineDiamonds = account.dailyMineDiamonds,
                 readerChapters = account.dailyReaderChapters,
-                comments = account.dailyComments,
-                totalBattleAttempts = account.totalBattleAttempts
+                comments = account.dailyComments
             )
         } else {
-            DailyStats(
-                day = currentStatsDay(),
-                totalBattleAttempts = account.totalBattleAttempts
-            )
+            DailyStats(day = currentStatsDay())
         }
         onDailyStatsUpdate(account.id, dailyStats)
     }
@@ -1358,10 +1354,7 @@ class MangaBuffAutomation(
                 "SYSTEM",
                 "DAILY_STATS: RESET oldDay=${dailyStats.day} newDay=$today"
             )
-            dailyStats = DailyStats(
-                day = today,
-                totalBattleAttempts = dailyStats.totalBattleAttempts
-            )
+            dailyStats = DailyStats(day = today)
         }
         return dailyStats
     }
@@ -1378,10 +1371,7 @@ class MangaBuffAutomation(
                 "SYSTEM",
                 "DAILY_STATS: RESET oldDay=${dailyStats.day} newDay=$today"
             )
-            DailyStats(
-                day = today,
-                totalBattleAttempts = dailyStats.totalBattleAttempts
-            )
+            DailyStats(day = today)
         }
         dailyStats = update(current).copy(day = today)
         publishDailyStats(account)
@@ -3402,7 +3392,6 @@ class MangaBuffAutomation(
                     addDaily(account) {
                         it.copy(
                             battleAttempts = it.battleAttempts + 1,
-                            totalBattleAttempts = it.totalBattleAttempts + 1,
                             battles = it.battles + 1
                         )
                     }
@@ -3419,8 +3408,7 @@ class MangaBuffAutomation(
                     battleCount++
                     addDaily(account) {
                         it.copy(
-                            battleAttempts = it.battleAttempts + 1,
-                            totalBattleAttempts = it.totalBattleAttempts + 1
+                            battleAttempts = it.battleAttempts + 1
                         )
                     }
                     log(
