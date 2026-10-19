@@ -6507,7 +6507,7 @@ class MangaBuffAutomation(
                                             AndroidAds.onStateLog(
                                                 "AUTO_CLOSE_RETRY",
                                                 "nextAttempt=" + (nativeCloseAttempts + 1) +
-                                                    " retryTarget=same_close_point reason=visible_close_or_timer"
+                                                    " retryTarget=same_close_point reason=visible_close_control"
                                             );
                                             attemptAutoClose();
                                             return;
