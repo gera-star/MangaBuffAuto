@@ -439,6 +439,7 @@ private fun VideoStartupSplash(
 
                     surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
                         private var mediaPlayer: android.media.MediaPlayer? = null
+                        private var splashAudioPlayer: android.media.MediaPlayer? = null
                         private var outputSurface: android.view.Surface? = null
 
                         private fun revealVideoFrame() {
@@ -460,10 +461,31 @@ private fun VideoStartupSplash(
 
                             try {
                                 player.setSurface(surface)
+                                // New animation is picture-only; play the original splash soundtrack separately.
+                                player.setVolume(0f, 0f)
                                 player.setOnPreparedListener { preparedPlayer ->
                                     preparedPlayer.isLooping = false
                                     preparedPlayer.start()
                                 }
+
+                                val audioPlayer = android.media.MediaPlayer()
+                                splashAudioPlayer = audioPlayer
+                                audioPlayer.setOnPreparedListener { preparedAudio ->
+                                    if (!playbackFailed) {
+                                        preparedAudio.isLooping = false
+                                        preparedAudio.start()
+                                    }
+                                }
+                                audioPlayer.setOnErrorListener { _, _, _ ->
+                                    try { audioPlayer.release() } catch (_: Exception) {}
+                                    if (splashAudioPlayer === audioPlayer) splashAudioPlayer = null
+                                    true
+                                }
+                                audioPlayer.setDataSource(
+                                    context,
+                                    Uri.parse("android.resource://${context.packageName}/${R.raw.mangabuff_splash_audio}")
+                                )
+                                audioPlayer.prepareAsync()
                                 player.setOnInfoListener { _, what, _ ->
                                     if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
                                         revealVideoFrame()
@@ -494,6 +516,13 @@ private fun VideoStartupSplash(
                                     }
                                 }
                                 player.setOnCompletionListener {
+                                    splashAudioPlayer?.let { audio ->
+                                        try {
+                                            if (audio.isPlaying) audio.stop()
+                                        } catch (_: Exception) {}
+                                        try { audio.release() } catch (_: Exception) {}
+                                    }
+                                    splashAudioPlayer = null
                                     onFinished()
                                 }
                                 player.setOnErrorListener { _, _, _ ->
@@ -540,6 +569,13 @@ private fun VideoStartupSplash(
                                 }
                             }
                             mediaPlayer = null
+                            splashAudioPlayer?.let { audio ->
+                                try {
+                                    if (audio.isPlaying) audio.stop()
+                                } catch (_: Exception) {}
+                                try { audio.release() } catch (_: Exception) {}
+                            }
+                            splashAudioPlayer = null
                             outputSurface?.release()
                             outputSurface = null
                             return true
