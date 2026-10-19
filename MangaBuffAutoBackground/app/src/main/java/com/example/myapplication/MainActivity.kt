@@ -150,16 +150,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                requestNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-
         setContent {
             MyApplicationTheme(darkTheme = true, dynamicColor = false) {
                 val settings by viewModel.settings.collectAsState()
@@ -203,6 +193,22 @@ class MainActivity : ComponentActivity() {
                     val debugWebView = selectedDebugAccountId?.let(webViewsByAccount::get)
 
                     var showStartupSplash by remember { mutableStateOf(true) }
+
+                    // Let the branded splash render and finish before asking Android to show
+                    // a notification permission dialog, which otherwise delays our splash.
+                    LaunchedEffect(showStartupSplash) {
+                        if (!showStartupSplash &&
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(
+                                this@MainActivity,
+                                Manifest.permission.POST_NOTIFICATIONS
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            requestNotificationPermissionLauncher.launch(
+                                Manifest.permission.POST_NOTIFICATIONS
+                            )
+                        }
+                    }
 
                     // The video ends naturally; this is a failsafe if decoding fails or
                     // the playback callback is never delivered.
@@ -352,6 +358,16 @@ private fun VideoStartupSplash(
 ) {
     var firstVideoFrameVisible by remember { mutableStateOf(false) }
     var playbackFailed by remember { mutableStateOf(false) }
+    var playbackCompleted by remember { mutableStateOf(false) }
+
+    // Keep the final animation frame on screen for one extra second before
+    // revealing the main app UI.
+    LaunchedEffect(playbackCompleted) {
+        if (playbackCompleted) {
+            kotlinx.coroutines.delay(1_000L)
+            onFinished()
+        }
+    }
 
     // If the decoder or video surface fails, keep a visible branded fallback
     // briefly, then allow the main screen to open. Never leave a black splash.
@@ -533,7 +549,7 @@ private fun VideoStartupSplash(
                                         try { audio.release() } catch (_: Exception) {}
                                     }
                                     splashAudioPlayer = null
-                                    onFinished()
+                                    playbackCompleted = true
                                 }
                                 player.setOnErrorListener { _, _, _ ->
                                     playbackFailed = true
