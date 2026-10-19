@@ -1154,6 +1154,7 @@ fun AccountCard(
                     }
                     val dailyReaderChapters = if (isToday) account.dailyReaderChapters else 0
                     val dailyComments = if (isToday) account.dailyComments else 0
+                    val dailyDeckComments = if (isToday) account.dailyDeckComments else 0
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1220,6 +1221,12 @@ fun AccountCard(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text(
+                            "$dailyDeckComments/8",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                        Spacer(Modifier.width(8.dp))
                         FilterChip(
                             selected = account.deckCommentEnabled,
                             onClick = {
@@ -1342,6 +1349,11 @@ fun TasksTab(
     var readerChapters by remember { mutableStateOf(settings.readerChapters.toString()) }
     var battleTarget by remember { mutableStateOf(settings.battleTargetCount.toString()) }
     var showTowerUpgrades by remember { mutableStateOf(false) }
+
+    LaunchedEffect(settings.readerChapters, settings.battleTargetCount) {
+        readerChapters = settings.readerChapters.toString()
+        battleTarget = settings.battleTargetCount.toString()
+    }
 
     val actionEnabled = !isRunning && accounts.isNotEmpty()
 
