@@ -9820,8 +9820,10 @@ class MangaBuffAutomation(
                                             // <div class="event-gift-ball event-gift-ball-1">.
                                             // Match this exact site class: its name contains neither
                                             // "candy", "pumpkin", nor "halloween".
+                                            // Exact class supplied from DevTools: the event candy drop.
+                                            // Prioritize this selector before broader name-based fallbacks.
                                             var nodes = Array.from(document.querySelectorAll(
-                                                '.event-gift-ball, [class*="event-gift-ball" i], ' +
+                                                '.event-gift-ball-1, .event-gift-ball, [class*="event-gift-ball" i], ' +
                                                 '[class*="pumpkin" i], [class*="candy" i], [class*="halloween" i], ' +
                                                 '[id*="pumpkin" i], [id*="candy" i], [id*="halloween" i], ' +
                                                 'img[alt*="pumpkin" i], img[alt*="candy" i], img[title*="pumpkin" i], img[title*="candy" i]'
@@ -9854,8 +9856,31 @@ class MangaBuffAutomation(
                                                         );
                                                     } catch(ignore) {}
                                                     try {
+                                                        var rect = clickable.getBoundingClientRect();
+                                                        var x = rect.left + rect.width / 2;
+                                                        var y = rect.top + rect.height / 2;
+                                                        // Some event drops listen for pointer/mouse events rather than HTMLElement.click().
+                                                        if (typeof PointerEvent === 'function') {
+                                                            clickable.dispatchEvent(new PointerEvent('pointerdown', {
+                                                                bubbles: true, cancelable: true, pointerType: 'mouse',
+                                                                clientX: x, clientY: y, isPrimary: true
+                                                            }));
+                                                            clickable.dispatchEvent(new PointerEvent('pointerup', {
+                                                                bubbles: true, cancelable: true, pointerType: 'mouse',
+                                                                clientX: x, clientY: y, isPrimary: true
+                                                            }));
+                                                        }
+                                                        ['mousedown', 'mouseup', 'click'].forEach(function(type) {
+                                                            clickable.dispatchEvent(new MouseEvent(type, {
+                                                                bubbles: true, cancelable: true, view: window,
+                                                                clientX: x, clientY: y, button: 0
+                                                            }));
+                                                        });
+                                                        if (drop !== clickable) drop.click();
                                                         clickable.click();
-                                                    } catch(e) {}
+                                                    } catch(e) {
+                                                        try { AndroidReaderBridge.onLogStep('EVENTS: DROP_DOM_CLICK_DISPATCH_ERROR ' + String(e)); } catch(ignore) {}
+                                                    }
                                                     setTimeout(function() {
                                                         if (clickable && clickable.isConnected) clickable.__mbEventDropClicked = false;
                                                         if (drop && drop.isConnected) drop.__mbEventDropClicked = false;
