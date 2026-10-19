@@ -11658,6 +11658,30 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun onCandyRewardClaimed(questId: String, reward: Int) {
+                    if (reward <= 0 || questId.isBlank()) return
+                    val day = dailyCalendarDate()
+                    val seenKey = "claimed_battle_quest_${account.id}_${day}_${questId}"
+                    val prefs = context.getSharedPreferences("mangabuff_event_candy_totals", Context.MODE_PRIVATE)
+                    if (prefs.getBoolean(seenKey, false)) {
+                        log(account.username, "EVENTS: BATTLE_CANDY_ALREADY_COUNTED questId=$questId day=$day")
+                        return
+                    }
+                    val totalKey = "candies_${account.id}_${day}"
+                    val total = synchronized(eventDropClaimLock) {
+                        if (prefs.getBoolean(seenKey, false)) return@synchronized prefs.getInt(totalKey, 0)
+                        val updated = prefs.getInt(totalKey, 0) + reward
+                        prefs.edit()
+                            .putBoolean(seenKey, true)
+                            .putInt(totalKey, updated)
+                            .apply()
+                        updated
+                    }
+                    updateReadingEventCandyCounter(webView, total, day)
+                    log(account.username, "EVENTS: BATTLE_CANDY_REWARD_CLAIMED questId=$questId reward=$reward candiesToday=$total day=$day")
+                }
+
+                @JavascriptInterface
                 fun onRewardsDone() {
                     safeResume(true)
                 }
@@ -11809,6 +11833,18 @@ class MangaBuffAutomation(
                                                 'QUEST_CLAIM_CONFIRMED title="' + item.title +
                                                 '" id="' + item.questId + '"'
                                             );
+
+                                            // Add only candy rewards, not unrelated battle currencies/items.
+                                            var rewardEl = article.querySelector('.battle-home__quest-info small');
+                                            var rewardText = rewardEl ? (rewardEl.textContent || '') : '';
+                                            var candyMatch = rewardText.match(/\+\s*(\d+)\s*конфет/i);
+                                            var candyReward = candyMatch ? parseInt(candyMatch[1], 10) : 0;
+                                            if (candyReward > 0 && item.questId) {
+                                                AndroidBattleRewardsBridge.onCandyRewardClaimed(
+                                                    item.questId,
+                                                    candyReward
+                                                );
+                                            }
 
                                             setTimeout(claimNext, 500);
                                             return;
