@@ -10213,7 +10213,7 @@ class MangaBuffAutomation(
                                                     record.attributeName !== 'class') return;
                                                 var el = record.target;
                                                 var oldClass = String(record.oldValue || '');
-                                                if (/(^|\\s)event-gift-ball--collected(\\s|$)/.test(oldClass)) return;
+                                                if (oldClass.indexOf('event-gift-ball--collected') !== -1) return;
                                                 reportCollectedCandy(el);
                                             });
                                         });
