@@ -109,6 +109,7 @@ class MangaBuffForegroundService : Service() {
         const val EXTRA_MINE_DIAMONDS = "EXTRA_MINE_DIAMONDS"
         const val EXTRA_READER_CHAPTERS = "EXTRA_READER_CHAPTERS"
         const val EXTRA_DAILY_COMMENTS = "EXTRA_DAILY_COMMENTS"
+        const val EXTRA_DAILY_DECK_COMMENTS = "EXTRA_DAILY_DECK_COMMENTS"
         const val EXTRA_URL = "EXTRA_URL"
         const val EXTRA_TITLE = "EXTRA_TITLE"
         const val EXTRA_TOWER_ENDS_AT_MS = "EXTRA_TOWER_ENDS_AT_MS"
@@ -1208,6 +1209,7 @@ class MangaBuffForegroundService : Service() {
                 putExtra(EXTRA_MINE_DIAMONDS, stats.mineDiamonds)
                 putExtra(EXTRA_READER_CHAPTERS, stats.readerChapters)
                 putExtra(EXTRA_DAILY_COMMENTS, stats.comments)
+                putExtra(EXTRA_DAILY_DECK_COMMENTS, stats.deckComments)
             }
         )
     }
