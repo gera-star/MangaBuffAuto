@@ -3401,7 +3401,6 @@ class MangaBuffAutomation(
                 val pumpkin = type.equals("pumpkin", ignoreCase = true)
                 val kind = if (pumpkin) "pumpkin" else "candy"
                 val reward = if (pumpkin) 3 else 1
-                val kind = if (pumpkin) "pumpkin" else "candy"
                 val dailyKey = dailyCalendarDate()
                 val count = synchronized(eventDropClaimLock) {
                     val drops = (prefs.getInt(countKey, 0) + 1).coerceAtMost(EVENTS_CANDY_DAILY_LIMIT)
