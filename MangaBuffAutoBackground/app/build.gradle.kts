@@ -13,12 +13,7 @@ val generatedSplashResDir = layout.buildDirectory.dir("generated/splashVideoReso
 val generateSplashVideoResource = tasks.register<Copy>("generateSplashVideoResource") {
     from(startupSplashSource)
     into(generatedSplashResDir.resolve("raw"))
-    rename { "mangabuff_splash.mp4" }
-    doFirst {
-        check(startupSplashSource.isFile) {
-            "Startup splash video not found: ${startupSplashSource.absolutePath}"
-        }
-    }
+    rename("video-26f8f8a9-cb79-477d-8d32-c284da329fb5.mp4", "mangabuff_splash.mp4")
 }
 
 android {
