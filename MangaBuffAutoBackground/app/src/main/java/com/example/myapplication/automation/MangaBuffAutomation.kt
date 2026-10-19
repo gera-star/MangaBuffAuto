@@ -1697,11 +1697,31 @@ class MangaBuffAutomation(
         "Люблю такие подборки с характером! 💫",
         "Колода получилась запоминающейся, здорово! 👏",
         "Приятно смотреть на такую аккуратную сборку! ✨",
-        "Круто, что у колоды есть свой узнаваемый стиль! 💜" 
+        "Круто, что у колоды есть свой узнаваемый стиль! 💜",
+        "Шикарная колода!",
+        "Крутые карточки",
+        "Идеальный баланс",
+        "Топ колода!",
+        "Стильная сборка",
+        "Сильный сет",
+        "Респект автору",
+        "Просто пушка!",
+        "Огонь колода",
+        "Прекрасный вкус",
+        "Мощный набор",
+        "Отличная подборка",
+        "Высший класс",
+        "Шикарный сет",
+        "Красивые кадры",
+        "Редкая красота",
+        "Карты мечты",
+        "Безупречный стиль",
+        "Отличный состав",
+        "Очень мощно"
     )
 
     private val recentCommentIndexes = mutableListOf<Int>()
-    // Deck comments use their own shuffle bag so all 40 phrases are random without
+    // Deck comments use their own shuffle bag so all 60 phrases are random without
     // repeating until the bag is exhausted. This is separate from chapter comments.
     private val recentDeckCommentIndexes = mutableListOf<Int>()
 
