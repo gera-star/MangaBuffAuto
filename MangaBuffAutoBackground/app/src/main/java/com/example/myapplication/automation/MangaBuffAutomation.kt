@@ -9816,7 +9816,12 @@ class MangaBuffAutomation(
                                                     Number(s.opacity || 1) > 0 && r.width > 0 && r.height > 0 &&
                                                     r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
                                             }
+                                            // MangaBuff renders the reading drop as
+                                            // <div class="event-gift-ball event-gift-ball-1">.
+                                            // Match this exact site class: its name contains neither
+                                            // "candy", "pumpkin", nor "halloween".
                                             var nodes = Array.from(document.querySelectorAll(
+                                                '.event-gift-ball, [class*="event-gift-ball" i], ' +
                                                 '[class*="pumpkin" i], [class*="candy" i], [class*="halloween" i], ' +
                                                 '[id*="pumpkin" i], [id*="candy" i], [id*="halloween" i], ' +
                                                 'img[alt*="pumpkin" i], img[alt*="candy" i], img[title*="pumpkin" i], img[title*="candy" i]'
@@ -9829,7 +9834,8 @@ class MangaBuffAutomation(
                                                     el.getAttribute('title') || '', el.getAttribute('aria-label') || '',
                                                     el.getAttribute('src') || ''
                                                 ].join(' ').toLowerCase();
-                                                return /pumpkin|candy|halloween|тыкв|конфет/.test(details);
+                                                return el.matches('.event-gift-ball, [class*="event-gift-ball" i]') ||
+                                                    /pumpkin|candy|halloween|тыкв|конфет/.test(details);
                                             });
                                             if (drop) {
                                                 var clickable = drop.closest('button, a, [role="button"]') || drop;
@@ -9841,6 +9847,12 @@ class MangaBuffAutomation(
                                                         String(drop.id || ''),
                                                         String(drop.getAttribute('alt') || drop.getAttribute('title') || '')
                                                     );
+                                                    try {
+                                                        AndroidReaderBridge.onLogStep(
+                                                            'EVENTS: DROP_DOM_CLICK class=' +
+                                                            String(typeof drop.className === 'string' ? drop.className : '')
+                                                        );
+                                                    } catch(ignore) {}
                                                     try {
                                                         clickable.click();
                                                     } catch(e) {}
