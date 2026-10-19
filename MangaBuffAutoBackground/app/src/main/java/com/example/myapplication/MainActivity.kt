@@ -5,8 +5,10 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.net.Uri
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.VideoView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -192,20 +194,13 @@ class MainActivity : ComponentActivity() {
 
                     val debugWebView = selectedDebugAccountId?.let(webViewsByAccount::get)
 
-                    var showKeenySplash by remember { mutableStateOf(true) }
-                    var splashPlaybackStarted by remember { mutableStateOf(false) }
+                    var showStartupSplash by remember { mutableStateOf(true) }
 
-                    // Keep the animated intro on screen for about five seconds, with a hard
-                    // timeout so the main screen can never be blocked by the splash.
+                    // The video ends naturally; this is a failsafe if decoding fails or
+                    // the playback callback is never delivered.
                     LaunchedEffect(Unit) {
-                        kotlinx.coroutines.delay(10_000L)
-                        showKeenySplash = false
-                    }
-                    LaunchedEffect(splashPlaybackStarted) {
-                        if (splashPlaybackStarted) {
-                            kotlinx.coroutines.delay(5_000L)
-                            showKeenySplash = false
-                        }
+                        kotlinx.coroutines.delay(12_000L)
+                        showStartupSplash = false
                     }
 
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -251,11 +246,10 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        if (showKeenySplash) {
-                            // fillMaxSize works across Compose versions; avoid matchParentSize here.
-                            MangaBuffSplash(
+                        if (showStartupSplash) {
+                            VideoStartupSplash(
                                 modifier = Modifier.fillMaxSize(),
-                                onPlaybackStarted = { splashPlaybackStarted = true }
+                                onFinished = { showStartupSplash = false }
                             )
                         }
 
@@ -272,7 +266,7 @@ class MainActivity : ComponentActivity() {
                                 engine = tradeAutomation,
                                 onBack = { tradingModeOpen = false }
                             )
-                        } else if (!showKeenySplash && !debugWebViewVisible) {
+                        } else if (!showStartupSplash && !debugWebViewVisible) {
                             TradeModeEdgeButton(
                                 modifier = Modifier.align(Alignment.CenterEnd),
                                 isBack = false,
@@ -334,6 +328,46 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+}
+
+
+@Composable
+private fun VideoStartupSplash(
+    modifier: Modifier = Modifier,
+    onFinished: () -> Unit
+) {
+    var videoView by remember { mutableStateOf<VideoView?>(null) }
+
+    AndroidView(
+        modifier = modifier.background(Color.Black),
+        factory = { context ->
+            VideoView(context).apply {
+                setBackgroundColor(android.graphics.Color.BLACK)
+                setOnPreparedListener { player ->
+                    player.isLooping = false
+                    start()
+                }
+                setOnCompletionListener {
+                    onFinished()
+                }
+                setOnErrorListener { _, _, _ ->
+                    onFinished()
+                    true
+                }
+                setVideoURI(
+                    Uri.parse("android.resource://${context.packageName}/${R.raw.mangabuff_splash}")
+                )
+                videoView = this
+            }
+        },
+        update = { }
+    )
+
+    DisposableEffect(videoView) {
+        onDispose {
+            videoView?.stopPlayback()
         }
     }
 }
