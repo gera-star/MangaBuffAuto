@@ -399,8 +399,8 @@ private fun WebViewReturnOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .padding(top = 78.dp, end = 12.dp),
-        contentAlignment = Alignment.TopEnd
+            .padding(end = 12.dp),
+        contentAlignment = Alignment.CenterEnd
     ) {
         Surface(
             modifier = Modifier
