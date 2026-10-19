@@ -141,6 +141,8 @@ data class GlobalSettings(
     val towerUpgradeSupply: Boolean = true,
     val keepScreenOn: Boolean = false,
     val readerSiteAutoscroll: Boolean = false,
+    /** Halve the app-controlled reader scroll speed when enabled. */
+    val readerSiteAutoscrollHalfSpeed: Boolean = false,
     /** Collect event candy/pumpkin drops through the existing reader session. */
     val eventsEnabled: Boolean = true
 ) {
