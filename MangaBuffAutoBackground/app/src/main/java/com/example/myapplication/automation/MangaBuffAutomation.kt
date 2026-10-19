@@ -7669,6 +7669,14 @@ class MangaBuffAutomation(
 
                     val chapterInfo = isReaderChapterUrl(currentUrl)
 
+                    if (chapterInfo.first && view != null && EventDropToggleRegistry.isEnabled(account.id, false)) {
+                        val day = dailyCalendarDate()
+                        val totalsPrefs = context.getSharedPreferences("mangabuff_event_candy_totals", Context.MODE_PRIVATE)
+                        val todayCandies = totalsPrefs.getInt("candies_${account.id}_$day", 0)
+                        updateReadingEventCandyCounter(view, todayCandies, day)
+                        log(account.username, "EVENTS: CANDY_COUNTER_SHOWN candiesToday=$todayCandies day=$day")
+                    }
+
                     if (chapterInfo.first) {
                         val clean = currentUrl.substringBefore('?').substringBefore('#')
                         val parts = clean
