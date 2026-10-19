@@ -3049,11 +3049,153 @@ class MangaBuffAutomation(
                         if (!badge) {
                             badge = document.createElement('div');
                             badge.id = id;
-                            badge.style.cssText = 'position:fixed;left:10px;bottom:84px;z-index:2147483647;padding:7px 11px;border-radius:18px;background:rgba(31,24,34,.92);color:#fff;font:600 14px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.35);pointer-events:none;white-space:nowrap;';
+                            badge.style.cssText = 'position:fixed;left:10px;top:12px;bottom:auto;z-index:2147483647;padding:7px 11px;border-radius:18px;background:rgba(31,24,34,.92);color:#fff;font:600 14px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.35);pointer-events:none;white-space:nowrap;';
                             (document.body || document.documentElement).appendChild(badge);
                         }
                         badge.textContent = '🎃 Конфеты: ' + $total;
                         badge.setAttribute('data-day', $dayLiteral);
+                    })();
+                    """.trimIndent(),
+                    null
+                )
+            }
+        }
+    }
+
+    /**
+     * During reading, Halloween drops can appear as a small floating pumpkin near the
+     * bottom-center of the page. Tap only small, visible image-like elements in that
+     * area (or elements explicitly marked as pumpkin/event drops), and keep tapping
+     * while the same drop remains visible. Large page artwork and normal page controls
+     * are intentionally ignored.
+     */
+    private fun installReadingEventPumpkinAutoTap(webView: WebView) {
+        mainHandler.post {
+            runCatching {
+                webView.evaluateJavascript(
+                    """
+                    (function() {
+                        try {
+                            if (window.__mbPumpkinAutoTapTimer) {
+                                clearInterval(window.__mbPumpkinAutoTapTimer);
+                            }
+                            var startedAt = Date.now();
+                            var lastTapAt = 0;
+                            var lastTarget = null;
+                            function visible(el) {
+                                if (!el || !el.isConnected) return false;
+                                var style = window.getComputedStyle(el);
+                                if (style.display === 'none' || style.visibility === 'hidden' ||
+                                    Number(style.opacity) === 0 || style.pointerEvents === 'none') return false;
+                                var r = el.getBoundingClientRect();
+                                return r.width >= 12 && r.height >= 12 &&
+                                    r.bottom > 0 && r.right > 0 &&
+                                    r.top < window.innerHeight && r.left < window.innerWidth;
+                            }
+                            function pumpkinMarked(el) {
+                                var attrs = [
+                                    el.id, el.className, el.getAttribute && el.getAttribute('alt'),
+                                    el.getAttribute && el.getAttribute('title'),
+                                    el.getAttribute && el.getAttribute('aria-label'),
+                                    el.getAttribute && el.getAttribute('src'),
+                                    el.getAttribute && el.getAttribute('href'),
+                                    el.getAttribute && el.getAttribute('style')
+                                ].join(' ');
+                                return /(pumpkin|тыкв|halloween|event[-_ ]?drop|candy[-_ ]?drop)/i.test(attrs);
+                            }
+                            function imageLike(el) {
+                                var tag = (el.tagName || '').toLowerCase();
+                                if (tag === 'img' || tag === 'svg' || tag === 'canvas') return true;
+                                var style = window.getComputedStyle(el);
+                                return !!(style.backgroundImage && style.backgroundImage !== 'none');
+                            }
+                            function clickTarget(el) {
+                                var target = el;
+                                for (var depth = 0; depth < 3 && target.parentElement; depth++) {
+                                    var parent = target.parentElement;
+                                    var pr = parent.getBoundingClientRect();
+                                    if (pr.width > 260 || pr.height > 260) break;
+                                    if (parent.matches && parent.matches('button,a,[role="button"]')) {
+                                        target = parent;
+                                        break;
+                                    }
+                                    target = parent;
+                                }
+                                return target;
+                            }
+                            function tap(el) {
+                                var r = el.getBoundingClientRect();
+                                var x = Math.round(r.left + r.width / 2);
+                                var y = Math.round(r.top + r.height / 2);
+                                try {
+                                    el.dispatchEvent(new PointerEvent('pointerdown', {
+                                        bubbles: true, cancelable: true, clientX: x, clientY: y,
+                                        pointerType: 'touch', isPrimary: true
+                                    }));
+                                    el.dispatchEvent(new PointerEvent('pointerup', {
+                                        bubbles: true, cancelable: true, clientX: x, clientY: y,
+                                        pointerType: 'touch', isPrimary: true
+                                    }));
+                                } catch (_) {}
+                                try {
+                                    el.dispatchEvent(new MouseEvent('mousedown', {
+                                        bubbles: true, cancelable: true, clientX: x, clientY: y
+                                    }));
+                                    el.dispatchEvent(new MouseEvent('mouseup', {
+                                        bubbles: true, cancelable: true, clientX: x, clientY: y
+                                    }));
+                                } catch (_) {}
+                                try { el.click(); } catch (_) {}
+                            }
+                            function scan() {
+                                if (Date.now() - startedAt > 1800000) {
+                                    clearInterval(window.__mbPumpkinAutoTapTimer);
+                                    window.__mbPumpkinAutoTapTimer = null;
+                                    return;
+                                }
+                                var nodes = document.querySelectorAll(
+                                    'img,svg,canvas,[style*="background-image"],button,a,[role="button"],[aria-label],[title]'
+                                );
+                                var candidates = [];
+                                for (var i = 0; i < nodes.length; i++) {
+                                    var el = nodes[i];
+                                    if (!visible(el)) continue;
+                                    var r = el.getBoundingClientRect();
+                                    var cx = r.left + r.width / 2;
+                                    var cy = r.top + r.height / 2;
+                                    var bottomCenter = cx >= window.innerWidth * 0.22 &&
+                                        cx <= window.innerWidth * 0.78 &&
+                                        cy >= window.innerHeight * 0.48 &&
+                                        cy <= window.innerHeight * 0.96;
+                                    if (!bottomCenter) continue;
+                                    var marked = pumpkinMarked(el);
+                                    var smallImage = imageLike(el) &&
+                                        r.width <= 220 && r.height <= 220 &&
+                                        r.width >= 18 && r.height >= 18;
+                                    if (!marked && !smallImage) continue;
+                                    var target = clickTarget(el);
+                                    if (!visible(target)) continue;
+                                    var tr = target.getBoundingClientRect();
+                                    if (tr.width > 260 || tr.height > 260) continue;
+                                    candidates.push({el: target, marked: marked, area: tr.width * tr.height});
+                                }
+                                candidates.sort(function(a, b) {
+                                    if (a.marked !== b.marked) return a.marked ? -1 : 1;
+                                    return a.area - b.area;
+                                });
+                                if (!candidates.length) {
+                                    lastTarget = null;
+                                    return;
+                                }
+                                var target = candidates[0].el;
+                                if (Date.now() - lastTapAt < 320 && target === lastTarget) return;
+                                lastTapAt = Date.now();
+                                lastTarget = target;
+                                tap(target);
+                            }
+                            scan();
+                            window.__mbPumpkinAutoTapTimer = setInterval(scan, 320);
+                        } catch (_) {}
                     })();
                     """.trimIndent(),
                     null
@@ -7715,6 +7857,8 @@ class MangaBuffAutomation(
                     val chapterInfo = isReaderChapterUrl(currentUrl)
 
                     if (chapterInfo.first && view != null && EventDropToggleRegistry.isEnabled(account.id, false)) {
+                        installReadingEventPumpkinAutoTap(view)
+                        log(account.username, "EVENTS: PUMPKIN_AUTO_TAP_INSTALLED")
                         val day = dailyCalendarDate()
                         val totalsPrefs = context.getSharedPreferences("mangabuff_event_candy_totals", Context.MODE_PRIVATE)
                         val todayCandies = totalsPrefs.getInt("candies_${account.id}_$day", 0)
