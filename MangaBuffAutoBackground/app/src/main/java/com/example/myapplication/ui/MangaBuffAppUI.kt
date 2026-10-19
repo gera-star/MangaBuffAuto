@@ -571,7 +571,7 @@ fun MangaBuffAppUI(
                                             try {
                                                 new MutationObserver(scheduleRepair).observe(document.documentElement, {
                                                     childList: true, subtree: true, attributes: true,
-                                                    attributeFilter: ['class', 'style', 'aria-expanded', 'aria-hidden']
+                                                    attributeFilter: ['class', 'aria-expanded', 'aria-hidden']
                                                 });
                                             } catch (e) {}
 
