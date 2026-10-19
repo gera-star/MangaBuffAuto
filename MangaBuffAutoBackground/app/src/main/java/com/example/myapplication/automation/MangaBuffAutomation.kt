@@ -5584,9 +5584,9 @@ class MangaBuffAutomation(
                                 var buttonPollStarted = Date.now();
                                 var watchTimer = null;
                                 var rewardPoll = null;
+                                var rewardVerificationStarted = false;
 
-                                // Diagnostic state for the real user's close action.
-                                // We intentionally never synthesize the rewarded-ad tap.
+                                // Diagnostic state for close detection and native finger taps.
                                 var closeWasVisible = false;
                                 var closeAvailableLogged = false;
 
@@ -5615,7 +5615,7 @@ class MangaBuffAutomation(
                                         );
 
                                         setTimeout(function() {
-                                            verifyReward(0);
+                                            startRewardVerification();
                                         }, 750);
                                     }
                                 };
@@ -6029,11 +6029,9 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * Rewarded-ad controls must remain under the ad SDK/user.
-                                 * Do not synthesize a native tap or invoke a hidden/iframe X.
-                                 * When the control is inaccessible to the parent document,
-                                 * we only record geometry for diagnostics and wait for the
-                                 * user to close the ad normally.
+                                 * Prefer the real Yandex close element and send a native
+                                 * finger-like touch to its measured top-level viewport point.
+                                 * Never invoke a hidden close control via page JavaScript.
                                  */
                                 function requestNativeCloseTap(closeElement) {
                                     var width = window.innerWidth || document.documentElement.clientWidth || 0;
@@ -6127,6 +6125,12 @@ class MangaBuffAutomation(
                                         );
                                         return false;
                                     }
+                                }
+
+                                function startRewardVerification() {
+                                    if (finished || rewardVerificationStarted) return;
+                                    rewardVerificationStarted = true;
+                                    verifyReward(0);
                                 }
 
                                 function verifyReward(attempt) {
@@ -6245,7 +6249,7 @@ class MangaBuffAutomation(
                                                 verifyReward(attempt + 1);
                                             }, nextDelay);
                                         } catch (e) {
-                                            if (attempt >= 60) {
+                                            if (attempt >= 10) {
                                                 finished = true;
                                                 window.__mbAdsRunnerActive = false;
                                                 AndroidAds.onAdFailed(
@@ -6413,8 +6417,6 @@ class MangaBuffAutomation(
 
                                 function verifyAfterNativeClose() {
                                     setTimeout(function() {
-                                        if (!finished) verifyReward(0);
-
                                         var adStillVisible = !finished && hasFullscreenAdSurface();
                                         AndroidAds.onStateLog(
                                             "CLOSE_RETRY_SURFACE",
@@ -6435,6 +6437,12 @@ class MangaBuffAutomation(
                                             );
                                             attemptAutoClose();
                                             return;
+                                        }
+
+                                        // Start one balance-verification chain only after the
+                                        // close ring is exhausted or the ad surface disappears.
+                                        if (!adStillVisible || nativeCloseAttempts >= CLOSE_TAP_RING_OFFSETS.length) {
+                                            startRewardVerification();
                                         }
 
                                         if (
