@@ -127,18 +127,9 @@ class MainActivity : ComponentActivity() {
 
                     if (towardCenter && mostlyHorizontal && shortGesture) {
                         val webViews = AutomationWebViewRegistry.webViewsByAccount.value.values
-                        if (webViews.size == 1) {
-                            val webView = webViews.first()
-                            if (webView.canGoBack()) {
-                                webView.goBack()
-                            } else {
-                                onBackPressedDispatcher.onBackPressed()
-                            }
-                        } else {
-                            // Never guess which account owns the gesture when several
-                            // WebViews are active. Fall back to Activity navigation.
-                            onBackPressedDispatcher.onBackPressed()
-                        }
+                        // The system edge-back gesture must exit the visible WebView,
+                        // never navigate to the previous manga chapter/page.
+                        onBackPressedDispatcher.onBackPressed()
 
                         edgeBackTracking = false
                         return true
@@ -663,7 +654,7 @@ private fun LiquidGlassBackdrop() {
 /**
  * Two movable controls over the visible WebView:
  * - Tap dispatches a finger-like DOWN/MOVE/UP at the center of its circle.
- * - Back navigates WebView history, returning to the app when there is no history.
+ * - Back only exits the visible WebView; it never navigates WebView history/chapters.
  *
  * Locations are normalized against the usable WebView area and persisted in
  * SharedPreferences, so moving either control survives process/app restarts.
@@ -737,11 +728,8 @@ private fun MovableWebControls(
                     .apply()
             },
             onClick = {
-                if (webView.isAttachedToWindow && webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    onExitWeb()
-                }
+                // This control is an EXIT button, not browser/chapter navigation.
+                onExitWeb()
             }
         )
     }
