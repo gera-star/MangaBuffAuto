@@ -384,20 +384,10 @@ private fun VideoStartupSplash(
             .background(Color(0xFF070A13))
     ) {
         if (!firstVideoFrameVisible) {
-            // Temporary branded backdrop only. The custom splash video is revealed
-            // as soon as its first decoded frame is ready; don't show placeholder logos/text.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFF10182B),
-                                Color(0xFF080D1B),
-                                Color(0xFF160F1A)
-                            )
-                        )
-                    )
+                    .background(Color(0xFF070A13))
             )
         }
 
