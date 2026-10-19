@@ -1195,6 +1195,23 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun publishDailyStats(accountId: String, stats: DailyStats) {
+        // Persist inside the foreground service as well as broadcasting to the Activity.
+        // Daily progress must survive when the UI/Activity is not alive during background work.
+        repository.updateAccount(accountId) { account ->
+            account.copy(
+                dailyStatsDay = stats.day,
+                dailyBattles = stats.battles,
+                dailyBattleAttempts = stats.battleAttempts,
+                dailyQuiz = stats.quiz,
+                dailyAds = stats.ads,
+                dailyMineOre = stats.mineOre,
+                dailyMineExchangeOre = stats.mineExchangeOre,
+                dailyMineDiamonds = stats.mineDiamonds,
+                dailyReaderChapters = stats.readerChapters,
+                dailyComments = stats.comments,
+                dailyDeckComments = stats.deckComments
+            )
+        }
         sendRuntimeEvent(
             EVENT_DAILY_STATS,
             accountId = accountId,
