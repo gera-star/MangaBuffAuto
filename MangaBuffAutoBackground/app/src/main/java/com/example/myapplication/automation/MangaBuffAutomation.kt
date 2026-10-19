@@ -3290,6 +3290,11 @@ class MangaBuffAutomation(
                                     );
                                     if (!drop || drop.__mbEventDropClicked || !visible(drop)) return;
 
+                                    // Every click attempt gets its own token so stale animation
+                                    // callbacks cannot switch the phase of a later candy.
+                                    var collectionToken = Number(window.__mbEventCollectionToken || 0) + 1;
+                                    window.__mbEventCollectionToken = collectionToken;
+                                    window.__mbEventCollectionTransitionPending = false;
                                     drop.__mbEventDropClicked = true;
                                     try {
                                         AndroidReaderBridge.onEventDropClickAttempt(
@@ -3311,8 +3316,10 @@ class MangaBuffAutomation(
                                     var verificationFinished = false;
 
                                     function transitionToPumpkin(reason) {
-                                        // Always release the transition guard, even if a visible pumpkin
-                                        // already changed the phase while this candy's animation was running.
+                                        // Ignore callbacks belonging to an older candy click.
+                                        if (window.__mbEventCollectionToken !== collectionToken) return;
+                                        // Always release this collection's guard even if a visible pumpkin
+                                        // already changed the phase while this animation was running.
                                         window.__mbEventCollectionTransitionPending = false;
                                         if (window.__mbEventDropPhase !== 'collecting') return;
                                         window.__mbEventDropPhase = 'pumpkin';
