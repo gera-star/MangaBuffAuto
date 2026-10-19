@@ -7463,7 +7463,8 @@ class MangaBuffAutomation(
                     target,
                     {},
                     nextChapterUrlToOpen,
-                    siteAutoscrollEnabled = settings.readerSiteAutoscroll
+                    siteAutoscrollEnabled = settings.readerSiteAutoscroll,
+                    siteAutoscrollHalfSpeed = settings.readerSiteAutoscrollHalfSpeed
                 )
             ) {
                 is ReaderResult.ChapterRead -> {
@@ -7663,7 +7664,8 @@ class MangaBuffAutomation(
         targetChapters: Int,
         onStepInfo: (String) -> Unit,
         startUrl: String = "",
-        siteAutoscrollEnabled: Boolean = true
+        siteAutoscrollEnabled: Boolean = true,
+        siteAutoscrollHalfSpeed: Boolean = false
     ): ReaderResult = suspendCancellableCoroutine { continuation ->
 
         var resumed = false
@@ -10747,8 +10749,10 @@ class MangaBuffAutomation(
                                             );
                                         }
 
-                                        // Scroll speed is 10% lower than before: 1980..2700 px/s.
-                                        var speedPxPerSecond = 1980 + Math.floor(Math.random() * 721);
+                                        // Optional −Х2 mode halves the app-controlled scroll speed.
+                                        var speedPxPerSecond =
+                                            (1980 + Math.floor(Math.random() * 721)) *
+                                            (${siteAutoscrollHalfSpeed} ? 0.5 : 1);
                                         var lastFrame = performance.now();
                                         window.__mbFastScrollRunning = true;
 
