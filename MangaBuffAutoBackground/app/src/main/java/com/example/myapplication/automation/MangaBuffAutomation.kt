@@ -6512,14 +6512,14 @@ class MangaBuffAutomation(
                                             AndroidAds.onStateLog(
                                                 "AUTO_CLOSE_RETRY",
                                                 "nextAttempt=" + (nativeCloseAttempts + 1) +
-                                                    " retryTarget=same_close_point reason=ad_still_visible"
+                                                    " retryTarget=same_close_point reason=visible_close_or_timer"
                                             );
                                             attemptAutoClose();
                                             return;
                                         }
 
                                         // Start one balance-verification chain only after the
-                                        // close ring is exhausted or the ad surface disappears.
+                                        // bounded retries are exhausted or no explicit close signal remains.
                                         if (!adStillVisible || nativeCloseAttempts >= MAX_NATIVE_CLOSE_ATTEMPTS) {
                                             startRewardVerification();
                                         }
@@ -6620,7 +6620,7 @@ class MangaBuffAutomation(
                                                 " viewport=" +
                                                 (window.innerWidth || 0) + "x" +
                                                 (window.innerHeight || 0) +
-                                                " source=fullscreen_close_ring"
+                                                " source=fullscreen_close_fallback"
                                         );
 
                                         try {
