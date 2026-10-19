@@ -6,6 +6,6 @@
         android:gravity="center">
         <bitmap
             android:src="@drawable/cat_launcher"
-            android:gravity="fitCenter" />
+            android:gravity="center" />
     </item>
 </layer-list>
