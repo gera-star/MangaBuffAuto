@@ -3236,7 +3236,11 @@ class MangaBuffAutomation(
                                     '[class*="halloween" i]', '[id*="halloween" i]',
                                     '[class*="event-drop" i]', '[id*="event-drop" i]',
                                     '[class*="candy-drop" i]', '[id*="candy-drop" i]',
-                                    '[alt*="candy" i]', '[title*="candy" i]'
+                                    '[src*="pumpkin" i]', '[src*="halloween" i]', '[src*="event-drop" i]',
+                                    '[style*="pumpkin" i]', '[style*="halloween" i]',
+                                    '[class*="candy" i]', '[id*="candy" i]',
+                                    '[alt*="candy" i]', '[title*="candy" i]',
+                                    '[src*="candy" i]', '[style*="candy" i]'
                                 ];
                                 var nodes = document.querySelectorAll(selectors.join(','));
                                 var candidates = [];
