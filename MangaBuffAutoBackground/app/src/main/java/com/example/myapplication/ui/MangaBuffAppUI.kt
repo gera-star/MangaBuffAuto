@@ -418,28 +418,26 @@ fun MangaBuffAppUI(
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Surface(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxSize(),
+                shape = RoundedCornerShape(0.dp),
                 color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 6.dp
+                tonalElevation = 0.dp
             ) {
-                Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+                Column(modifier = Modifier.fillMaxSize()) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
                             Text(acc.username.ifEmpty { "Аккаунт" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("https://mangabuff.ru/balance", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            Text("Баланс MangaBuff", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         }
                         IconButton(onClick = { selectedBalanceAccount = null }) {
                             Icon(Icons.Default.Close, contentDescription = "Закрыть")
                         }
                     }
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    HorizontalDivider()
 
                     AndroidView(
                         factory = { ctx ->
@@ -963,6 +961,16 @@ fun AccountCard(
                 Spacer(modifier = Modifier.width(8.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = account.username.ifBlank { "Аккаунт" },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenBalance() },
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
