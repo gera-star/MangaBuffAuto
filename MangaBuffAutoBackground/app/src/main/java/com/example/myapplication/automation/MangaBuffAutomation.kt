@@ -11080,55 +11080,31 @@ class MangaBuffAutomation(
 
                                     (function scanReaderChapterTotal() {
                                         try {
-                                            if (reportReaderChapterTotal('INITIAL_DOM') > 0) {
-                                                startReaderScrollOnce();
-                                                return;
-                                            }
-
-                                            var buttonSelector =
-                                                'button.reader-menu__item.reader-menu__item--chapters[data-popup="popup--chapters-select"]';
-                                            var menuButton = document.querySelector(buttonSelector);
-                                            if (!menuButton) {
-                                                AndroidReaderBridge.onLogStep('READER: CHAPTER_TOTAL_MENU_BUTTON_NOT_FOUND');
-                                                startReaderScrollOnce();
-                                                return;
-                                            }
-
-                                            var openedByScanner = false;
-                                            try {
-                                                menuButton.click();
-                                                openedByScanner = true;
-                                            } catch(ignoreOpen) {}
-
-                                            function closeMenuIfOpened() {
-                                                if (!openedByScanner) return;
-                                                var buttonToClose = document.querySelector(buttonSelector);
-                                                if (buttonToClose) {
-                                                    try { buttonToClose.click(); } catch(ignoreClose) {}
-                                                }
-                                            }
-
+                                            // Never open the site's chapter picker just to count chapters.
+                                            // The old synthetic menuButton.click() could leave the picker open
+                                            // when the reader UI handled the toggle asynchronously.
+                                            // Read the count from DOM only, retrying briefly for late rendering.
                                             var attempts = 0;
                                             function pollReaderChapterList() {
                                                 attempts++;
-                                                if (reportReaderChapterTotal('MENU_ATTEMPT_' + attempts) > 0) {
-                                                    closeMenuIfOpened();
+                                                if (reportReaderChapterTotal('DOM_ONLY_ATTEMPT_' + attempts) > 0) {
                                                     startReaderScrollOnce();
                                                     return;
                                                 }
 
                                                 if (attempts < 6) {
                                                     setTimeout(pollReaderChapterList, 120);
-                                                } else {
-                                                    closeMenuIfOpened();
-                                                    AndroidReaderBridge.onLogStep(
-                                                        'READER: CHAPTER_TOTAL_NOT_FOUND attempts=' + attempts
-                                                    );
-                                                    startReaderScrollOnce();
+                                                    return;
                                                 }
+
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_TOTAL_NOT_FOUND attempts=' + attempts +
+                                                    ' action=SKIP_MENU_CLICK'
+                                                );
+                                                startReaderScrollOnce();
                                             }
 
-                                            setTimeout(pollReaderChapterList, 100);
+                                            pollReaderChapterList();
                                         } catch(e) {
                                             AndroidReaderBridge.onLogStep(
                                                 'READER: CHAPTER_TOTAL_SCAN_ERROR ' + (e.message || String(e))
