@@ -2,7 +2,9 @@ package com.example.myapplication
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.pm.PackageManager
+import android.webkit.WebView
 import android.os.Build
 import android.os.Bundle
 import android.net.Uri
@@ -17,6 +19,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Row
@@ -40,16 +44,29 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.consume
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.AlertDialog
@@ -254,9 +271,13 @@ class MainActivity : ComponentActivity() {
                         }
 
                         if (debugWebViewVisible && debugWebView != null) {
-                            WebViewReturnOverlay(
-                                modifier = Modifier.align(Alignment.TopEnd),
-                                onReturn = { viewModel.setDebugWebViewVisible(false) }
+                            MovableWebControls(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .statusBarsPadding()
+                                    .navigationBarsPadding(),
+                                webView = debugWebView,
+                                onExitWeb = { viewModel.setDebugWebViewVisible(false) }
                             )
                         }
 
@@ -582,44 +603,233 @@ private fun LiquidGlassBackdrop() {
 
 
 
+/**
+ * Two movable controls over the visible WebView:
+ * - Tap dispatches a finger-like DOWN/MOVE/UP at the center of its circle.
+ * - Back navigates WebView history, returning to the app when there is no history.
+ *
+ * Locations are normalized against the usable WebView area and persisted in
+ * SharedPreferences, so moving either control survives process/app restarts.
+ */
 @Composable
-private fun WebViewReturnOverlay(
+private fun MovableWebControls(
     modifier: Modifier = Modifier,
-    onReturn: () -> Unit
+    webView: WebView,
+    onExitWeb: () -> Unit
 ) {
+    val context = LocalContext.current.applicationContext
+    val prefs = remember(context) {
+        context.getSharedPreferences("mangabuff_web_floating_controls", Context.MODE_PRIVATE)
+    }
+    var tapX by remember(prefs) {
+        mutableFloatStateOf(prefs.getFloat("tap_left_ratio", 0.925f).coerceIn(0f, 1f))
+    }
+    var tapY by remember(prefs) {
+        mutableFloatStateOf(prefs.getFloat("tap_top_ratio", 0.112f).coerceIn(0f, 1f))
+    }
+    var backX by remember(prefs) {
+        mutableFloatStateOf(prefs.getFloat("back_left_ratio", 0.925f).coerceIn(0f, 1f))
+    }
+    var backY by remember(prefs) {
+        mutableFloatStateOf(prefs.getFloat("back_top_ratio", 0.50f).coerceIn(0f, 1f))
+    }
+    var areaSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    val buttonPx = with(density) { 48.dp.roundToPx() }
+    val maxLeft = (areaSize.width - buttonPx).coerceAtLeast(0)
+    val maxTop = (areaSize.height - buttonPx).coerceAtLeast(0)
+
     Box(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(end = 12.dp),
-        contentAlignment = Alignment.CenterEnd
+        modifier = modifier.onSizeChanged { areaSize = it }
     ) {
-        Surface(
-            modifier = Modifier
-                .size(48.dp)
-                .border(
-                    BorderStroke(
-                        1.5.dp,
-                        Brush.linearGradient(
-                            listOf(Color(0xFF43E8FF), Color(0xFFB85CFF))
-                        )
-                    ),
-                    RoundedCornerShape(50)
-                ),
-            shape = RoundedCornerShape(50),
-            color = Color(0xF0171A24),
-            tonalElevation = 0.dp,
-            shadowElevation = 8.dp
-        ) {
-            IconButton(
-                onClick = onReturn,
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Icon(
-                    Icons.Default.KeyboardReturn,
-                    contentDescription = "Вернуться в приложение",
-                    tint = Color(0xFF6CEBFF)
+        MovableWebCircle(
+            description = "Тап по центру кружка",
+            glyph = "×",
+            areaSize = areaSize,
+            leftRatio = tapX,
+            topRatio = tapY,
+            onMoved = { x, y -> tapX = x; tapY = y },
+            onMoveFinished = {
+                prefs.edit()
+                    .putFloat("tap_left_ratio", tapX)
+                    .putFloat("tap_top_ratio", tapY)
+                    .apply()
+            },
+            onClick = {
+                val x = tapX * maxLeft + buttonPx / 2f
+                val y = tapY * maxTop + buttonPx / 2f
+                dispatchMovableFingerTap(webView, x, y)
+            }
+        )
+
+        MovableWebCircle(
+            description = "Назад в WebView",
+            glyph = "↶",
+            areaSize = areaSize,
+            leftRatio = backX,
+            topRatio = backY,
+            onMoved = { x, y -> backX = x; backY = y },
+            onMoveFinished = {
+                prefs.edit()
+                    .putFloat("back_left_ratio", backX)
+                    .putFloat("back_top_ratio", backY)
+                    .apply()
+            },
+            onClick = {
+                if (webView.isAttachedToWindow && webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    onExitWeb()
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun MovableWebCircle(
+    description: String,
+    glyph: String,
+    areaSize: IntSize,
+    leftRatio: Float,
+    topRatio: Float,
+    onMoved: (Float, Float) -> Unit,
+    onMoveFinished: () -> Unit,
+    onClick: () -> Unit
+) {
+    val density = LocalDensity.current
+    val buttonPx = with(density) { 48.dp.roundToPx() }
+    val maxLeft = (areaSize.width - buttonPx).coerceAtLeast(0)
+    val maxTop = (areaSize.height - buttonPx).coerceAtLeast(0)
+    val currentLeftRatio = rememberUpdatedState(leftRatio)
+    val currentTopRatio = rememberUpdatedState(topRatio)
+    val currentOnMoved = rememberUpdatedState(onMoved)
+    val currentOnMoveFinished = rememberUpdatedState(onMoveFinished)
+
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    (leftRatio * maxLeft).roundToInt(),
+                    (topRatio * maxTop).roundToInt()
                 )
             }
-        }
+            .size(48.dp)
+            .border(
+                BorderStroke(
+                    1.5.dp,
+                    Brush.linearGradient(
+                        listOf(Color(0xFF43E8FF), Color(0xFFB85CFF))
+                    )
+                ),
+                CircleShape
+            )
+            .clip(CircleShape)
+            .background(Color(0xF0171A24))
+            .pointerInput(areaSize) {
+                var initialLeft = 0f
+                var initialTop = 0f
+                var totalX = 0f
+                var totalY = 0f
+                detectDragGestures(
+                    onDragStart = {
+                        initialLeft = currentLeftRatio.value * maxLeft
+                        initialTop = currentTopRatio.value * maxTop
+                        totalX = 0f
+                        totalY = 0f
+                    },
+                    onDragEnd = { currentOnMoveFinished.value() },
+                    onDragCancel = { currentOnMoveFinished.value() },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        totalX += dragAmount.x
+                        totalY += dragAmount.y
+                        val left = (initialLeft + totalX).coerceIn(0f, maxLeft.toFloat())
+                        val top = (initialTop + totalY).coerceIn(0f, maxTop.toFloat())
+                        currentOnMoved.value(
+                            if (maxLeft > 0) left / maxLeft else 0f,
+                            if (maxTop > 0) top / maxTop else 0f
+                        )
+                    }
+                )
+            }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = glyph,
+            color = Color(0xFF6CEBFF),
+            fontSize = if (glyph == "×") 28.sp else 27.sp,
+            lineHeight = 28.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+        )
     }
+}
+
+private fun dispatchMovableFingerTap(
+    webView: WebView,
+    x: Float,
+    y: Float
+) {
+    val mainLooper = android.os.Looper.getMainLooper()
+    if (android.os.Looper.myLooper() != mainLooper) {
+        android.os.Handler(mainLooper).post { dispatchMovableFingerTap(webView, x, y) }
+        return
+    }
+    if (!webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) return
+
+    val px = x.coerceIn(1f, (webView.width - 2).coerceAtLeast(1).toFloat())
+    val py = y.coerceIn(1f, (webView.height - 2).coerceAtLeast(1).toFloat())
+    val downTime = android.os.SystemClock.uptimeMillis()
+
+    fun fingerEvent(eventTime: Long, action: Int): android.view.MotionEvent {
+        val properties = android.view.MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = android.view.MotionEvent.TOOL_TYPE_FINGER
+        }
+        val coordinates = android.view.MotionEvent.PointerCoords().apply {
+            this.x = px
+            this.y = py
+            pressure = 0.85f
+            size = 0.18f
+            touchMajor = 22f
+            touchMinor = 18f
+            orientation = 0f
+        }
+        return android.view.MotionEvent.obtain(
+            downTime, eventTime, action, 1,
+            arrayOf(properties), arrayOf(coordinates),
+            0, 0, 1f, 1f, 0, 0,
+            android.view.InputDevice.SOURCE_TOUCHSCREEN, 0
+        )
+    }
+
+    val down = fingerEvent(downTime, android.view.MotionEvent.ACTION_DOWN)
+    try {
+        webView.dispatchTouchEvent(down)
+    } finally {
+        down.recycle()
+    }
+
+    val handler = android.os.Handler(mainLooper)
+    handler.postDelayed({
+        if (!webView.isAttachedToWindow) return@postDelayed
+        val moveTime = android.os.SystemClock.uptimeMillis()
+        val move = fingerEvent(moveTime, android.view.MotionEvent.ACTION_MOVE)
+        try {
+            webView.dispatchTouchEvent(move)
+        } finally {
+            move.recycle()
+        }
+        handler.postDelayed({
+            if (!webView.isAttachedToWindow) return@postDelayed
+            val upTime = android.os.SystemClock.uptimeMillis()
+            val up = fingerEvent(upTime, android.view.MotionEvent.ACTION_UP)
+            try {
+                webView.dispatchTouchEvent(up)
+            } finally {
+                up.recycle()
+            }
+        }, 90L)
+    }, 70L)
 }
