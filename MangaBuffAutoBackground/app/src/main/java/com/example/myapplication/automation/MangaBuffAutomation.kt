@@ -767,10 +767,11 @@ class MangaBuffAutomation(
         val coordinates = MotionEvent.PointerCoords().apply {
             this.x = x
             this.y = y
-            pressure = 0.85f
-            size = 0.18f
-            touchMajor = 22f
-            touchMinor = 18f
+            pressure = 1.0f
+            size = 0.35f
+            // Larger finger contact patch helps controls with small hit targets.
+            touchMajor = 48f
+            touchMinor = 42f
             orientation = 0f
         }
         return MotionEvent.obtain(
@@ -1158,6 +1159,9 @@ class MangaBuffAutomation(
                 "ADS: ACCESSIBILITY_SCAN_ERROR root=" + e.message,
                 true
             )
+            return false
+        } ?: run {
+            log(accountUsername, "ADS: ACCESSIBILITY_SCAN_SKIP root=null", true)
             return false
         }
 
@@ -6227,7 +6231,7 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
-                                            if (attempt >= 10) {
+                                            if (attempt >= 3) {
                                                 finished = true;
                                                 window.__mbAdsRunnerActive = false;
                                                 AndroidAds.onAdFailed(
@@ -6244,12 +6248,12 @@ class MangaBuffAutomation(
                                              * HTTP 429. Keep a calm 5-second cadence; +7 balance
                                              * remains the only authoritative success signal.
                                              */
-                                            var nextDelay = 5000;
+                                            var nextDelay = 12000;
                                             rewardPoll = setTimeout(function() {
                                                 verifyReward(attempt + 1);
                                             }, nextDelay);
                                         } catch (e) {
-                                            if (attempt >= 10) {
+                                            if (attempt >= 3) {
                                                 finished = true;
                                                 window.__mbAdsRunnerActive = false;
                                                 AndroidAds.onAdFailed(
@@ -6259,7 +6263,7 @@ class MangaBuffAutomation(
                                             }
                                             rewardPoll = setTimeout(function() {
                                                 verifyReward(attempt + 1);
-                                            }, 5000);
+                                            }, 12000);
                                         }
                                     }).catch(function(error) {
                                         AndroidAds.onStateLog(
@@ -6268,7 +6272,7 @@ class MangaBuffAutomation(
                                             " error=" + (error && error.message ? error.message : String(error))
                                         );
 
-                                        if (attempt >= 10) {
+                                        if (attempt >= 3) {
                                             finished = true;
                                             window.__mbAdsRunnerActive = false;
                                             AndroidAds.onAdFailed(
@@ -6281,7 +6285,7 @@ class MangaBuffAutomation(
                                         // Back off after errors/HTTP 429 instead of retrying rapidly.
                                         rewardPoll = setTimeout(function() {
                                             verifyReward(attempt + 1);
-                                        }, 8000);
+                                        }, 15000);
                                     });
                                 }
 
@@ -6317,20 +6321,19 @@ class MangaBuffAutomation(
                                 var verifiedFallbackRequested = false;
 
                                 /*
-                                 * Center plus eight distinct points on a wider 17 CSS-pixel
-                                 * ring. This explores most of the 40-44 CSS-pixel close hitbox
-                                 * without spraying taps across unrelated ad content.
+                                 * Center plus eight distinct points on a wider 21 CSS-pixel
+                                 * ring; the native finger contact patch is enlarged too.
                                  */
                                 var CLOSE_TAP_RING_OFFSETS = [
                                     { x: 0.0, y: 0.0 },
-                                    { x: 17.0, y: 0.0 },
-                                    { x: 12.02, y: 12.02 },
-                                    { x: 0.0, y: 17.0 },
-                                    { x: -12.02, y: 12.02 },
-                                    { x: -17.0, y: 0.0 },
-                                    { x: -12.02, y: -12.02 },
-                                    { x: 0.0, y: -17.0 },
-                                    { x: 12.02, y: -12.02 }
+                                    { x: 21.0, y: 0.0 },
+                                    { x: 14.85, y: 14.85 },
+                                    { x: 0.0, y: 21.0 },
+                                    { x: -14.85, y: 14.85 },
+                                    { x: -21.0, y: 0.0 },
+                                    { x: -14.85, y: -14.85 },
+                                    { x: 0.0, y: -21.0 },
+                                    { x: 14.85, y: -14.85 }
                                 ];
 
                                 function closeTapPoint(centerX, centerY, attempt, width, height) {
@@ -6346,9 +6349,9 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * After each failed tap, only continue the ring if there is
-                                 * evidence the fullscreen ad is still on screen. This prevents
-                                 * the remaining points from tapping the manga page after a close.
+                                 * Retry only while an ad surface is positively detected.
+                                 * The iframe detector accepts smaller fixed/provider frames because
+                                 * cross-origin fullscreen controls are invisible to DOM inspection.
                                  */
                                 function hasFullscreenAdSurface() {
                                     try {
@@ -6389,11 +6392,6 @@ class MangaBuffAutomation(
                                                 style.opacity !== "0";
                                             if (!visible) return false;
 
-                                            var coversScreen =
-                                                rect.width >= viewportWidth * 0.70 &&
-                                                rect.height >= viewportHeight * 0.60;
-                                            if (!coversScreen) return false;
-
                                             var src = String(
                                                 frame.src || frame.getAttribute("src") || ""
                                             ).toLowerCase();
@@ -6402,6 +6400,9 @@ class MangaBuffAutomation(
                                                 style.position === "fixed" ||
                                                 (!isNaN(zIndex) && zIndex >= 10) ||
                                                 /yandex|adfox|advert|fullscreen|\/ads?\//.test(src);
+                                            // Cross-origin Yandex controls may live in a smaller
+                                            // fixed/high-z-index frame; viewport coverage is not
+                                            // required to detect the ad surface.
                                             return looksLikeOverlay;
                                         });
                                     } catch (e) {
