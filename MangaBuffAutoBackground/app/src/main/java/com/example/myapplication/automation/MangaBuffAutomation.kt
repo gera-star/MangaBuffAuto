@@ -3057,7 +3057,7 @@ class MangaBuffAutomation(
                         var style = badge.style;
                         style.setProperty('position', 'fixed', 'important');
                         style.setProperty('left', '10px', 'important');
-                        style.setProperty('top', '12px', 'important');
+                        style.setProperty('top', '78px', 'important');
                         style.setProperty('right', 'auto', 'important');
                         style.setProperty('bottom', 'auto', 'important');
                         style.setProperty('z-index', '2147483647', 'important');
