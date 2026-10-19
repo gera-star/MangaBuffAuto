@@ -8,11 +8,11 @@ plugins {
 val startupSplashSource = rootProject.projectDir.parentFile.resolve(
     ".idea/video-26f8f8a9-cb79-477d-8d32-c284da329fb5.mp4"
 )
-val generatedSplashResDir = layout.buildDirectory.dir("generated/splashVideoResources/main")
+val generatedSplashResDir = layout.buildDirectory.dir("generated/splashVideoResources/main").get().asFile
 
-val generateSplashVideoResource by tasks.registering(Copy::class) {
+val generateSplashVideoResource = tasks.register<Copy>("generateSplashVideoResource") {
     from(startupSplashSource)
-    into(generatedSplashResDir.map { it.dir("raw") })
+    into(generatedSplashResDir.resolve("raw"))
     rename { "mangabuff_splash.mp4" }
     doFirst {
         check(startupSplashSource.isFile) {
