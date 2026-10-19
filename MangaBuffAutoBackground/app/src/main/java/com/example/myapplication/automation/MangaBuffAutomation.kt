@@ -3157,7 +3157,9 @@ class MangaBuffAutomation(
                             function isPumpkinMarked(el) {
                                 var node = el;
                                 for (var depth = 0; node && depth < 5; depth++, node = node.parentElement) {
-                                    if (/(pumpkin|тыкв|halloween|event[-_ ]?drop|candy[-_ ]?drop|gift[-_ ]?drop)/i.test(attrsFor(node))) {
+                                    // The actual reader pumpkin is a div with the exact class "event-bag".
+                                    if (node.matches && node.matches('div.event-bag')) return true;
+                                    if (/(pumpkin|тыкв|halloween|event[-_ ]?drop|event[-_ ]?bag|candy[-_ ]?drop|gift[-_ ]?drop)/i.test(attrsFor(node))) {
                                         return true;
                                     }
                                 }
@@ -3229,6 +3231,7 @@ class MangaBuffAutomation(
 
                             function findMarked(kind) {
                                 var selectors = kind === 'pumpkin' ? [
+                                    'div.event-bag',
                                     '[class*="pumpkin" i]', '[id*="pumpkin" i]',
                                     '[alt*="pumpkin" i]', '[title*="pumpkin" i]',
                                     '[aria-label*="pumpkin" i]',
