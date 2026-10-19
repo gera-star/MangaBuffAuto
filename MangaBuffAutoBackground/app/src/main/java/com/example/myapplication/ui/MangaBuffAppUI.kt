@@ -455,132 +455,80 @@ fun MangaBuffAppUI(
                             val profileName = "mb_${acc.id}"
                             println("PROFILE: BALANCE accountId=${acc.id} profile=$profileName")
                             val wv = WebView(ctx)
-                            wv.settings.javaScriptEnabled = true
-                            wv.settings.domStorageEnabled = true
-                            wv.webViewClient = object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView?,
-                                    request: android.webkit.WebResourceRequest?
-                                ): Boolean {
-                                    val url = request?.url?.toString().orEmpty()
-                                    return if (url.startsWith("http://") || url.startsWith("https://")) {
-                                        view?.loadUrl(url)
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                }
 
-                                @Suppress("DEPRECATION")
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView?,
-                                    url: String?
-                                ): Boolean {
-                                    val target = url.orEmpty()
-                                    return if (target.startsWith("http://") || target.startsWith("https://")) {
-                                        view?.loadUrl(target)
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                }
-
-                                override fun onPageFinished(view: WebView?, url: String?) {
-                                    super.onPageFinished(view, url)
-                                    view?.evaluateJavascript(
-                                        """
-                                        (function() {
-                                            if (window.__mbBalanceMenuFixInstalled) return;
-                                            window.__mbBalanceMenuFixInstalled = true;
-
-                                            function keepProfileMenuInsideViewport() {
-                                                try {
-                                                    var selectors = [
-                                                        '[role="menu"]',
-                                                        '[class*="dropdown"]',
-                                                        '[class*="profile"]',
-                                                        '[class*="account-menu"]',
-                                                        '[class*="user-menu"]',
-                                                        '[class*="popup"]',
-                                                        '[class*="menu"]'
-                                                    ].join(',');
-                                                    var nodes = document.querySelectorAll(selectors);
-                                                    for (var i = 0; i < nodes.length; i++) {
-                                                        var el = nodes[i];
-                                                        if (!el || el === document.body || el === document.documentElement) continue;
-                                                        var style = window.getComputedStyle(el);
-                                                        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) continue;
-                                                        if (style.position !== 'absolute' && style.position !== 'fixed') continue;
-                                                        var r = el.getBoundingClientRect();
-                                                        if (r.width < 70 || r.height < 30 ||
-                                                            r.width > window.innerWidth * 0.92 ||
-                                                            r.height > window.innerHeight * 0.88) continue;
-                                                        // The user/profile menu is anchored on the right; don't move left-side navigation.
-                                                        if (r.right < window.innerWidth * 0.55) continue;
-
-                                                        // Only adjust small popups near/outside the viewport edges.
-                                                        if (r.top >= 80 && r.left >= 4 &&
-                                                            r.right <= window.innerWidth - 4 &&
-                                                            r.bottom <= window.innerHeight - 80) continue;
-
-                                                        var top = Math.max(8, Math.min(r.top, window.innerHeight - r.height - 8));
-                                                        var left = Math.max(8, Math.min(r.left, window.innerWidth - r.width - 8));
-                                                        el.style.setProperty('position', 'fixed', 'important');
-                                                        el.style.setProperty('top', top + 'px', 'important');
-                                                        el.style.setProperty('left', left + 'px', 'important');
-                                                        el.style.setProperty('right', 'auto', 'important');
-                                                        el.style.setProperty('bottom', 'auto', 'important');
-                                                        el.style.setProperty('z-index', '2147483647', 'important');
-                                                        el.style.setProperty('max-height', (window.innerHeight - 16) + 'px', 'important');
-                                                        el.style.setProperty('overflow-y', 'auto', 'important');
-                                                    }
-                                                } catch (e) {}
-                                            }
-
-                                            document.addEventListener('click', function(event) {
-                                                // The avatar/profile control is in the upper-right area.
-                                                if (event.clientX < window.innerWidth * 0.55 ||
-                                                    event.clientY > window.innerHeight * 0.4) return;
-                                                setTimeout(keepProfileMenuInsideViewport, 40);
-                                                setTimeout(keepProfileMenuInsideViewport, 180);
-                                                setTimeout(keepProfileMenuInsideViewport, 450);
-                                            }, true);
-                                        })();
-                                        """.trimIndent(),
-                                        null
-                                    )
-                                }
-                            }
-                            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                            // Bind the same long-lived account profile used by the reader BEFORE
+                            // configuring the view or navigating, so site widgets see its real session.
+                            val profileCookieManager = if (
+                                WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+                            ) {
                                 try {
                                     WebViewCompat.setProfile(wv, profileName)
-                                    val profileStore = ProfileStore.getInstance()
-                                    val profile = profileStore.getProfile(profileName)
-                                    val cm = profile?.cookieManager
-                                    if (cm != null) {
-                                        cm.setAcceptCookie(true)
-                                        val cookies = acc.getSafeCookiesJson()
-                                        if (cookies.isNotEmpty()) {
-                                            for (item in cookies.split(";", ",")) {
-                                                if (item.contains("=")) {
-                                                    cm.setCookie("https://mangabuff.ru", item.trim())
-                                                }
-                                            }
-                                            cm.flush()
+                                    ProfileStore.getInstance()
+                                        .getProfile(profileName)
+                                        ?.cookieManager
+                                        ?.also { it.setAcceptCookie(true) }
+                                } catch (e: Exception) {
+                                    println("PROFILE: BALANCE_PROFILE_FAIL accountId=${acc.id} error=${e.message}")
+                                    null
+                                }
+                            } else {
+                                null
+                            }
+
+                            wv.settings.javaScriptEnabled = true
+                            wv.settings.domStorageEnabled = true
+                            wv.settings.databaseEnabled = true
+
+                            // Do not manually reload every HTTP(S) link in shouldOverrideUrlLoading:
+                            // it bypasses the WebView's normal click/navigation handling used by site menus.
+                            wv.webViewClient = WebViewClient()
+
+                            val balanceUrl = "https://mangabuff.ru/balance"
+                            val existingCookies = runCatching {
+                                profileCookieManager?.getCookie(balanceUrl)
+                            }.getOrNull()
+
+                            if (profileCookieManager == null || !existingCookies.isNullOrBlank()) {
+                                // Keep the active profile's current cookies; they may be newer than
+                                // the saved account snapshot after a reader session.
+                                wv.loadUrl(balanceUrl)
+                            } else {
+                                // On a fresh profile, seed saved cookies one by one and only then navigate.
+                                val savedCookies = acc.getSafeCookiesJson()
+                                    .split(';')
+                                    .map { it.trim() }
+                                    .filter { it.isNotEmpty() && it.indexOf('=') > 0 }
+
+                                if (savedCookies.isEmpty()) {
+                                    wv.loadUrl(balanceUrl)
+                                } else {
+                                    fun setNextCookie(index: Int) {
+                                        if (index >= savedCookies.size) {
+                                            profileCookieManager.flush()
+                                            wv.loadUrl(balanceUrl)
+                                            return
+                                        }
+                                        profileCookieManager.setCookie(
+                                            "https://mangabuff.ru",
+                                            savedCookies[index]
+                                        ) {
+                                            setNextCookie(index + 1)
                                         }
                                     }
-                                } catch (e: Exception) {
-                                    println("PROFILE: COOKIE_PROFILE_FAIL accountId=${acc.id} error=${e.message}")
+                                    setNextCookie(0)
                                 }
                             }
-                            wv.loadUrl("https://mangabuff.ru/balance")
                             wv
                         },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
                     )
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopStart)
+                            .statusBarsPadding()
                             .padding(8.dp)
                             .size(38.dp)
                             .clip(CircleShape)
