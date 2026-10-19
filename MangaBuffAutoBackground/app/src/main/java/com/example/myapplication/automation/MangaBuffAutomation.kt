@@ -12346,34 +12346,14 @@ class MangaBuffAutomation(
             if (storedGapMs !in DECK_COMMENT_MIN_GAP_MS..DECK_COMMENT_MAX_GAP_MS) {
                 deckCommentPrefs.edit().putLong(deckCommentGapKey, deckCommentGapMs).apply()
             }
-            val elapsedSinceLastCommentMs = if (lastCommentAt > 0L) {
-                (System.currentTimeMillis() - lastCommentAt).coerceAtLeast(0L)
-            } else {
-                Long.MAX_VALUE
-            }
-            val waitForGap = if (lastCommentAt > 0L) {
-                (deckCommentGapMs - elapsedSinceLastCommentMs).coerceAtLeast(0L)
-            } else {
-                0L
-            }
-            if (waitForGap > 0L) {
+            if (lastCommentAt > 0L) {
+                val elapsedBeforeOpenMs = (System.currentTimeMillis() - lastCommentAt).coerceAtLeast(0L)
                 log(
                     account.username,
-                    "COMMENT: DECK_RATE_LIMIT_WAIT targetSec=" +
+                    "COMMENT: DECK_RATE_LIMIT_TARGET targetSec=" +
                         ((deckCommentGapMs + 999L) / 1000L) +
-                        " elapsedSec=" + (elapsedSinceLastCommentMs / 1000L) +
-                        " waitSec=" + ((waitForGap + 999L) / 1000L)
-                )
-                if (!delayUnlessDisabled(waitForGap)) {
-                    stopIfDeckCommentsDisabled("RATE_LIMIT_WAIT")
-                    return sentCount
-                }
-            } else if (lastCommentAt > 0L) {
-                log(
-                    account.username,
-                    "COMMENT: DECK_RATE_LIMIT_READY targetSec=" +
-                        ((deckCommentGapMs + 999L) / 1000L) +
-                        " elapsedSec=" + (elapsedSinceLastCommentMs / 1000L)
+                        " elapsedSec=" + (elapsedBeforeOpenMs / 1000L) +
+                        " enforcement=BEFORE_SEND"
                 )
             }
             if (stopIfDeckCommentsDisabled("BEFORE_OPEN_DECK")) return sentCount
@@ -12509,9 +12489,37 @@ class MangaBuffAutomation(
                         }
                     }
                     state == "READY_TO_SEND" -> {
-                        // Fill/enable the composer first, then dispatch Send as a separate
-                        // guarded WebView operation. The main-thread guard prevents a queued
-                        // submit from starting after the user has switched decks OFF.
+                        // Prepare the page and composer first; enforce the persisted random interval
+                        // at the last moment so loading time is included in the interval, not added to it.
+                        val elapsedBeforeSendMs = if (lastCommentAt > 0L) {
+                            (System.currentTimeMillis() - lastCommentAt).coerceAtLeast(0L)
+                        } else {
+                            Long.MAX_VALUE
+                        }
+                        val waitBeforeSendMs = if (lastCommentAt > 0L) {
+                            (deckCommentGapMs - elapsedBeforeSendMs).coerceAtLeast(0L)
+                        } else {
+                            0L
+                        }
+                        if (waitBeforeSendMs > 0L) {
+                            log(
+                                account.username,
+                                "COMMENT: DECK_RATE_LIMIT_WAIT targetSec=" +
+                                    ((deckCommentGapMs + 999L) / 1000L) +
+                                    " elapsedSec=" + (elapsedBeforeSendMs / 1000L) +
+                                    " waitSec=" + ((waitBeforeSendMs + 999L) / 1000L)
+                            )
+                            if (!delayUnlessDisabled(waitBeforeSendMs)) {
+                                toggleDisabledDuringDeck = true
+                                return@repeat
+                            }
+                        }
+                        if (!deckCommentEnabledNow()) {
+                            toggleDisabledDuringDeck = true
+                            return@repeat
+                        }
+
+                        // Dispatch Send only after waiting and re-checking the toggle.
                         val submitRawState = evalJs(
                             """
                             (function() {
