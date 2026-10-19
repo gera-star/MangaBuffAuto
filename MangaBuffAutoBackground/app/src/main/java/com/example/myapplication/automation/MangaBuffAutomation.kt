@@ -3235,12 +3235,8 @@ class MangaBuffAutomation(
                                     '[class*="тыкв" i]', '[id*="тыкв" i]',
                                     '[class*="halloween" i]', '[id*="halloween" i]',
                                     '[class*="event-drop" i]', '[id*="event-drop" i]',
-                                    '[class*="candy-drop" i]', '[id*="candy-drop" i]',
                                     '[src*="pumpkin" i]', '[src*="halloween" i]', '[src*="event-drop" i]',
-                                    '[style*="pumpkin" i]', '[style*="halloween" i]',
-                                    '[class*="candy" i]', '[id*="candy" i]',
-                                    '[alt*="candy" i]', '[title*="candy" i]',
-                                    '[src*="candy" i]', '[style*="candy" i]'
+                                    '[style*="pumpkin" i]', '[style*="halloween" i]'
                                 ];
                                 var nodes = document.querySelectorAll(selectors.join(','));
                                 var candidates = [];
@@ -3266,24 +3262,45 @@ class MangaBuffAutomation(
                                     return;
                                 }
 
-                                // First tap an explicitly identifiable event candy if present.
-                                // Then wait for the pumpkin and repeatedly tap only that marked
-                                // event element. Never fall back to arbitrary images/icons by position.
-                                var candy = findMarked('candy');
-                                var pumpkin = findMarked('pumpkin');
-                                var target = pumpkin || candy;
-
-                                if (!target) {
-                                    if (!pumpkinAbsentSince) pumpkinAbsentSince = Date.now();
-                                    lastTarget = null;
+                                // Strict two-stage state machine:
+                                // 1) tap the normal event candy exactly once;
+                                // 2) only then search for the pumpkin and repeat taps on it.
+                                // Never use position-only guesses or generic "candy" classes
+                                // while looking for the pumpkin (those can match unrelated UI).
+                                if (window.__mbEventDropPhase !== 'pumpkin') {
+                                    var candy = findMarked('candy');
+                                    if (!candy) {
+                                        lastTarget = null;
+                                        return;
+                                    }
+                                    if (candy === lastTarget && Date.now() - lastTapAt < 700) return;
+                                    lastTarget = candy;
+                                    lastTapAt = Date.now();
+                                    if (tap(candy)) {
+                                        window.__mbEventDropPhase = 'pumpkin';
+                                        lastTarget = null;
+                                        pumpkinAbsentSince = Date.now();
+                                    }
                                     return;
                                 }
-                                pumpkinAbsentSince = 0;
 
-                                if (target === lastTarget && Date.now() - lastTapAt < 420) return;
-                                lastTarget = target;
+                                var pumpkin = findMarked('pumpkin');
+                                if (!pumpkin) {
+                                    // Pumpkin disappears after being collected. Return to the
+                                    // candy stage only after it has been absent for a short pause.
+                                    if (!pumpkinAbsentSince) pumpkinAbsentSince = Date.now();
+                                    if (Date.now() - pumpkinAbsentSince >= 900) {
+                                        window.__mbEventDropPhase = 'candy';
+                                        lastTarget = null;
+                                    }
+                                    return;
+                                }
+
+                                pumpkinAbsentSince = 0;
+                                if (pumpkin === lastTarget && Date.now() - lastTapAt < 260) return;
+                                lastTarget = pumpkin;
                                 lastTapAt = Date.now();
-                                tap(target);
+                                tap(pumpkin);
                             }
 
                             scan();
