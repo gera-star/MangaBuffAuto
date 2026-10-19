@@ -3169,7 +3169,8 @@ class MangaBuffAutomation(
                             function isCandyMarked(el) {
                                 var node = el;
                                 for (var depth = 0; node && depth < 4; depth++, node = node.parentElement) {
-                                    if (/(event[-_ ]?candy|candy[-_ ]?drop|candy[-_ ]?pickup|конфетк|конфета)/i.test(attrsFor(node))) {
+                                    if (node.matches && node.matches('div.event-gift-ball:not(.event-gift-ball--collected)')) return true;
+                                    if (/(event[-_ ]?candy|event[-_ ]?gift[-_ ]?ball|candy[-_ ]?drop|candy[-_ ]?pickup|конфетк|конфета)/i.test(attrsFor(node))) {
                                         return true;
                                     }
                                 }
@@ -3241,6 +3242,7 @@ class MangaBuffAutomation(
                                     '[src*="pumpkin" i]', '[src*="halloween" i]', '[src*="event-drop" i]',
                                     '[style*="pumpkin" i]', '[style*="halloween" i]'
                                 ] : [
+                                    'div.event-gift-ball:not(.event-gift-ball--collected)',
                                     '[class*="event-candy" i]', '[id*="event-candy" i]',
                                     '[class*="candy-drop" i]', '[id*="candy-drop" i]',
                                     '[class*="candy-pickup" i]', '[id*="candy-pickup" i]',
@@ -10161,12 +10163,12 @@ class MangaBuffAutomation(
                                             }, 1000);
                                         }
 
-                                        // Match the exact reading candy element confirmed in DevTools.
-                                        // The server/site marks a successful collection by adding
-                                        // event-gift-ball--collected to this same element.
+                                        // Use the existing reading-candy click routine for any numbered
+                                        // event-gift-ball variant (for example event-gift-ball-3).
+                                        // Successful collection adds event-gift-ball--collected.
                                         try {
                                             var drop = document.querySelector(
-                                                '.event-gift-ball-1:not(.event-gift-ball--collected)'
+                                                '.event-gift-ball:not(.event-gift-ball--collected)'
                                             );
                                             if (drop && !drop.__mbEventDropClicked) {
                                                 var s = getComputedStyle(drop);
@@ -10182,7 +10184,7 @@ class MangaBuffAutomation(
                                                     AndroidReaderBridge.onEventDropClickAttempt(
                                                         String(drop.className || ''),
                                                         String(drop.id || ''),
-                                                        'event-gift-ball-1'
+                                                        'event-gift-ball'
                                                     );
                                                     try {
                                                         AndroidReaderBridge.onLogStep(
