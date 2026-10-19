@@ -97,7 +97,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             mineExchangeOre = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_MINE_EXCHANGE_ORE, 0) ?: 0,
                             mineDiamonds = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_MINE_DIAMONDS, 0) ?: 0,
                             readerChapters = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_READER_CHAPTERS, 0) ?: 0,
-                            comments = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_DAILY_COMMENTS, 0) ?: 0
+                            comments = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_DAILY_COMMENTS, 0) ?: 0,
+                            deckComments = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_DAILY_DECK_COMMENTS, 0) ?: 0
                         )
                     )
                 }
@@ -398,7 +399,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 dailyMineExchangeOre = stats.mineExchangeOre,
                 dailyMineDiamonds = stats.mineDiamonds,
                 dailyReaderChapters = stats.readerChapters,
-                dailyComments = stats.comments
+                dailyComments = stats.comments,
+                dailyDeckComments = stats.deckComments
             )
         } ?: return
 
