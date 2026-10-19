@@ -2991,6 +2991,32 @@ class MangaBuffAutomation(
         )
     }
 
+    private fun updateReadingEventCandyCounter(webView: WebView, candyTotal: Int, day: String) {
+        val total = candyTotal.coerceAtLeast(0)
+        val dayLiteral = JSONObject.quote(day)
+        mainHandler.post {
+            runCatching {
+                webView.evaluateJavascript(
+                    """
+                    (function() {
+                        var id = 'mangabuff-reading-candy-counter';
+                        var badge = document.getElementById(id);
+                        if (!badge) {
+                            badge = document.createElement('div');
+                            badge.id = id;
+                            badge.style.cssText = 'position:fixed;left:10px;bottom:84px;z-index:2147483647;padding:7px 11px;border-radius:18px;background:rgba(31,24,34,.92);color:#fff;font:600 14px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.35);pointer-events:none;white-space:nowrap;';
+                            (document.body || document.documentElement).appendChild(badge);
+                        }
+                        badge.textContent = '🎃 Конфеты: ' + $total;
+                        badge.setAttribute('data-day', $dayLiteral);
+                    })();
+                    """.trimIndent(),
+                    null
+                )
+            }
+        }
+    }
+
     private suspend fun claimReadingEventDrop(
         account: MangaBuffAccount,
         webView: WebView,
@@ -3044,17 +3070,25 @@ class MangaBuffAutomation(
                 csrfToken = csrf
             )
             if (response.code == 200 && !response.finalUrl.contains("/login", ignoreCase = true)) {
-                val count = synchronized(eventDropClaimLock) {
-                    val next = (prefs.getInt(countKey, 0) + 1).coerceAtMost(EVENTS_CANDY_DAILY_LIMIT)
-                    prefs.edit().putInt(countKey, next).apply()
-                    next
-                }
                 val pumpkin = type.equals("pumpkin", ignoreCase = true)
                 val kind = if (pumpkin) "pumpkin" else "candy"
                 val reward = if (pumpkin) 3 else 1
+                val dailyKey = dailyCalendarDate()
+                val candyTotalKey = "candies_${account.id}_$dailyKey"
+                val totalsPrefs = context.getSharedPreferences("mangabuff_event_candy_totals", Context.MODE_PRIVATE)
+                val totals = synchronized(eventDropClaimLock) {
+                    val drops = (prefs.getInt(countKey, 0) + 1).coerceAtMost(EVENTS_CANDY_DAILY_LIMIT)
+                    val candies = (totalsPrefs.getInt(candyTotalKey, 0) + reward)
+                    prefs.edit().putInt(countKey, drops).apply()
+                    totalsPrefs.edit().putInt(candyTotalKey, candies).apply()
+                    drops to candies
+                }
+                val count = totals.first
+                val candyTotal = totals.second
+                updateReadingEventCandyCounter(webView, candyTotal, dailyKey)
                 log(
                     account.username,
-                    "EVENTS: DROP_CLAIMED kind=$kind reward=$reward daily=$count/$EVENTS_CANDY_DAILY_LIMIT"
+                    "EVENTS: DROP_CLAIMED kind=$kind reward=$reward candiesToday=$candyTotal drops=$count/$EVENTS_CANDY_DAILY_LIMIT day=$dailyKey"
                 )
             } else {
                 log(
