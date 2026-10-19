@@ -3156,6 +3156,39 @@ class MangaBuffAutomation(
                                 logStep('EVENTS: PHASE pumpkin -> candy reason=' + reason);
                             }
 
+                            function tapPumpkin(el) {
+                                if (!visible(el)) return false;
+                                var rect = el.getBoundingClientRect();
+                                var x = Math.round(rect.left + rect.width / 2);
+                                var y = Math.round(rect.top + rect.height / 2);
+                                // Use the same touch/pointer/mouse-compatible tap pattern as the
+                                // existing reader automation, but only on the exact event-bag node.
+                                try {
+                                    el.dispatchEvent(new PointerEvent('pointerdown', {
+                                        bubbles: true, cancelable: true, clientX: x, clientY: y,
+                                        pointerType: 'touch', isPrimary: true
+                                    }));
+                                    el.dispatchEvent(new PointerEvent('pointerup', {
+                                        bubbles: true, cancelable: true, clientX: x, clientY: y,
+                                        pointerType: 'touch', isPrimary: true
+                                    }));
+                                } catch (_) {}
+                                try {
+                                    el.dispatchEvent(new MouseEvent('mousedown', {
+                                        bubbles: true, cancelable: true, clientX: x, clientY: y
+                                    }));
+                                    el.dispatchEvent(new MouseEvent('mouseup', {
+                                        bubbles: true, cancelable: true, clientX: x, clientY: y
+                                    }));
+                                } catch (_) {}
+                                try {
+                                    el.click();
+                                    return true;
+                                } catch (_) {
+                                    return false;
+                                }
+                            }
+
                             function scan() {
                                 if (Date.now() - startedAt > 1800000) {
                                     clearInterval(window.__mbPumpkinAutoTapTimer);
@@ -3196,16 +3229,14 @@ class MangaBuffAutomation(
                                 if (Date.now() - lastTapAt < 260) return;
                                 lastTapAt = Date.now();
 
-                                // One click per pass. Repeating every 260 ms emulates repeated taps;
-                                // stop only after the exact .event-bag element disappears.
-                                try {
-                                    pumpkin.click();
+                                // Repeat tap bursts until the exact .event-bag element disappears.
+                                if (tapPumpkin(pumpkin)) {
                                     tapCount++;
                                     if (tapCount === 1 || tapCount % 5 === 0) {
                                         logStep('EVENTS: PUMPKIN_TAP count=' + tapCount);
                                     }
-                                } catch (error) {
-                                    logStep('EVENTS: PUMPKIN_CLICK_ERROR ' + String(error));
+                                } else {
+                                    logStep('EVENTS: PUMPKIN_CLICK_ERROR target_unavailable');
                                 }
                             }
 
