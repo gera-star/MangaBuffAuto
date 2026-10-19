@@ -6091,7 +6091,7 @@ class MangaBuffAutomation(
                                     if (
                                         tapX < width * 0.65 ||
                                         tapY < 0 ||
-                                        tapY > Math.min(120, height * 0.25)
+                                        tapY > Math.min(150, height * 0.25)
                                     ) {
                                         AndroidAds.onStateLog(
                                             "NATIVE_CLOSE_RECT_REJECTED",
@@ -6297,12 +6297,10 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * Restore the previously tested mobile close point from the
-                                 * actual ad WebView: x≈349.29, y≈810.76 CSS px on a 384x850
-                                 * viewport. This build's newer top-right (y=64) fallback did
-                                 * not close the X on the user's current mobile layout.
-                                 * Keep the exact Yandex DOM close-control attempt first; use
-                                 * this measured point only as the fallback after the wait timer.
+                                 * Recent manual-touch logs locate the close control around
+                                 * x=335.3, y=109.1 CSS px on a 384px-wide viewport. Prefer the
+                                 * DOM geometry; use this measured top-right point only when the
+                                 * close element is inaccessible.
                                  */
                                 var verifiedViewportHeight =
                                     window.visualViewport && window.visualViewport.height
@@ -6313,9 +6311,9 @@ class MangaBuffAutomation(
                                         ? window.visualViewport.width
                                         : (window.innerWidth || 384);
                                 var VERIFIED_CLOSE_FALLBACK_X =
-                                    Math.min(verifiedViewportWidth - 2.0, 349.29);
+                                    Math.min(verifiedViewportWidth - 2.0, 335.3);
                                 var VERIFIED_CLOSE_FALLBACK_Y =
-                                    Math.min(verifiedViewportHeight - 2.0, 810.76);
+                                    Math.min(verifiedViewportHeight - 2.0, 109.1);
                                 var verifiedFallbackRequested = false;
 
                                 /*
