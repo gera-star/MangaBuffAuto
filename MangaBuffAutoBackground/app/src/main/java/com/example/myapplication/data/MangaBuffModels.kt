@@ -16,7 +16,8 @@ data class DailyStats(
     val mineExchangeOre: Int = 0,
     val mineDiamonds: Int = 0,
     val readerChapters: Int = 0,
-    val comments: Int = 0
+    val comments: Int = 0,
+    val deckComments: Int = 0
 )
 
 fun currentStatsDay(): String = SimpleDateFormat("yyyyMMdd", Locale.US).apply {
@@ -37,7 +38,7 @@ data class MangaBuffAccount(
     val advEnabled: Boolean = true,
     val mineEnabled: Boolean = true,
     val commentEnabled: Boolean = true,
-    val deckCommentEnabled: Boolean = false,
+    val deckCommentEnabled: Boolean = true,
     val battleEnabled: Boolean = false, // По умолчанию Карточные бои = ВЫКЛ
     /** When true, all automation and automatic Tower restarts are disabled for this account. */
     val isOffline: Boolean = false,
@@ -66,7 +67,8 @@ data class MangaBuffAccount(
     val mineOreBalance: Int = 0,
     val mineOreBalanceKnown: Boolean = false,
     val dailyReaderChapters: Int = 0,
-    val dailyComments: Int = 0
+    val dailyComments: Int = 0,
+    val dailyDeckComments: Int = 0
 ) {
     fun getSafeCookiesJson(): String = cookiesJson ?: ""
     fun getSafeCsrfToken(): String = csrfToken ?: ""
@@ -128,9 +130,9 @@ data class GlobalSettings(
     val mineClicks: Int = 100,
     val mineAutoUpgrade: Boolean = true,
     val mineAutoExchange: Boolean = false,
-    val readerChapters: Int = 10,
+    val readerChapters: Int = 45,
     val commentCount: Int = 3,
-    val battleTargetCount: Int = 20,
+    val battleTargetCount: Int = 25,
     // Tower headquarters skills that should be upgraded with the site's "На все" action.
     val towerUpgradeAssault: Boolean = true,
     val towerUpgradeFortitude: Boolean = true,
@@ -138,9 +140,9 @@ data class GlobalSettings(
     val towerUpgradeMentorship: Boolean = true,
     val towerUpgradeSupply: Boolean = true,
     val keepScreenOn: Boolean = false,
-    val readerSiteAutoscroll: Boolean = true,
+    val readerSiteAutoscroll: Boolean = false,
     /** Collect event candy/pumpkin drops through the existing reader session. */
-    val eventsEnabled: Boolean = false
+    val eventsEnabled: Boolean = true
 ) {
     companion object {
         const val MAX_READER_CHAPTERS = 100
