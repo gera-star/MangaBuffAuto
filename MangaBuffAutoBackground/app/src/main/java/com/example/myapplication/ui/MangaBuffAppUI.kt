@@ -160,21 +160,47 @@ fun MangaBuffAppUI(
                                     expanded = showWebViewAccountMenu,
                                     onDismissRequest = { showWebViewAccountMenu = false }
                                 ) {
-                                    webViewAccountIds.forEach { accountId ->
-                                        val accountName = accounts.firstOrNull {
-                                            it.id == accountId
-                                        }?.username ?: accountId
-                                        DropdownMenuItem(
-                                            text = { Text(accountName) },
-                                            leadingIcon = {
-                                                Icon(Icons.Default.People, contentDescription = null)
-                                            },
-                                            onClick = {
-                                                onSelectWebViewAccount(accountId)
-                                                viewModel.setDebugWebViewVisible(true)
-                                                showWebViewAccountMenu = false
+                                    Column(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        webViewAccountIds.forEach { accountId ->
+                                            val accountName = accounts.firstOrNull {
+                                                it.id == accountId
+                                            }?.username.orEmpty()
+                                            val initials = accountName
+                                                .trim()
+                                                .replace(Regex("\\s+"), "")
+                                                .take(2)
+                                                .uppercase(Locale.getDefault())
+                                                .ifEmpty { "?" }
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(42.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        if (accountId == selectedWebViewAccountId) {
+                                                            Color(0xFF4CAF50)
+                                                        } else {
+                                                            MaterialTheme.colorScheme.surfaceVariant
+                                                        }
+                                                    )
+                                                    .clickable {
+                                                        onSelectWebViewAccount(accountId)
+                                                        viewModel.setDebugWebViewVisible(true)
+                                                        showWebViewAccountMenu = false
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    initials,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
                                             }
-                                        )
+                                        }
                                     }
                                 }
                             }
@@ -423,22 +449,7 @@ fun MangaBuffAppUI(
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 0.dp
             ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(acc.username.ifEmpty { "Аккаунт" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("Баланс MangaBuff", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                        }
-                        IconButton(onClick = { selectedBalanceAccount = null }) {
-                            Icon(Icons.Default.Close, contentDescription = "Закрыть")
-                        }
-                    }
-                    HorizontalDivider()
-
+                Box(modifier = Modifier.fillMaxSize()) {
                     AndroidView(
                         factory = { ctx ->
                             val profileName = "mb_${acc.id}"
@@ -473,6 +484,70 @@ fun MangaBuffAppUI(
                                         false
                                     }
                                 }
+
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    super.onPageFinished(view, url)
+                                    view?.evaluateJavascript(
+                                        """
+                                        (function() {
+                                            if (window.__mbBalanceMenuFixInstalled) return;
+                                            window.__mbBalanceMenuFixInstalled = true;
+
+                                            function keepProfileMenuInsideViewport() {
+                                                try {
+                                                    var selectors = [
+                                                        '[role="menu"]',
+                                                        '[class*="dropdown"]',
+                                                        '[class*="profile"]',
+                                                        '[class*="account-menu"]',
+                                                        '[class*="user-menu"]',
+                                                        '[class*="popup"]',
+                                                        '[class*="menu"]'
+                                                    ].join(',');
+                                                    var nodes = document.querySelectorAll(selectors);
+                                                    for (var i = 0; i < nodes.length; i++) {
+                                                        var el = nodes[i];
+                                                        if (!el || el === document.body || el === document.documentElement) continue;
+                                                        var style = window.getComputedStyle(el);
+                                                        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) continue;
+                                                        if (style.position !== 'absolute' && style.position !== 'fixed') continue;
+                                                        var r = el.getBoundingClientRect();
+                                                        if (r.width < 70 || r.height < 30 ||
+                                                            r.width > window.innerWidth * 0.92 ||
+                                                            r.height > window.innerHeight * 0.88) continue;
+
+                                                        // Only adjust small popups near/outside the viewport edges.
+                                                        if (r.top >= 80 && r.left >= 4 &&
+                                                            r.right <= window.innerWidth - 4 &&
+                                                            r.bottom <= window.innerHeight - 80) continue;
+
+                                                        var top = Math.max(8, Math.min(r.top, window.innerHeight - r.height - 8));
+                                                        var left = Math.max(8, Math.min(r.left, window.innerWidth - r.width - 8));
+                                                        el.style.setProperty('position', 'fixed', 'important');
+                                                        el.style.setProperty('top', top + 'px', 'important');
+                                                        el.style.setProperty('left', left + 'px', 'important');
+                                                        el.style.setProperty('right', 'auto', 'important');
+                                                        el.style.setProperty('bottom', 'auto', 'important');
+                                                        el.style.setProperty('z-index', '2147483647', 'important');
+                                                        el.style.setProperty('max-height', (window.innerHeight - 16) + 'px', 'important');
+                                                        el.style.setProperty('overflow-y', 'auto', 'important');
+                                                    }
+                                                } catch (e) {}
+                                            }
+
+                                            document.addEventListener('click', function(event) {
+                                                // The avatar/profile control is in the upper-right area.
+                                                if (event.clientX < window.innerWidth * 0.55 ||
+                                                    event.clientY > window.innerHeight * 0.4) return;
+                                                setTimeout(keepProfileMenuInsideViewport, 40);
+                                                setTimeout(keepProfileMenuInsideViewport, 180);
+                                                setTimeout(keepProfileMenuInsideViewport, 450);
+                                            }, true);
+                                        })();
+                                        """.trimIndent(),
+                                        null
+                                    )
+                                }
                             }
                             if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
                                 try {
@@ -501,6 +576,22 @@ fun MangaBuffAppUI(
                         },
                         modifier = Modifier.fillMaxSize()
                     )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xDD171A24))
+                            .clickable { selectedBalanceAccount = null },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Закрыть окно аккаунта",
+                            tint = Color.White
+                        )
+                    }
                 }
             }
         }
@@ -1453,7 +1544,7 @@ fun TasksTab(
                         horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         Row(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(0.9f),
                             horizontalArrangement = Arrangement.spacedBy(3.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1502,7 +1593,7 @@ fun TasksTab(
                         }
 
                         Row(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1.25f),
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1548,12 +1639,46 @@ fun TasksTab(
                                     modifier = Modifier.size(21.dp)
                                 )
                             }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (settings.readerSiteAutoscrollHalfSpeed) {
+                                            Color(0xFF4CAF50)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        }
+                                    )
+                                    .clickable(enabled = actionEnabled) {
+                                        onSaveSettings(
+                                            settings.copy(
+                                                readerSiteAutoscrollHalfSpeed = !settings.readerSiteAutoscrollHalfSpeed
+                                            )
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "−Х2",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (settings.readerSiteAutoscrollHalfSpeed) {
+                                        Color.White
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    maxLines = 1
+                                )
+                            }
                         }
                         TaskActionButton(
                             "🎟️ Промокод",
                             onOpenPromoDialog,
                             actionEnabled,
-                            Modifier.weight(1f)
+                            Modifier.weight(0.85f),
+                            compactText = true
                         )
                     }
                 }
@@ -1810,7 +1935,8 @@ private fun TaskActionButton(
     text: String,
     onClick: () -> Unit,
     enabled: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compactText: Boolean = false
 ) {
     FilledTonalButton(
         onClick = onClick,
@@ -1819,7 +1945,11 @@ private fun TaskActionButton(
         modifier = modifier.height(32.dp),
         shape = RoundedCornerShape(10.dp)
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        Text(
+            text,
+            style = if (compactText) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelLarge,
+            maxLines = 1
+        )
     }
 }
 
