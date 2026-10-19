@@ -6472,19 +6472,14 @@ class MangaBuffAutomation(
                                 }
 
                                 /*
-                                 * A retry is safe only when the actual close control or timer
-                                 * remains visible. A provider iframe alone is not proof an ad is
-                                 * still open: it can persist after the overlay closes.
+                                 * Retry only when the actual close control is still visible.
+                                 * Timers and provider iframes can remain after the overlay has
+                                 * closed, so they must never authorize another physical tap.
                                  */
                                 function hasFullscreenAdSurface() {
                                     try {
                                         var close = findCloseButton();
-                                        if (close && isVisibleElement(close)) return true;
-
-                                        var timer = findTimer();
-                                        if (timer && isVisibleElement(timer)) return true;
-
-                                        return false;
+                                        return !!(close && isVisibleElement(close));
                                     } catch (e) {
                                         AndroidAds.onStateLog(
                                             "CLOSE_RETRY_SURFACE_CHECK_ERROR",
