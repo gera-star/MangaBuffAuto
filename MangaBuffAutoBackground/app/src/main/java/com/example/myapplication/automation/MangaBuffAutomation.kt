@@ -7045,6 +7045,14 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
+                fun onEventDropClickAttempt(classes: String, id: String, label: String) {
+                    log(
+                        account.username,
+                        "EVENTS: DROP_DOM_CLICK_ATTEMPT class=${classes.take(160)} id=${id.take(100)} label=${label.take(100)}"
+                    )
+                }
+
+                @JavascriptInterface
                 fun onReadButtonUrlAudit(locHref: String, baseURI: String, rawHref: String, elemHref: String) {
                     log(account.username, "READ_BUTTON_URL_AUDIT:\nlocation.href=$locHref\ndocument.baseURI=$baseURI\nrawHref=$rawHref\nelement.href=$elemHref")
                 }
@@ -9787,6 +9795,7 @@ class MangaBuffAutomation(
                                     var interval = setInterval(function() {
                                         checkEnd();
 
+                                        // Preserve existing card-gift collection.
                                         var gift = document.querySelector('div.card-notification, .reader-gift');
                                         if (gift && !window.__mbGiftCollected) {
                                             window.__mbGiftCollected = true;
@@ -9796,6 +9805,53 @@ class MangaBuffAutomation(
                                                 var close = document.querySelector('.modal__close, .manga-cards__close');
                                                 if (close) { try { close.click(); } catch(e) {} }
                                             }, 1000);
+                                        }
+
+                                        // Event candy/pumpkin is a separate floating drop.
+                                        try {
+                                            function visible(el) {
+                                                if (!el) return false;
+                                                var s = getComputedStyle(el), r = el.getBoundingClientRect();
+                                                return s.display !== 'none' && s.visibility !== 'hidden' &&
+                                                    Number(s.opacity || 1) > 0 && r.width > 0 && r.height > 0 &&
+                                                    r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+                                            }
+                                            var nodes = Array.from(document.querySelectorAll(
+                                                '[class*="pumpkin" i], [class*="candy" i], [class*="halloween" i], ' +
+                                                '[id*="pumpkin" i], [id*="candy" i], [id*="halloween" i], ' +
+                                                'img[alt*="pumpkin" i], img[alt*="candy" i], img[title*="pumpkin" i], img[title*="candy" i]'
+                                            ));
+                                            var drop = nodes.find(function(el) {
+                                                if (!visible(el) || el.__mbEventDropClicked) return false;
+                                                var details = [
+                                                    typeof el.className === 'string' ? el.className : '',
+                                                    el.id || '', el.getAttribute('alt') || '',
+                                                    el.getAttribute('title') || '', el.getAttribute('aria-label') || '',
+                                                    el.getAttribute('src') || ''
+                                                ].join(' ').toLowerCase();
+                                                return /pumpkin|candy|halloween|тыкв|конфет/.test(details);
+                                            });
+                                            if (drop) {
+                                                var clickable = drop.closest('button, a, [role="button"]') || drop;
+                                                if (visible(clickable)) {
+                                                    drop.__mbEventDropClicked = true;
+                                                    clickable.__mbEventDropClicked = true;
+                                                    AndroidReaderBridge.onEventDropClickAttempt(
+                                                        String(typeof drop.className === 'string' ? drop.className : ''),
+                                                        String(drop.id || ''),
+                                                        String(drop.getAttribute('alt') || drop.getAttribute('title') || '')
+                                                    );
+                                                    try {
+                                                        clickable.click();
+                                                    } catch(e) {}
+                                                    setTimeout(function() {
+                                                        if (clickable && clickable.isConnected) clickable.__mbEventDropClicked = false;
+                                                        if (drop && drop.isConnected) drop.__mbEventDropClicked = false;
+                                                    }, 180000);
+                                                }
+                                            }
+                                        } catch(e) {
+                                            try { AndroidReaderBridge.onLogStep('EVENTS: DROP_DOM_CLICK_ERROR ' + String(e)); } catch(ignore) {}
                                         }
                                     }, 700);
 
