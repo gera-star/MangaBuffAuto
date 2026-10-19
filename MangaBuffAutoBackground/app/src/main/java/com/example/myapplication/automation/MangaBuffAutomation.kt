@@ -5528,6 +5528,41 @@ class MangaBuffAutomation(
                         }
                     }
                 }
+                @JavascriptInterface
+                fun getConfiguredFloatingClosePoint(): String {
+                    return try {
+                        val prefs = webView.context.applicationContext.getSharedPreferences(
+                            "mangabuff_web_floating_controls",
+                            Context.MODE_PRIVATE
+                        )
+                        if (
+                            !prefs.contains("tap_left_ratio") ||
+                            !prefs.contains("tap_top_ratio")
+                        ) {
+                            ""
+                        } else {
+                            JSONObject()
+                                .put(
+                                    "leftRatio",
+                                    prefs.getFloat("tap_left_ratio", 0.925f)
+                                        .coerceIn(0f, 1f).toDouble()
+                                )
+                                .put(
+                                    "topRatio",
+                                    prefs.getFloat("tap_top_ratio", 0.112f)
+                                        .coerceIn(0f, 1f).toDouble()
+                                )
+                                .toString()
+                        }
+                    } catch (e: Exception) {
+                        log(
+                            account.username,
+                            "ADS: FLOATING_CLOSE_POINT_READ_ERROR error=" + e.message,
+                            true
+                        )
+                        ""
+                    }
+                }
             }
 
             // Log real manual taps while the ad flow is active so the close X can be
@@ -6082,7 +6117,7 @@ class MangaBuffAutomation(
                                         "NATIVE_CLOSE_RING_POINT",
                                         "attempt=" + nativeCloseAttempts +
                                             " point=" + tapX + "," + tapY +
-                                            " radius=17css"
+                                            " radius=21css"
                                     );
 
                                     /*
@@ -6314,10 +6349,83 @@ class MangaBuffAutomation(
                                     window.visualViewport && window.visualViewport.width
                                         ? window.visualViewport.width
                                         : (window.innerWidth || 384);
+                                var configuredFloatingClosePoint = null;
                                 var VERIFIED_CLOSE_FALLBACK_X =
                                     Math.min(verifiedViewportWidth - 2.0, 335.3);
                                 var VERIFIED_CLOSE_FALLBACK_Y =
                                     Math.min(verifiedViewportHeight - 2.0, 109.1);
+
+                                /*
+                                 * The translucent floating X button is also a target picker.
+                                 * Its saved left/top ratios are shared with MainActivity; the
+                                 * synthetic touch is dispatched straight to the WebView, so
+                                 * the Compose overlay cannot consume or block that touch.
+                                 */
+                                function refreshConfiguredFloatingClosePoint() {
+                                    configuredFloatingClosePoint = null;
+                                    VERIFIED_CLOSE_FALLBACK_X =
+                                        Math.min(verifiedViewportWidth - 2.0, 335.3);
+                                    VERIFIED_CLOSE_FALLBACK_Y =
+                                        Math.min(verifiedViewportHeight - 2.0, 109.1);
+                                    try {
+                                        if (
+                                            typeof AndroidAds === "undefined" ||
+                                            typeof AndroidAds.getConfiguredFloatingClosePoint !== "function"
+                                        ) {
+                                            return false;
+                                        }
+                                        var raw = AndroidAds.getConfiguredFloatingClosePoint();
+                                        if (!raw) return false;
+                                        var config = JSON.parse(String(raw));
+                                        var leftRatio = Number(config.leftRatio);
+                                        var topRatio = Number(config.topRatio);
+                                        if (
+                                            !isFinite(leftRatio) || !isFinite(topRatio) ||
+                                            leftRatio < 0 || leftRatio > 1 ||
+                                            topRatio < 0 || topRatio > 1
+                                        ) {
+                                            return false;
+                                        }
+                                        var buttonSizeCss = 48.0;
+                                        configuredFloatingClosePoint = {
+                                            x: Math.max(
+                                                1,
+                                                Math.min(
+                                                    verifiedViewportWidth - 1,
+                                                    leftRatio * Math.max(0, verifiedViewportWidth - buttonSizeCss) +
+                                                        buttonSizeCss / 2
+                                                )
+                                            ),
+                                            y: Math.max(
+                                                1,
+                                                Math.min(
+                                                    verifiedViewportHeight - 1,
+                                                    topRatio * Math.max(0, verifiedViewportHeight - buttonSizeCss) +
+                                                        buttonSizeCss / 2
+                                                )
+                                            )
+                                        };
+                                        VERIFIED_CLOSE_FALLBACK_X = configuredFloatingClosePoint.x;
+                                        VERIFIED_CLOSE_FALLBACK_Y = configuredFloatingClosePoint.y;
+                                        AndroidAds.onStateLog(
+                                            "CLOSE_TARGET_CONFIGURED",
+                                            "source=floating_button x=" +
+                                                configuredFloatingClosePoint.x +
+                                                " y=" + configuredFloatingClosePoint.y
+                                        );
+                                        return true;
+                                    } catch (e) {
+                                        try {
+                                            AndroidAds.onStateLog(
+                                                "CLOSE_TARGET_CONFIG_ERROR",
+                                                "error=" + (e && e.message ? e.message : String(e))
+                                            );
+                                        } catch (_) {}
+                                        return false;
+                                    }
+                                }
+
+                                refreshConfiguredFloatingClosePoint();
                                 var verifiedFallbackRequested = false;
 
                                 /*
@@ -6432,7 +6540,7 @@ class MangaBuffAutomation(
                                             AndroidAds.onStateLog(
                                                 "AUTO_CLOSE_RETRY",
                                                 "nextAttempt=" + (nativeCloseAttempts + 1) +
-                                                    " ringRadius=17css reason=ad_still_visible"
+                                                    " ringRadius=21css reason=ad_still_visible"
                                             );
                                             attemptAutoClose();
                                             return;
@@ -6470,15 +6578,18 @@ class MangaBuffAutomation(
                                     }
 
                                     var attempt = nativeCloseAttempts + 1;
+                                    var useFloatingTarget = refreshConfiguredFloatingClosePoint();
                                     var closeElement = null;
-                                    try {
-                                        closeElement = findCloseButton();
-                                    } catch (e) {
-                                        AndroidAds.onStateLog(
-                                            "AUTO_CLOSE_SEARCH_ERROR",
-                                            "attempt=" + attempt +
-                                                " error=" + (e && e.message ? e.message : String(e))
-                                        );
+                                    if (!useFloatingTarget) {
+                                        try {
+                                            closeElement = findCloseButton();
+                                        } catch (e) {
+                                            AndroidAds.onStateLog(
+                                                "AUTO_CLOSE_SEARCH_ERROR",
+                                                "attempt=" + attempt +
+                                                    " error=" + (e && e.message ? e.message : String(e))
+                                            );
+                                        }
                                     }
 
                                     var closeVisible = !!(
@@ -6489,7 +6600,8 @@ class MangaBuffAutomation(
                                         "attempt=" + attempt +
                                             " found=" + (!!closeElement) +
                                             " visible=" + closeVisible +
-                                            " source=YANDEX_DOM"
+                                            " source=" +
+                                                (useFloatingTarget ? "FLOATING_BUTTON" : "YANDEX_DOM")
                                     );
 
                                     /*
@@ -6538,7 +6650,7 @@ class MangaBuffAutomation(
                                             "NATIVE_CLOSE_FALLBACK",
                                             "attempt=" + attempt +
                                                 " point=" + fallbackPoint.x + "," + fallbackPoint.y +
-                                                " ringRadius=17css" +
+                                                " ringRadius=21css" +
                                                 " viewport=" +
                                                 (window.innerWidth || 0) + "x" +
                                                 (window.innerHeight || 0) +
