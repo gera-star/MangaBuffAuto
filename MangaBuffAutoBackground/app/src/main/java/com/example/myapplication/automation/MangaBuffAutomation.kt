@@ -756,6 +756,31 @@ class MangaBuffAutomation(
      * Real WebView tap fallback for fullscreen ads whose close control is
      * hidden from page JavaScript by a cross-origin iframe or closed shadow root.
      */
+    /** Creates a one-pointer touchscreen event with realistic finger/contact geometry. */
+    private fun createFingerTouchEvent(
+        downTime: Long, eventTime: Long, action: Int, x: Float, y: Float
+    ): MotionEvent {
+        val properties = MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = MotionEvent.TOOL_TYPE_FINGER
+        }
+        val coordinates = MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+            pressure = 0.85f
+            size = 0.18f
+            touchMajor = 22f
+            touchMinor = 18f
+            orientation = 0f
+        }
+        return MotionEvent.obtain(
+            downTime, eventTime, action, 1,
+            arrayOf(properties), arrayOf(coordinates),
+            0, 0, 1f, 1f, 0, 0,
+            android.view.InputDevice.SOURCE_TOUCHSCREEN, 0
+        )
+    }
+
     private fun dispatchNativeTap(
         accountUsername: String,
         webView: WebView,
@@ -788,16 +813,9 @@ class MangaBuffAutomation(
         // Do not send DOWN+UP back-to-back. Chromium/WebView can drop a synthetic
         // tap when both events are dispatched in the same main-thread turn. Keep
         // the full motion set alive for a short, realistic finger press.
-        val downEvent = MotionEvent.obtain(
-            downTime,
-            downTime,
-            MotionEvent.ACTION_DOWN,
-            px,
-            py,
-            0
-        ).apply {
-            source = android.view.InputDevice.SOURCE_TOUCHSCREEN
-        }
+        val downEvent = createFingerTouchEvent(
+            downTime, downTime, MotionEvent.ACTION_DOWN, px, py
+        )
 
         val downConsumed = try {
             webView.dispatchTouchEvent(downEvent)
@@ -810,52 +828,45 @@ class MangaBuffAutomation(
             "ADS: NATIVE_CLOSE_DOWN consumed=$downConsumed source=TOUCHSCREEN"
         )
 
+        // Realistic finger press: DOWN, slight drift, then UP as a separate event.
         mainHandler.postDelayed({
             if (!webView.isAttachedToWindow) {
-                log(accountUsername, "ADS: NATIVE_CLOSE_UP_SKIPPED webview_detached", true)
+                log(accountUsername, "ADS: NATIVE_CLOSE_MOVE_SKIPPED webview_detached", true)
                 return@postDelayed
             }
 
             val moveTime = SystemClock.uptimeMillis()
-            val moveEvent = MotionEvent.obtain(
-                downTime,
-                moveTime,
-                MotionEvent.ACTION_MOVE,
-                px,
-                py,
-                0
-            ).apply {
-                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
-            }
+            val moveEvent = createFingerTouchEvent(
+                downTime, moveTime, MotionEvent.ACTION_MOVE,
+                (px + 0.6f).coerceIn(1f, maxX), (py + 0.6f).coerceIn(1f, maxY)
+            )
             try {
                 webView.dispatchTouchEvent(moveEvent)
             } finally {
                 moveEvent.recycle()
             }
 
-            val upTime = SystemClock.uptimeMillis()
-            val upEvent = MotionEvent.obtain(
-                downTime,
-                upTime,
-                MotionEvent.ACTION_UP,
-                px,
-                py,
-                0
-            ).apply {
-                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
-            }
-            val upConsumed = try {
-                webView.dispatchTouchEvent(upEvent)
-            } finally {
-                upEvent.recycle()
-            }
-
-            log(
-                accountUsername,
-                "ADS: NATIVE_CLOSE_UP consumed=$upConsumed elapsed=" +
-                    (upTime - downTime) + "ms source=TOUCHSCREEN"
-            )
-        }, 120L)
+            mainHandler.postDelayed({
+                if (!webView.isAttachedToWindow) {
+                    log(accountUsername, "ADS: NATIVE_CLOSE_UP_SKIPPED webview_detached", true)
+                    return@postDelayed
+                }
+                val upTime = SystemClock.uptimeMillis()
+                val upEvent = createFingerTouchEvent(
+                    downTime, upTime, MotionEvent.ACTION_UP, px, py
+                )
+                val upConsumed = try {
+                    webView.dispatchTouchEvent(upEvent)
+                } finally {
+                    upEvent.recycle()
+                }
+                log(
+                    accountUsername,
+                    "ADS: NATIVE_CLOSE_UP consumed=$upConsumed elapsed=" +
+                        (upTime - downTime) + "ms source=TOUCHSCREEN tool=FINGER"
+                )
+            }, 90L)
+        }, 70L)
     }
 
     /**
@@ -6069,7 +6080,7 @@ class MangaBuffAutomation(
                                         "NATIVE_CLOSE_RING_POINT",
                                         "attempt=" + nativeCloseAttempts +
                                             " point=" + tapX + "," + tapY +
-                                            " radius=10css"
+                                            " radius=17css"
                                     );
 
                                     /*
@@ -6212,7 +6223,7 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
-                                            if (attempt >= 60) {
+                                            if (attempt >= 10) {
                                                 finished = true;
                                                 window.__mbAdsRunnerActive = false;
                                                 AndroidAds.onAdFailed(
@@ -6225,12 +6236,11 @@ class MangaBuffAutomation(
                                             }
 
                                             /*
-                                             * Right after the user closes the fullscreen ad,
-                                             * MangaBuff normally credits the +7 reward within
-                                             * a couple of seconds. Poll faster during the first
-                                             * 10 seconds, then fall back to the normal cadence.
+                                             * Avoid hammering /balance: rapid requests triggered
+                                             * HTTP 429. Keep a calm 5-second cadence; +7 balance
+                                             * remains the only authoritative success signal.
                                              */
-                                            var nextDelay = attempt < 20 ? 500 : 1000;
+                                            var nextDelay = 5000;
                                             rewardPoll = setTimeout(function() {
                                                 verifyReward(attempt + 1);
                                             }, nextDelay);
@@ -6245,7 +6255,7 @@ class MangaBuffAutomation(
                                             }
                                             rewardPoll = setTimeout(function() {
                                                 verifyReward(attempt + 1);
-                                            }, 1000);
+                                            }, 5000);
                                         }
                                     }).catch(function(error) {
                                         AndroidAds.onStateLog(
@@ -6254,7 +6264,7 @@ class MangaBuffAutomation(
                                             " error=" + (error && error.message ? error.message : String(error))
                                         );
 
-                                        if (attempt >= 18) {
+                                        if (attempt >= 10) {
                                             finished = true;
                                             window.__mbAdsRunnerActive = false;
                                             AndroidAds.onAdFailed(
@@ -6264,9 +6274,10 @@ class MangaBuffAutomation(
                                             return;
                                         }
 
+                                        // Back off after errors/HTTP 429 instead of retrying rapidly.
                                         rewardPoll = setTimeout(function() {
                                             verifyReward(attempt + 1);
-                                        }, 1000);
+                                        }, 8000);
                                     });
                                 }
 
@@ -6304,20 +6315,20 @@ class MangaBuffAutomation(
                                 var verifiedFallbackRequested = false;
 
                                 /*
-                                 * One center tap followed by eight taps on a 10 CSS-pixel
-                                 * radius. The close control is about 40x40 CSS pixels, so the
-                                 * surrounding points stay inside its intended hit area.
+                                 * Center plus eight distinct points on a wider 17 CSS-pixel
+                                 * ring. This explores most of the 40-44 CSS-pixel close hitbox
+                                 * without spraying taps across unrelated ad content.
                                  */
                                 var CLOSE_TAP_RING_OFFSETS = [
                                     { x: 0.0, y: 0.0 },
-                                    { x: 10.0, y: 0.0 },
-                                    { x: 7.07, y: 7.07 },
-                                    { x: 0.0, y: 10.0 },
-                                    { x: -7.07, y: 7.07 },
-                                    { x: -10.0, y: 0.0 },
-                                    { x: -7.07, y: -7.07 },
-                                    { x: 0.0, y: -10.0 },
-                                    { x: 7.07, y: -7.07 }
+                                    { x: 17.0, y: 0.0 },
+                                    { x: 12.02, y: 12.02 },
+                                    { x: 0.0, y: 17.0 },
+                                    { x: -12.02, y: 12.02 },
+                                    { x: -17.0, y: 0.0 },
+                                    { x: -12.02, y: -12.02 },
+                                    { x: 0.0, y: -17.0 },
+                                    { x: 12.02, y: -12.02 }
                                 ];
 
                                 function closeTapPoint(centerX, centerY, attempt, width, height) {
@@ -6420,7 +6431,7 @@ class MangaBuffAutomation(
                                             AndroidAds.onStateLog(
                                                 "AUTO_CLOSE_RETRY",
                                                 "nextAttempt=" + (nativeCloseAttempts + 1) +
-                                                    " ringRadius=10css reason=ad_still_visible"
+                                                    " ringRadius=17css reason=ad_still_visible"
                                             );
                                             attemptAutoClose();
                                             return;
@@ -6439,7 +6450,7 @@ class MangaBuffAutomation(
                                             );
                                             requestRewardClaim();
                                         }
-                                    }, 1500);
+                                    }, 2500);
                                 }
 
                                 function attemptAutoClose() {
@@ -6520,7 +6531,7 @@ class MangaBuffAutomation(
                                             "NATIVE_CLOSE_FALLBACK",
                                             "attempt=" + attempt +
                                                 " point=" + fallbackPoint.x + "," + fallbackPoint.y +
-                                                " ringRadius=10css" +
+                                                " ringRadius=17css" +
                                                 " viewport=" +
                                                 (window.innerWidth || 0) + "x" +
                                                 (window.innerHeight || 0) +
