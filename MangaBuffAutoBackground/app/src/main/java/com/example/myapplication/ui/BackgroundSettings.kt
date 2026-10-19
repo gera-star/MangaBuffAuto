@@ -140,16 +140,29 @@ fun BackgroundSettingsDialog(
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                TextButton(
+                OutlinedButton(
                     onClick = onOpenAbout,
+                    modifier = Modifier.fillMaxWidth(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        horizontal = 0.dp,
-                        vertical = 2.dp
+                        horizontal = 12.dp,
+                        vertical = 6.dp
                     )
                 ) {
                     Icon(Icons.Default.Info, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("О программе")
+                    Spacer(Modifier.width(8.dp))
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(1.dp)
+                    ) {
+                        Text(
+                            "О программе",
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
+                        Text(
+                            "(нажми)",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 }
                 Text(
                     "Фоновая работа",
