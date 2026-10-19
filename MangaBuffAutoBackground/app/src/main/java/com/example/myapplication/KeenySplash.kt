@@ -256,7 +256,7 @@ fun MangaBuffSplash(
                 val direction = if (i % 2 == 0) 1f else -1f
                 drawLine(
                     color = (if (i % 3 == 0) SplashOrange else SplashCyan)
-                        .copy(alpha = 0.12f + 0.08f * sin(fraction * PI.toFloat())),
+                        .copy(alpha = 0.12f + 0.08f * sin((fraction * PI.toFloat()).toDouble()).toFloat()),
                     start = Offset(x, y),
                     end = Offset(x + length * direction, y - length * 0.26f),
                     strokeWidth = (i % 3 + 1).dp.toPx(),
@@ -265,11 +265,11 @@ fun MangaBuffSplash(
             }
 
             particles.forEachIndexed { index, p ->
-                val drift = sin((particlePhase + p.phase) * 2f * PI.toFloat())
+                val drift = sin(((particlePhase + p.phase) * 2f * PI.toFloat()).toDouble()).toFloat()
                 val x = p.x * w + drift * w * 0.012f
                 val y = (p.y + particlePhase * (0.05f + p.phase * 0.08f)) % 1f * h
                 val color = if (p.warm) SplashOrange else SplashCyan
-                val alpha = 0.16f + (0.24f * (0.5f + 0.5f * sin((particlePhase + p.phase) * 2f * PI.toFloat())))
+                val alpha = 0.16f + (0.24f * (0.5f + 0.5f * sin(((particlePhase + p.phase) * 2f * PI.toFloat()).toDouble()).toFloat()))
                 drawCircle(color.copy(alpha = alpha), p.radius.dp.toPx(), Offset(x, y))
                 if (index % 9 == 0) {
                     drawLine(
@@ -536,8 +536,8 @@ private fun MascotPortal(
             for (i in 0..7) {
                 val angle = (i * 45f + rotation) * PI.toFloat() / 180f
                 val dotCenter = Offset(
-                    center.x + kotlin.math.cos(angle) * radius * 1.02f,
-                    center.y + kotlin.math.sin(angle) * radius * 1.02f
+                    center.x + kotlin.math.cos(angle.toDouble()).toFloat() * radius * 1.02f,
+                    center.y + kotlin.math.sin(angle.toDouble()).toFloat() * radius * 1.02f
                 )
                 drawCircle(
                     color = if (i % 2 == 0) SplashOrange else SplashCyan,
