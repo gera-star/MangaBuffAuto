@@ -5830,13 +5830,49 @@ class MangaBuffAutomation(
 
                                     try {
                                         var rect = el.getBoundingClientRect();
-                                        var style = getComputedStyle(el);
+                                        var ownerWindow = el.ownerDocument && el.ownerDocument.defaultView
+                                            ? el.ownerDocument.defaultView
+                                            : window;
+                                        var node = el;
+
+                                        // A close control can remain in the DOM after the ad closes.
+                                        // Check ancestors (including open shadow roots) so a hidden
+                                        // parent cannot authorize another native tap.
+                                        while (node) {
+                                            if (node.nodeType === 1) {
+                                                var nodeWindow = node.ownerDocument && node.ownerDocument.defaultView
+                                                    ? node.ownerDocument.defaultView
+                                                    : ownerWindow;
+                                                var style = nodeWindow.getComputedStyle(node);
+                                                var opacity = Number(style.opacity);
+
+                                                if (
+                                                    style.display === "none" ||
+                                                    style.visibility === "hidden" ||
+                                                    style.visibility === "collapse" ||
+                                                    (isFinite(opacity) && opacity <= 0.01)
+                                                ) {
+                                                    return false;
+                                                }
+                                            }
+
+                                            if (node.parentElement) {
+                                                node = node.parentElement;
+                                            } else {
+                                                var root = typeof node.getRootNode === "function"
+                                                    ? node.getRootNode()
+                                                    : null;
+                                                node = root && root.host ? root.host : null;
+                                            }
+                                        }
+
                                         return (
                                             rect.width > 0 &&
                                             rect.height > 0 &&
-                                            style.display !== "none" &&
-                                            style.visibility !== "hidden" &&
-                                            style.opacity !== "0"
+                                            rect.right > 0 &&
+                                            rect.bottom > 0 &&
+                                            rect.left < (ownerWindow.innerWidth || 0) &&
+                                            rect.top < (ownerWindow.innerHeight || 0)
                                         );
                                     } catch (e) {
                                         return false;
@@ -6103,13 +6139,7 @@ class MangaBuffAutomation(
 
                                     var tapX = exact.left + exact.width / 2;
                                     var tapY = exact.top + exact.height / 2;
-                                    var closePoint = closeTapPoint(
-                                        tapX,
-                                        tapY,
-                                        nativeCloseAttempts,
-                                        width,
-                                        height
-                                    );
+                                    var closePoint = closeTapPoint(tapX, tapY, width, height);
                                     tapX = closePoint.x;
                                     tapY = closePoint.y;
 
@@ -6429,37 +6459,22 @@ class MangaBuffAutomation(
                                 var verifiedFallbackRequested = false;
 
                                 /*
-                                 * Center plus eight distinct points on a wider 21 CSS-pixel
-                                 * ring; the native finger contact patch is enlarged too.
+                                 * Keep retries tightly bounded. Never probe nearby coordinates:
+                                 * after dismissal, those points can hit controls underneath.
                                  */
-                                var CLOSE_TAP_RING_OFFSETS = [
-                                    { x: 0.0, y: 0.0 },
-                                    { x: 21.0, y: 0.0 },
-                                    { x: 14.85, y: 14.85 },
-                                    { x: 0.0, y: 21.0 },
-                                    { x: -14.85, y: 14.85 },
-                                    { x: -21.0, y: 0.0 },
-                                    { x: -14.85, y: -14.85 },
-                                    { x: 0.0, y: -21.0 },
-                                    { x: 14.85, y: -14.85 }
-                                ];
+                                var MAX_NATIVE_CLOSE_ATTEMPTS = 2;
 
-                                function closeTapPoint(centerX, centerY, attempt, width, height) {
-                                    var index = Math.max(
-                                        0,
-                                        Math.min(CLOSE_TAP_RING_OFFSETS.length - 1, attempt - 1)
-                                    );
-                                    var offset = CLOSE_TAP_RING_OFFSETS[index];
+                                function closeTapPoint(centerX, centerY, width, height) {
                                     return {
-                                        x: Math.max(1, Math.min(width - 1, centerX + offset.x)),
-                                        y: Math.max(1, Math.min(height - 1, centerY + offset.y))
+                                        x: Math.max(1, Math.min(width - 1, centerX)),
+                                        y: Math.max(1, Math.min(height - 1, centerY))
                                     };
                                 }
 
                                 /*
-                                 * Retry only while an ad surface is positively detected.
-                                 * The iframe detector accepts smaller fixed/provider frames because
-                                 * cross-origin fullscreen controls are invisible to DOM inspection.
+                                 * A retry is safe only when the actual close control or timer
+                                 * remains visible. A provider iframe alone is not proof an ad is
+                                 * still open: it can persist after the overlay closes.
                                  */
                                 function hasFullscreenAdSurface() {
                                     try {
@@ -6467,52 +6482,9 @@ class MangaBuffAutomation(
                                         if (close && isVisibleElement(close)) return true;
 
                                         var timer = findTimer();
-                                        if (timer) {
-                                            var timerStyle = getComputedStyle(timer);
-                                            if (
-                                                timerStyle.display !== "none" &&
-                                                timerStyle.visibility !== "hidden" &&
-                                                timerStyle.opacity !== "0"
-                                            ) {
-                                                return true;
-                                            }
-                                        }
+                                        if (timer && isVisibleElement(timer)) return true;
 
-                                        var viewportWidth =
-                                            window.innerWidth ||
-                                            document.documentElement.clientWidth ||
-                                            0;
-                                        var viewportHeight =
-                                            window.innerHeight ||
-                                            document.documentElement.clientHeight ||
-                                            0;
-                                        if (viewportWidth <= 0 || viewportHeight <= 0) return false;
-
-                                        var frames = Array.from(document.querySelectorAll("iframe"));
-                                        return frames.some(function(frame) {
-                                            var rect = frame.getBoundingClientRect();
-                                            var style = getComputedStyle(frame);
-                                            var visible =
-                                                rect.width > 0 &&
-                                                rect.height > 0 &&
-                                                style.display !== "none" &&
-                                                style.visibility !== "hidden" &&
-                                                style.opacity !== "0";
-                                            if (!visible) return false;
-
-                                            var src = String(
-                                                frame.src || frame.getAttribute("src") || ""
-                                            ).toLowerCase();
-                                            var zIndex = parseInt(style.zIndex, 10);
-                                            var looksLikeOverlay =
-                                                style.position === "fixed" ||
-                                                (!isNaN(zIndex) && zIndex >= 10) ||
-                                                /yandex|adfox|advert|fullscreen|\/ads?\//.test(src);
-                                            // Cross-origin Yandex controls may live in a smaller
-                                            // fixed/high-z-index frame; viewport coverage is not
-                                            // required to detect the ad surface.
-                                            return looksLikeOverlay;
-                                        });
+                                        return false;
                                     } catch (e) {
                                         AndroidAds.onStateLog(
                                             "CLOSE_RETRY_SURFACE_CHECK_ERROR",
@@ -6534,13 +6506,13 @@ class MangaBuffAutomation(
                                         if (
                                             !finished &&
                                             adStillVisible &&
-                                            nativeCloseAttempts < CLOSE_TAP_RING_OFFSETS.length
+                                            nativeCloseAttempts < MAX_NATIVE_CLOSE_ATTEMPTS
                                         ) {
                                             nativeCloseRequested = false;
                                             AndroidAds.onStateLog(
                                                 "AUTO_CLOSE_RETRY",
                                                 "nextAttempt=" + (nativeCloseAttempts + 1) +
-                                                    " ringRadius=21css reason=ad_still_visible"
+                                                    " retryTarget=same_close_point reason=ad_still_visible"
                                             );
                                             attemptAutoClose();
                                             return;
@@ -6548,7 +6520,7 @@ class MangaBuffAutomation(
 
                                         // Start one balance-verification chain only after the
                                         // close ring is exhausted or the ad surface disappears.
-                                        if (!adStillVisible || nativeCloseAttempts >= CLOSE_TAP_RING_OFFSETS.length) {
+                                        if (!adStillVisible || nativeCloseAttempts >= MAX_NATIVE_CLOSE_ATTEMPTS) {
                                             startRewardVerification();
                                         }
 
@@ -6560,7 +6532,7 @@ class MangaBuffAutomation(
                                             AndroidAds.onStateLog(
                                                 "AD_REWARD_FALLBACK",
                                                 adStillVisible
-                                                    ? "close_ring_exhausted_reward_not_confirmed"
+                                                    ? "bounded_close_attempts_exhausted_reward_not_confirmed"
                                                     : "close_surface_disappeared_reward_not_yet_confirmed"
                                             );
                                             requestRewardClaim();
@@ -6639,18 +6611,12 @@ class MangaBuffAutomation(
                                         nativeCloseAttempts = attempt;
                                     }
                                     if (!nativeCloseRequested) {
-                                        var fallbackPoint = closeTapPoint(
-                                            VERIFIED_CLOSE_FALLBACK_X,
-                                            VERIFIED_CLOSE_FALLBACK_Y,
-                                            attempt,
-                                            verifiedViewportWidth,
-                                            verifiedViewportHeight
-                                        );
+                                        var fallbackPoint = closeTapPoint(VERIFIED_CLOSE_FALLBACK_X, VERIFIED_CLOSE_FALLBACK_Y, verifiedViewportWidth, verifiedViewportHeight);
                                         AndroidAds.onStateLog(
                                             "NATIVE_CLOSE_FALLBACK",
                                             "attempt=" + attempt +
                                                 " point=" + fallbackPoint.x + "," + fallbackPoint.y +
-                                                " ringRadius=21css" +
+                                                " retryTarget=same_close_point" +
                                                 " viewport=" +
                                                 (window.innerWidth || 0) + "x" +
                                                 (window.innerHeight || 0) +
