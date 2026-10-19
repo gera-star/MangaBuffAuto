@@ -11081,6 +11081,7 @@ class MangaBuffAutomation(
                                     (function scanReaderChapterTotal() {
                                         try {
                                             var attempts = 0;
+                                            var chapterCount = 0;
                                             var scanFinished = false;
                                             var shouldCloseChapterPopup = false;
                                             var chapterMenuButton = document.querySelector(
@@ -11110,7 +11111,7 @@ class MangaBuffAutomation(
                                                 scanFinished = true;
                                                 AndroidReaderBridge.onLogStep(
                                                     'READER: CHAPTER_TOTAL_SCAN_FINISH reason=' + reason +
-                                                    ' total=' + attempts
+                                                    ' total=' + chapterCount
                                                 );
 
                                                 if (shouldCloseChapterPopup) {
@@ -11197,7 +11198,9 @@ class MangaBuffAutomation(
 
                                             function pollReaderChapterList() {
                                                 attempts++;
-                                                if (reportReaderChapterTotal('POPUP_ATTEMPT_' + attempts) > 0) {
+                                                var total = reportReaderChapterTotal('POPUP_ATTEMPT_' + attempts);
+                                                if (total > 0) {
+                                                    chapterCount = total;
                                                     finishChapterScan('COUNTED');
                                                     return;
                                                 }
@@ -11215,10 +11218,13 @@ class MangaBuffAutomation(
 
                                             if (shouldCloseChapterPopup) {
                                                 setTimeout(pollReaderChapterList, 120);
-                                            } else if (reportReaderChapterTotal('DOM_FALLBACK') > 0) {
-                                                finishChapterScan('COUNTED_WITHOUT_POPUP');
                                             } else {
-                                                finishChapterScan('MENU_BUTTON_NOT_FOUND');
+                                                chapterCount = reportReaderChapterTotal('DOM_FALLBACK');
+                                                if (chapterCount > 0) {
+                                                    finishChapterScan('COUNTED_WITHOUT_POPUP');
+                                                } else {
+                                                    finishChapterScan('MENU_BUTTON_NOT_FOUND');
+                                                }
                                             }
                                         } catch(e) {
                                             AndroidReaderBridge.onLogStep(
