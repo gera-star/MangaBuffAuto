@@ -1751,9 +1751,10 @@ fun TasksTab(
                                 onClick = { readerEngineMenuExpanded = true }
                             ) {
                                 Text(
-                                    when (settings.readerEngineMode.coerceIn(0, 2)) {
+                                    when (settings.readerEngineMode.coerceIn(0, 3)) {
                                         1 -> "Kotlin-такт"
                                         2 -> "Автоскролл сайта"
+                                        3 -> "WebView + таймеры"
                                         else -> "Гибридная"
                                     },
                                     maxLines = 1
@@ -1788,11 +1789,19 @@ fun TasksTab(
                                         readerEngineMenuExpanded = false
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("WebView + JS-таймеры (эксп.)") },
+                                    enabled = actionEnabled,
+                                    onClick = {
+                                        onSaveSettings(settings.copy(readerEngineMode = 3))
+                                        readerEngineMenuExpanded = false
+                                    }
+                                )
                             }
                         }
                     }
                     Text(
-                        "Kotlin-такт сам прокручивает страницу (−Х2 снижает скорость); режим MangaBuff проверяет автоскролл сайта без подмены прокрутки приложения.",
+                        "WebView + JS-таймеры периодически вызывает onResume()/resumeTimers(); resumeTimers действует на все WebView.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
