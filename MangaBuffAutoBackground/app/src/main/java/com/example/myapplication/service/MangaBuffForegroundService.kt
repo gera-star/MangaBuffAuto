@@ -664,7 +664,9 @@ class MangaBuffForegroundService : Service() {
 
         val attemptNumber = accountTaskAttempts.compute(accountId) { _, previous -> (previous ?: 0) + 1 } ?: 1
         transitionAccountTaskState(accountId, AccountTaskEvent.QUEUED, "task=${taskType.title} attempt=$attemptNumber")
-        accountJobs[accountId]?.cancel()
+        // Remove the old generation before cancelling it, so its finally block cannot mistake
+        // itself for the current job and delete the newly persisted run.
+        accountJobs.remove(accountId)?.cancel()
         automationRunner.stopAccount(accountId)
         persistRun(accountId, taskType)
         accountProgressTrackers.remove(accountId)
