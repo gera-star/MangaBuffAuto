@@ -1792,7 +1792,7 @@ fun TasksTab(
                         }
                     }
                     Text(
-                        "Kotlin-такт отключает rAF; режим MangaBuff проверяет автоскролл сайта без автоматического перехода на прокрутку приложения.",
+                        "Kotlin-такт сам инициирует прокрутку; режим MangaBuff проверяет автоскролл сайта без подмены прокрутки приложения.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
