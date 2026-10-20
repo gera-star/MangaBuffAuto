@@ -76,3 +76,33 @@ internal object AccountTaskLifecycle {
             }
         }
 }
+
+
+internal data class AccountTaskTransition(
+    val from: AccountTaskState,
+    val to: AccountTaskState
+)
+
+/** Concurrent per-account state storage used by the foreground service. */
+internal class AccountTaskStateRegistry {
+    private val states = java.util.concurrent.ConcurrentHashMap<String, AccountTaskState>()
+
+    fun current(accountId: String): AccountTaskState =
+        states[accountId] ?: AccountTaskState.WAITING
+
+    fun transition(accountId: String, event: AccountTaskEvent): AccountTaskTransition {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
+        var from = AccountTaskState.WAITING
+        var to = AccountTaskState.WAITING
+        states.compute(accountId) { _, current ->
+            from = current ?: AccountTaskState.WAITING
+            to = AccountTaskLifecycle.transition(from, event)
+            to
+        }
+        return AccountTaskTransition(from, to)
+    }
+
+    fun remove(accountId: String) {
+        states.remove(accountId)
+    }
+}
