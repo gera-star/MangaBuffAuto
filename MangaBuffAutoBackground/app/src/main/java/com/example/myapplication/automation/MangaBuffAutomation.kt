@@ -143,7 +143,8 @@ class MangaBuffAutomation(
     private val onDailyStatsUpdate: (accountId: String, stats: DailyStats) -> Unit = { _, _ -> },
     private val onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
-    private val onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> }
+    private val onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> },
+    private val proxyAccountId: String = ""
 ) {
 
     private open inner class AutomationWebViewClient(
@@ -157,7 +158,7 @@ class MangaBuffAutomation(
             host: String?,
             realm: String?
         ) {
-            if (!AppProxySettings.handleWebViewProxyAuth(context, host, handler)) {
+            if (!AppProxySettings.handleWebViewProxyAuth(context, proxyAccountId, host, handler)) {
                 handler.cancel()
             }
         }
@@ -265,7 +266,8 @@ class MangaBuffAutomation(
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .followRedirects(true),
-        context
+        context,
+        proxyAccountId
     ).build()
 
     private val mainHandler = Handler(Looper.getMainLooper())
