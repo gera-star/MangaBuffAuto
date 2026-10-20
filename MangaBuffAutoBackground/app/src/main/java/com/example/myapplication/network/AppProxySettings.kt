@@ -48,28 +48,31 @@ object AppProxySettings {
     private const val KEY_USERNAME = "username"
     private const val KEY_PASSWORD = "password"
 
-    fun read(context: Context): AppProxyConfig {
+    private fun scopedKey(key: String, accountId: String): String = "$key::$accountId"
+
+    fun read(context: Context, accountId: String): AppProxyConfig {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return AppProxyConfig(
-            enabled = prefs.getBoolean(KEY_ENABLED, false),
-            host = prefs.getString(KEY_HOST, "").orEmpty(),
-            port = prefs.getInt(KEY_PORT, 8080),
-            username = prefs.getString(KEY_USERNAME, "").orEmpty(),
-            password = prefs.getString(KEY_PASSWORD, "").orEmpty()
+            enabled = prefs.getBoolean(scopedKey(KEY_ENABLED, accountId), false),
+            host = prefs.getString(scopedKey(KEY_HOST, accountId), "").orEmpty(),
+            port = prefs.getInt(scopedKey(KEY_PORT, accountId), 8080),
+            username = prefs.getString(scopedKey(KEY_USERNAME, accountId), "").orEmpty(),
+            password = prefs.getString(scopedKey(KEY_PASSWORD, accountId), "").orEmpty()
         )
     }
 
-    fun save(context: Context, config: AppProxyConfig) {
+    fun save(context: Context, accountId: String, config: AppProxyConfig) {
+        require(accountId.isNotBlank()) { "Не указан аккаунт для прокси." }
         require(!config.enabled || config.isValid()) {
             "Укажи адрес прокси без http:// и порт от 1 до 65535."
         }
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
-            .putBoolean(KEY_ENABLED, config.enabled)
-            .putString(KEY_HOST, config.host.trim())
-            .putInt(KEY_PORT, config.port)
-            .putString(KEY_USERNAME, config.username)
-            .putString(KEY_PASSWORD, config.password)
+            .putBoolean(scopedKey(KEY_ENABLED, accountId), config.enabled)
+            .putString(scopedKey(KEY_HOST, accountId), config.host.trim())
+            .putInt(scopedKey(KEY_PORT, accountId), config.port)
+            .putString(scopedKey(KEY_USERNAME, accountId), config.username)
+            .putString(scopedKey(KEY_PASSWORD, accountId), config.password)
             .apply()
     }
 
@@ -79,10 +82,11 @@ object AppProxySettings {
      */
     fun applyWebViewProxy(
         context: Context,
+        accountId: String,
         onComplete: (success: Boolean, message: String) -> Unit = { _, _ -> }
     ) {
         val appContext = context.applicationContext
-        val config = read(appContext)
+        val config = read(appContext, accountId)
         val executor = ContextCompat.getMainExecutor(appContext)
         try {
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
@@ -117,14 +121,18 @@ object AppProxySettings {
     }
 
     /** Routes HTTP-client traffic through the current proxy settings. */
-    fun configureOkHttp(builder: OkHttpClient.Builder, context: Context): OkHttpClient.Builder {
+    fun configureOkHttp(
+        builder: OkHttpClient.Builder,
+        context: Context,
+        accountId: String
+    ): OkHttpClient.Builder {
         val appContext = context.applicationContext
         val systemSelector = ProxySelector.getDefault()
 
         builder.proxySelector(object : ProxySelector() {
             override fun select(uri: URI?): List<Proxy> {
                 if (uri == null) return listOf(Proxy.NO_PROXY)
-                val current = read(appContext)
+                val current = read(appContext, accountId)
                 if (!current.isEnabledAndValid()) {
                     return systemSelector?.select(uri) ?: listOf(Proxy.NO_PROXY)
                 }
@@ -173,10 +181,11 @@ object AppProxySettings {
      */
     fun handleWebViewProxyAuth(
         context: Context,
+        accountId: String,
         host: String?,
         handler: HttpAuthHandler
     ): Boolean {
-        val current = read(context)
+        val current = read(context, accountId)
         if (
             !current.isEnabledAndValid() ||
             current.username.isBlank() ||
