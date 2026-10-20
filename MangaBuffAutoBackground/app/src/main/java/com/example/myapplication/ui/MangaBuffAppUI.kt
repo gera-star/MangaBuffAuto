@@ -2245,13 +2245,14 @@ fun LogsTab(
                             val levelStr = if (log.isError) "ERROR" else "INFO"
                             val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
                             val componentStr = if (log.component.isNotBlank()) log.component else "APP"
-                            val accountIdStr = log.accountId.takeIf { it.isNotBlank() }?.let { " [id=$it]" }.orEmpty()
-                            val taskStr = log.task.takeIf { it.isNotBlank() }?.let { " [task=$it]" }.orEmpty()
-                            val attemptStr = if (log.attempt > 0) " [try=${log.attempt}]" else ""
-                            val reasonStr = log.reason.takeIf { it.isNotBlank() && it != log.message }
-                                ?.let { " [reason=$it]" }.orEmpty()
+                            val accountIdStr = " [id=${log.accountId.ifBlank { "SYSTEM" }}]"
+                            val taskStr = " [task=${log.task.ifBlank { "Система" }}]"
+                            val attemptStr = " [try=${log.attempt.coerceAtLeast(0)}]"
+                            val reason = log.reason.ifBlank { log.message }.take(160)
+                            val reasonStr = " [reason=$reason]"
+                            val messageStr = if (reason == log.message) "" else " ${log.message}"
                             "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "]" +
-                                accountIdStr + taskStr + attemptStr + reasonStr + " " + log.message
+                                accountIdStr + taskStr + attemptStr + reasonStr + messageStr
                         }
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         val clip = android.content.ClipData.newPlainText(
@@ -2289,14 +2290,15 @@ fun LogsTab(
                     val levelStr = if (log.isError) "ERROR" else "INFO"
                     val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
                     val componentStr = if (log.component.isNotBlank()) log.component else "APP"
-                    val accountIdStr = log.accountId.takeIf { it.isNotBlank() }?.let { " [id=$it]" }.orEmpty()
-                    val taskStr = log.task.takeIf { it.isNotBlank() }?.let { " [task=$it]" }.orEmpty()
-                    val attemptStr = if (log.attempt > 0) " [try=${log.attempt}]" else ""
-                    val reasonStr = log.reason.takeIf { it.isNotBlank() && it != log.message }
-                        ?.let { " [reason=$it]" }.orEmpty()
+                    val accountIdStr = " [id=${log.accountId.ifBlank { "SYSTEM" }}]"
+                    val taskStr = " [task=${log.task.ifBlank { "Система" }}]"
+                    val attemptStr = " [try=${log.attempt.coerceAtLeast(0)}]"
+                    val reason = log.reason.ifBlank { log.message }.take(160)
+                    val reasonStr = " [reason=$reason]"
+                    val messageStr = if (reason == log.message) "" else " ${log.message}"
                     Text(
                         text = "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "]" +
-                            accountIdStr + taskStr + attemptStr + reasonStr + " " + log.message,
+                            accountIdStr + taskStr + attemptStr + reasonStr + messageStr,
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = if (log.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                     )
