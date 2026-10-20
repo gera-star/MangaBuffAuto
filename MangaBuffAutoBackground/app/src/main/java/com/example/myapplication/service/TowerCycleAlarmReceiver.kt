@@ -65,9 +65,10 @@ class TowerCycleAlarmReceiver : BroadcastReceiver() {
         attempt: Int,
         reason: String
     ) {
-        if (attempt < MAX_DELIVERY_RETRIES) {
-            val nextAttempt = attempt + 1
-            val retryAt = System.currentTimeMillis() + DELIVERY_RETRY_DELAY_MS
+        val nextAttempt = TowerDeliveryRetryPolicy.nextAttempt(attempt)
+        if (nextAttempt != null) {
+            val retryAt = TowerDeliveryRetryPolicy.retryAt(System.currentTimeMillis(), attempt)
+                ?: System.currentTimeMillis() + TowerDeliveryRetryPolicy.RETRY_DELAY_MS
             try {
                 val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
                 alarmManager.setAndAllowWhileIdle(
@@ -75,7 +76,7 @@ class TowerCycleAlarmReceiver : BroadcastReceiver() {
                     retryAt,
                     pendingIntent(context, accountId, endsAtMillis, nextAttempt)
                 )
-                val message = "Не удалось запустить задачу башни: $reason. Повтор через 1 минуту ($nextAttempt/$MAX_DELIVERY_RETRIES)."
+                val message = "Не удалось запустить задачу башни: $reason. Повтор через 1 минуту ($nextAttempt/\${TowerDeliveryRetryPolicy.MAX_RETRIES})."
                 Log.w(TAG, "Scheduled Tower delivery retry accountId=$accountId retryAt=$retryAt attempt=$nextAttempt reason=$reason")
                 showDeliveryNotification(context, accountId, message, notificationId(accountId))
                 return
@@ -84,8 +85,9 @@ class TowerCycleAlarmReceiver : BroadcastReceiver() {
             }
         }
 
-        val finalMessage = "Не удалось запустить задачу башни после $attempt попыток. Причина: $reason. Откройте 2R2R и проверьте фоновую работу."
-        Log.e(TAG, "Tower delivery stopped accountId=$accountId attempts=$attempt reason=$reason")
+        val attemptsCompleted = TowerDeliveryRetryPolicy.attemptsCompleted(attempt)
+        val finalMessage = "Не удалось запустить задачу башни после $attemptsCompleted попыток. Причина: $reason. Откройте 2R2R и проверьте фоновую работу."
+        Log.e(TAG, "Tower delivery stopped accountId=$accountId attempts=$attemptsCompleted reason=$reason")
         showDeliveryNotification(context, accountId, finalMessage, notificationId(accountId))
     }
 
@@ -139,8 +141,6 @@ class TowerCycleAlarmReceiver : BroadcastReceiver() {
         private const val TAG = "TowerCycleAlarm"
         private const val DELIVERY_CHANNEL_ID = "tower_alarm_delivery_alerts"
         private const val EXTRA_DELIVERY_ATTEMPT = "EXTRA_TOWER_DELIVERY_ATTEMPT"
-        private const val MAX_DELIVERY_RETRIES = 3
-        private const val DELIVERY_RETRY_DELAY_MS = 60_000L
         private const val NOTIFICATION_ID_BASE = 20_000
         const val ACTION_TOWER_ALARM = "com.example.myapplication.action.TOWER_CYCLE_ALARM"
 
