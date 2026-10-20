@@ -27,6 +27,7 @@ import com.example.myapplication.automation.AccountExecutionGate
 import com.example.myapplication.automation.MultiAccountAutomationRunner
 import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.automation.AutomationWebViewRegistry
+import com.example.myapplication.network.AppProxySettings
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.GlobalSettings
@@ -327,6 +328,16 @@ class MangaBuffForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        // Apply the saved app-wide WebView proxy before any account WebView is created.
+        AppProxySettings.applyWebViewProxy(applicationContext) { success, message ->
+            publishLog(
+                LogEntry(
+                    component = "PROXY",
+                    message = "BG: WEBVIEW_PROXY_APPLY success=$success detail=$message",
+                    isError = !success
+                )
+            )
+        }
         // Run deferred WebView-profile deletions before any account can load a Profile handle.
         cleanupPendingProfileDeletes()
 
