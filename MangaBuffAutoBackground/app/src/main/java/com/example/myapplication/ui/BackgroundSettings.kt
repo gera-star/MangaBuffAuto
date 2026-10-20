@@ -240,7 +240,7 @@ fun BackgroundSettingsDialog(
                     Text("Настройки прокси аккаунтов")
                 }
                 Text(
-                    "Раздел защищён паролем 1988. Для каждого аккаунта можно сохранить отдельный HTTP-прокси.",
+                    "Раздел защищён паролем. Для каждого аккаунта можно сохранить отдельный HTTP-прокси.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline
                 )
