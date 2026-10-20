@@ -587,7 +587,8 @@ class MangaBuffForegroundService : Service() {
     private fun startAccountInternal(
         accountId: String,
         taskType: TaskType,
-        promoCode: String? = null
+        promoCode: String? = null,
+        resumePersistedProgress: Boolean = false
     ) {
         // A deliberate new start supersedes any delayed retry for this account.
         accountRecoveryRestartJobs.remove(accountId)?.cancel()
@@ -745,7 +746,8 @@ class MangaBuffForegroundService : Service() {
                     account = account,
                     settings = repository.getSettings(),
                     taskType = taskType,
-                    promoCode = effectivePromoCode
+                    promoCode = effectivePromoCode,
+                    resumePersistedProgress = resumePersistedProgress
                 )
                 runCompleted = true
             } catch (e: CancellationException) {
@@ -819,7 +821,7 @@ class MangaBuffForegroundService : Service() {
                                         if (currentJob != null) {
                                             accountRecoveryRestartJobs.remove(accountId, currentJob)
                                         }
-                                        startAccountInternal(accountId, taskType)
+                                        startAccountInternal(accountId, taskType, resumePersistedProgress = true)
                                     }
                                 } finally {
                                     if (currentJob != null) {
@@ -1335,7 +1337,7 @@ class MangaBuffForegroundService : Service() {
         )
 
         persisted.forEach { (accountId, taskType) ->
-            startAccountInternal(accountId, taskType)
+            startAccountInternal(accountId, taskType, resumePersistedProgress = true)
         }
     }
 
