@@ -10,6 +10,7 @@ import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.DailyStats
+import com.example.myapplication.data.currentStatsDay
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -69,7 +70,8 @@ class AutomationRuntime(
     )
 
     @Synchronized
-    private fun getOrCreateEngine(accountId: String): MangaBuffAutomation {
+    private fun getOrCreateEngine(account: MangaBuffAccount): MangaBuffAutomation {
+        val accountId = account.id
         return automationEngines.getOrPut(accountId) {
             val engine = MangaBuffAutomation(
                 context = context,
@@ -95,7 +97,8 @@ class AutomationRuntime(
                     }
                 },
                 onMineBalanceUpdate = onMineBalanceUpdate,
-                proxyAccountId = accountId
+                proxyAccountId = accountId,
+                initialDailyStats = AccountDailyStatsMapper.fromAccount(account, currentStatsDay())
             )
             onLog(LogEntry(username = accountId, component = "ENGINE", message = "CREATE engineId=${engine.hashCode()}"))
             engine
@@ -266,7 +269,7 @@ class AutomationRuntime(
             )
         )
 
-        val engine = getOrCreateEngine(account.id)
+        val engine = getOrCreateEngine(account)
         onLog(LogEntry(username = account.username, component = "ENGINE", message = "USE engineId=${engine.hashCode()}"))
 
         val engineHeartbeatJob = CoroutineScope(coroutineContext + Dispatchers.IO).launch {

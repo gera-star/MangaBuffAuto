@@ -144,7 +144,8 @@ class MangaBuffAutomation(
     private val onTowerExpeditionEndsAtUpdate: (accountId: String, endsAtMillis: Long) -> Unit = { _, _ -> },
     private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     private val onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> },
-    private val proxyAccountId: String = ""
+    private val proxyAccountId: String = "",
+    initialDailyStats: DailyStats = DailyStats(day = currentStatsDay())
 ) {
 
     @Volatile
@@ -1545,7 +1546,7 @@ class MangaBuffAutomation(
         }, safeDuration)
     }
 
-    private var dailyStats = DailyStats(day = currentStatsDay())
+    private var dailyStats = initialDailyStats
 
     private val dailyCalendarPrefs by lazy {
         context.getSharedPreferences("mangabuff_daily_calendar_guard", Context.MODE_PRIVATE)
