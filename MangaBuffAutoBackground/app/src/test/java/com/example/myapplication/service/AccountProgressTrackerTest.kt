@@ -49,5 +49,9 @@ class AccountProgressTrackerTest {
             ProgressStage.READER,
             ProgressStage.fromEvent("BACKGROUND_SCROLL_WATCHDOG", "READER", "Читалка")
         )
+        assertEquals(
+            ProgressStage.READER,
+            ProgressStage.fromEvent("SCROLL_PROGRESS_SAMPLE y=120", "READER", "Все задачи")
+        )
     }
 }
