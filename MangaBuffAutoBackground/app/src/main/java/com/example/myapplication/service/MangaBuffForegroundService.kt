@@ -124,6 +124,8 @@ class MangaBuffForegroundService : Service() {
         private const val KEY_PENDING_PROFILE_DELETES = "pending_profile_deletes"
         private const val WATCHDOG_INTERVAL_MS = 15_000L
         private const val WATCHDOG_MISSING_WEBVIEW_GRACE_MS = 30_000L
+        private const val WAKELOCK_TIMEOUT_MS = 2 * 60_000L
+        private const val WAKELOCK_RENEW_INTERVAL_MS = 60_000L
 
         // Automatic recovery is bounded: a WebView that keeps crashing must end in a
         // safe stopped state with a clear log entry instead of restarting forever.
@@ -302,7 +304,10 @@ class MangaBuffForegroundService : Service() {
     private val towerCycleEndsAt = ConcurrentHashMap<String, Long>()
     private val recoveryRequests = ConcurrentHashMap.newKeySet<String>()
     private val missingWebViewSince = ConcurrentHashMap<String, Long>()
+    private val accountProgressTrackers = ConcurrentHashMap<String, AccountProgressTracker>()
+    private val accountCurrentTaskLabels = ConcurrentHashMap<String, String>()
     private val recoveryBudget = RecoveryBudget(RECOVERY_MAX_PER_WINDOW, RECOVERY_WINDOW_MS)
+    @Volatile private var lastWakeLockAcquireAtMs = 0L
     private var watchdogJob: Job? = null
     private val repository by lazy { AccountRepository(applicationContext) }
     private lateinit var automationRunner: MultiAccountAutomationRunner
@@ -631,7 +636,8 @@ class MangaBuffForegroundService : Service() {
         accountJobs[accountId]?.cancel()
         automationRunner.stopAccount(accountId)
         persistRun(accountId, taskType)
-        acquireWakeLockIfNeeded()
+        accountProgressTrackers.remove(accountId)
+        accountCurrentTaskLabels[accountId] = taskType.title
 
         publishLog(
             LogEntry(
@@ -693,6 +699,7 @@ class MangaBuffForegroundService : Service() {
                 publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
 
                 applyProxyForAccount(account)
+                acquireWakeLockIfNeeded()
                 automationRunner.runForAccount(
                     account = account,
                     settings = repository.getSettings(),
@@ -720,6 +727,8 @@ class MangaBuffForegroundService : Service() {
                 try {
                     if (currentJob != null && accountJobs[accountId] === currentJob) {
                         accountJobs.remove(accountId)
+                        accountProgressTrackers.remove(accountId)
+                        accountCurrentTaskLabels.remove(accountId)
                         // Clean up the previous account before yielding the queue permit.
                         automationRunner.stopAccount(accountId)
 
@@ -839,6 +848,8 @@ class MangaBuffForegroundService : Service() {
                 if (stoppingExplicitly) continue
 
                 val now = System.currentTimeMillis()
+                val elapsedNow = SystemClock.elapsedRealtime()
+                var hasProgressingJob = false
                 val activeIds = accountJobs
                     .filterValues { it.isActive }
                     .keys
@@ -861,6 +872,29 @@ class MangaBuffForegroundService : Service() {
                     if (accountJob != null && accountExecutionQueue.isQueued(accountId, accountJob)) {
                         missingWebViewSince.remove(accountId)
                         continue
+                    }
+
+                    val progress = accountProgressTrackers[accountId]
+                    if (progress != null) {
+                        val progressSnapshot = progress.snapshot()
+                        val idleMs = progress.stalledForMs(elapsedNow)
+                        if (progress.isTimedOut(elapsedNow)) {
+                            publishLog(
+                                LogEntry(
+                                    username = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty(),
+                                    component = "WATCHDOG",
+                                    message = "PROGRESS_TIMEOUT accountId=$accountId stage=${progressSnapshot.stage} " +
+                                        "idleMs=$idleMs limitMs=${progressSnapshot.stage.timeoutMs} " +
+                                        "reason=no_meaningful_progress action=cancel_task",
+                                    isError = true
+                                )
+                            )
+                            if (accountJob != null && accountJobs[accountId] === accountJob) {
+                                accountJob.cancel(CancellationException("NO_PROGRESS stage=${progressSnapshot.stage} idleMs=$idleMs"))
+                            }
+                            continue
+                        }
+                        hasProgressingJob = true
                     }
 
                     if (webViews.containsKey(accountId)) {
@@ -891,6 +925,11 @@ class MangaBuffForegroundService : Service() {
                             accountJob.cancel()
                         }
                     }
+                }
+                if (hasProgressingJob) {
+                    renewWakeLockIfProgressing(elapsedNow)
+                } else {
+                    releaseWakeLockIfIdle()
                 }
             }
         }
@@ -1100,8 +1139,9 @@ class MangaBuffForegroundService : Service() {
     private fun acquireWakeLockIfNeeded() {
         if (!wakeLock.isHeld) {
             try {
-                wakeLock.acquire()
-                publishLog(LogEntry(message = "BG: WAKELOCK_ACQUIRED owner=foreground_service"))
+                wakeLock.acquire(WAKELOCK_TIMEOUT_MS)
+                lastWakeLockAcquireAtMs = SystemClock.elapsedRealtime()
+                publishLog(LogEntry(message = "BG: WAKELOCK_ACQUIRED owner=foreground_service timeoutMs=$WAKELOCK_TIMEOUT_MS"))
             } catch (e: Exception) {
                 publishLog(
                     LogEntry(
@@ -1114,13 +1154,29 @@ class MangaBuffForegroundService : Service() {
         }
     }
 
+    private fun renewWakeLockIfProgressing(nowElapsedMs: Long) {
+        if (nowElapsedMs - lastWakeLockAcquireAtMs < WAKELOCK_RENEW_INTERVAL_MS) return
+        try {
+            if (wakeLock.isHeld) wakeLock.release()
+            wakeLock.acquire(WAKELOCK_TIMEOUT_MS)
+            lastWakeLockAcquireAtMs = nowElapsedMs
+            publishLog(LogEntry(message = "BG: WAKELOCK_RENEWED reason=progress timeoutMs=$WAKELOCK_TIMEOUT_MS"))
+        } catch (e: Exception) {
+            publishLog(LogEntry(component = "BG", message = "WAKELOCK_RENEW_ERROR reason=${e.message}", isError = true))
+        }
+    }
+
     private fun releaseWakeLockIfIdle(force: Boolean = false) {
-        // A scheduled Tower timer does not need the CPU held awake. Only live automation
-        // jobs and immediate renderer recovery are allowed to retain the partial WakeLock.
-        if (force || (accountJobs.isEmpty() && recoveryRequests.isEmpty())) {
+        // Queue waiters do not need a CPU lock; active execution does, but only until the
+        // time-bounded lock expires or progress-based watchdog cancels a stalled stage.
+        val hasExecutingJob = accountJobs.any { (accountId, job) ->
+            job.isActive && !accountExecutionQueue.isQueued(accountId, job)
+        }
+        if (force || (!hasExecutingJob && recoveryRequests.isEmpty())) {
             try {
                 if (wakeLock.isHeld) {
                     wakeLock.release()
+                    lastWakeLockAcquireAtMs = 0L
                     publishLog(LogEntry(message = "BG: WAKELOCK_RELEASED owner=foreground_service"))
                 }
             } catch (_: Exception) {
@@ -1179,6 +1235,16 @@ class MangaBuffForegroundService : Service() {
         currentTask: String,
         progress: Float
     ) {
+        if (accountId.isNotBlank()) {
+            if (currentTask.isNotBlank()) accountCurrentTaskLabels[accountId] = currentTask
+            val status = statusMessage.lowercase()
+            val isQueueWait = status.contains("в очереди") || status.contains("ожидание освобождения общего слота")
+            if (isRunning && !isQueueWait) {
+                val stage = ProgressStage.fromEvent(statusMessage, "STATUS", currentTask)
+                val marker = "STATUS:$statusMessage|progress=${progress.coerceIn(0f, 1f).toBits()}"
+                accountProgressTrackers.computeIfAbsent(accountId) { AccountProgressTracker() }.mark(stage, marker)
+            }
+        }
         sendRuntimeEvent(
             EVENT_STATUS,
             accountId = accountId,
@@ -1194,6 +1260,32 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun publishLog(entry: LogEntry) {
+    private fun resolveAccountIdForProgress(username: String): String? {
+        if (username.isBlank()) return null
+        if (accountJobs.containsKey(username)) return username
+        return repository.getAccounts().firstOrNull { it.username == username }?.id
+    }
+
+    private fun isMeaningfulProgressLog(entry: LogEntry): Boolean {
+        if (entry.isError) return false
+        val message = entry.message.uppercase()
+        val ignored = listOf(
+            "HEARTBEAT", "WATCHDOG", "METRICS", "DIAGNOSTIC", "PULSE",
+            "TIMEOUT", "WAITING", "QUEUED", "GATE_WAITING", "TICK",
+            "NETWORK_PAUSE", "NETWORK_RESUMED", "SERVICE_CREATED"
+        )
+        if (ignored.any { message.contains(it) }) return false
+
+        val signals = listOf(
+            "PAGE_STARTED", "PAGE_FINISHED", "HOME_READY", "ROUND_START", "RESULT=",
+            "BATTLE:", "TOWER:", "MINE:", "ADS:", "PROMO:", "COMMENT:",
+            "READER:", "CHAPTER_COMPLETED", "DECK_COMMENT", "TRADE:",
+            "TASK: ", "STAT: BALANCE_PARSED"
+        )
+        return signals.any { message.contains(it) }
+    }
+
+
         sendRuntimeEvent(
             EVENT_LOG,
             accountId = entry.username.takeIf { it.isNotBlank() },
