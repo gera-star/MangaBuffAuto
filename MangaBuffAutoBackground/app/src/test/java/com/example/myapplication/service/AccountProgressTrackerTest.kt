@@ -27,6 +27,21 @@ class AccountProgressTrackerTest {
     }
 
     @Test
+    fun wakeLockRenewalRequiresRecentRealProgress() {
+        var now = 2_000L
+        val tracker = AccountProgressTracker { now }
+        tracker.mark(ProgressStage.READER, "scroll-y=100")
+
+        assertTrue(tracker.hasRecentProgress(maxAgeMs = 60_000L, now = now))
+        now += 60_001L
+        assertFalse(tracker.hasRecentProgress(maxAgeMs = 60_000L, now = now))
+        assertFalse(tracker.isTimedOut(now))
+
+        tracker.mark(ProgressStage.READER, "scroll-y=120")
+        assertTrue(tracker.hasRecentProgress(maxAgeMs = 60_000L, now = now))
+    }
+
+    @Test
     fun stageChangeStartsNewDeadlineAndReaderGetsLongerWindow() {
         var now = 10_000L
         val tracker = AccountProgressTracker { now }
