@@ -11105,9 +11105,17 @@ class MangaBuffAutomation(
 
                                     (function scanReaderChapterTotal() {
                                         try {
-                                            var cachedTotal = Number(window.__mbReaderTotalChapters || 0);
+                                            // Keep the chapter total in the native automation instance so it
+                                            // survives full WebView navigation between chapter pages.
+                                            var cachedTotal = Math.max(
+                                                Number(window.__mbReaderTotalChapters || 0),
+                                                ${totalMangaChapters.coerceAtLeast(0)}
+                                            );
                                             if (cachedTotal > 0) {
-                                                AndroidReaderBridge.onLogStep('READER: CHAPTER_TOTAL_CACHE_HIT total=' + cachedTotal);
+                                                window.__mbReaderTotalChapters = cachedTotal;
+                                                AndroidReaderBridge.onLogStep(
+                                                    'READER: CHAPTER_TOTAL_CACHE_HIT total=' + cachedTotal + ' source=NATIVE_OR_PAGE'
+                                                );
                                                 startReaderScrollOnce();
                                                 return;
                                             }
