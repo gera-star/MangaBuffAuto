@@ -316,12 +316,24 @@ class AutomationRuntime(
             }
         }
 
-        runtime.state = AccountState.RUNNING
-
         val currentJob = coroutineContext[Job]
-        synchronized(executionJobs) {
-            executionJobs[account.id] =
-                currentJob ?: throw IllegalStateException("ACCOUNT_JOB_MISSING accountId=${account.id}")
+        val runStillCurrent = synchronized(this) {
+            if (
+                currentJob == null ||
+                !currentJob.isActive ||
+                runtimes[account.id] !== runtime ||
+                automationEngines[account.id] !== engine
+            ) {
+                false
+            } else {
+                executionJobs[account.id] = currentJob
+                runtime.state = AccountState.RUNNING
+                true
+            }
+        }
+        if (!runStillCurrent) {
+            engineHeartbeatJob.cancel()
+            throw CancellationException("STALE_ACCOUNT_RUNTIME accountId=${account.id}")
         }
 
         try {
@@ -344,7 +356,7 @@ class AutomationRuntime(
             throw e
         } finally {
             engineHeartbeatJob.cancel()
-            synchronized(executionJobs) {
+            synchronized(this) {
                 val registered = executionJobs[account.id]
                 if (registered == currentJob) {
                     executionJobs.remove(account.id)
