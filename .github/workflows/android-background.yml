@@ -44,6 +44,6 @@ jobs:
       - name: Install compile SDK
         run: sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
 
-      - name: Run unit tests and assemble debug APK
+      - name: Run unit tests, lint, and assemble debug APK
         working-directory: MangaBuffAutoBackground
-        run: bash ./gradlew --no-daemon -Pandroid.builder.sdkDownload=true testDebugUnitTest assembleDebug
+        run: bash ./gradlew --no-daemon -Pandroid.builder.sdkDownload=true testDebugUnitTest lintDebug assembleDebug
