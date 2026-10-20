@@ -11240,7 +11240,7 @@ class MangaBuffAutomation(
                                                             );
                                                         }
                                                         startReaderScrollOnce();
-                                                    }, 180);
+                                                    }, 1180);
                                                     return;
                                                 }
 
