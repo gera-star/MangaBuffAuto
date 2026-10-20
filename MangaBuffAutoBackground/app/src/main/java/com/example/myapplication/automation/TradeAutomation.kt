@@ -20,6 +20,7 @@ import okhttp3.Call
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
+import com.example.myapplication.network.AppProxySettings
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -81,12 +82,14 @@ class TradeAutomation(context: Context) {
         @Volatile var autoAccept: Boolean = false
         @Volatile var cancelled: Boolean = false
         val activeCall = java.util.concurrent.atomic.AtomicReference<Call?>(null)
-        val client: OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .build()
+        val client: OkHttpClient = AppProxySettings.configureOkHttp(
+            OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(25, TimeUnit.SECONDS)
+                .writeTimeout(20, TimeUnit.SECONDS)
+                .followRedirects(true),
+            context
+        ).build()
 
         fun cancel() {
             cancelled = true
