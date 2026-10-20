@@ -333,6 +333,11 @@ class MangaBuffAutomation(
             stopBackgroundScroll()
             val generation = backgroundScrollGeneration
             val now = SystemClock.elapsedRealtime()
+            var loadCounterWindowAt = now
+            var jsEvaluationCount = 0
+            var metricsEvaluationCount = 0
+            var confirmationTickCount = 0
+            var scrollStepCount = 0
             backgroundScrollActive = true
             backgroundScrollWebView = webView
             backgroundScreenWasOff = false
@@ -366,6 +371,22 @@ class MangaBuffAutomation(
                     ) return
 
                     val screenOff = BackgroundExecutionState.isScreenOff()
+                    if (tickNow - loadCounterWindowAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
+                        val sampleIntervalMs = (tickNow - loadCounterWindowAt).coerceAtLeast(1L)
+                        log(
+                            accountUsername,
+                            "READER: BACKGROUND_SCROLL_LOAD_SAMPLE intervalMs=$sampleIntervalMs " +
+                                "jsEvaluations=$jsEvaluationCount metricsEvaluations=$metricsEvaluationCount " +
+                                "confirmationTicks=$confirmationTickCount scrollStepCalls=$scrollStepCount " +
+                                "screenOff=$screenOff metricsInFlight=$backgroundMetricsRequestInFlight " +
+                                "confirmationInFlight=$backgroundConfirmationTickInFlight"
+                        )
+                        loadCounterWindowAt = tickNow
+                        jsEvaluationCount = 0
+                        metricsEvaluationCount = 0
+                        confirmationTickCount = 0
+                        scrollStepCount = 0
+                    }
                     if (screenOff != backgroundScreenWasOff) {
                         backgroundScreenWasOff = screenOff
                         backgroundLastProgressAt = SystemClock.elapsedRealtime()
@@ -425,6 +446,8 @@ class MangaBuffAutomation(
                             val viewportBootstrap =
                                 "window.__mbNativeViewportWidth=$nativeWidthCss;" +
                                     "window.__mbNativeViewportHeight=$nativeHeightCss;"
+                            jsEvaluationCount++
+                            scrollStepCount++
                             target.evaluateJavascript(
                                 viewportBootstrap + "window.__mbBackgroundStep && window.__mbBackgroundStep();",
                                 null
@@ -456,6 +479,8 @@ class MangaBuffAutomation(
                         ) {
                             backgroundLastFallbackStepAt = tickNow
                             try {
+                                jsEvaluationCount++
+                                scrollStepCount++
                                 target.evaluateJavascript(
                                     "window.__mbBackgroundStep && window.__mbBackgroundStep();",
                                     null
@@ -507,6 +532,8 @@ class MangaBuffAutomation(
                             val requestId = ++backgroundConfirmationTickRequestId
                             try {
                                 // Keep at most one native continuation evaluation in flight for this account's WebView.
+                                jsEvaluationCount++
+                                confirmationTickCount++
                                 target.evaluateJavascript(
                                     "window.__mbNativeConfirmationTick && window.__mbNativeConfirmationTick();"
                                 ) { _ ->
@@ -562,6 +589,8 @@ class MangaBuffAutomation(
                             backgroundMetricsRequestInFlight = true
                             val requestId = ++backgroundMetricsRequestId
                             try {
+                                jsEvaluationCount++
+                                metricsEvaluationCount++
                                 target.evaluateJavascript(BACKGROUND_SCROLL_METRICS_JS) { result ->
                                     handleBackgroundScrollMetrics(
                                         accountUsername = accountUsername,
@@ -620,6 +649,8 @@ class MangaBuffAutomation(
                                     dispatchBackgroundRecoverySwipe(accountUsername, target, generation)
                                 } else {
                                     try {
+                                        jsEvaluationCount++
+                                        scrollStepCount++
                                         target.evaluateJavascript(
                                             "window.__mbBackgroundStep && window.__mbBackgroundStep();",
                                             null
@@ -637,6 +668,8 @@ class MangaBuffAutomation(
                                 // the end marker). Still tick the JS reader loop so bottom
                                 // stabilization and the terminal "Таков конец..." check can run.
                                 try {
+                                    jsEvaluationCount++
+                                    scrollStepCount++
                                     target.evaluateJavascript(
                                         "window.__mbBackgroundStep && window.__mbBackgroundStep();",
                                         null
