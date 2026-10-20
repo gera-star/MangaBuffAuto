@@ -51,6 +51,25 @@ class AccountTaskLifecycleTest {
     }
 
     @Test
+    fun failingOrStoppingAccountADoesNotChangeAccountB() {
+        val states = AccountTaskStateRegistry()
+        states.transition("account-A", AccountTaskEvent.QUEUED)
+        states.transition("account-A", AccountTaskEvent.STARTED)
+        states.transition("account-B", AccountTaskEvent.QUEUED)
+        states.transition("account-B", AccountTaskEvent.STARTED)
+
+        states.transition("account-A", AccountTaskEvent.FAILED)
+        assertEquals(AccountTaskState.ERROR, states.current("account-A"))
+        assertEquals(AccountTaskState.RUNNING, states.current("account-B"))
+
+        states.transition("account-A", AccountTaskEvent.QUEUED)
+        states.transition("account-A", AccountTaskEvent.STARTED)
+        states.transition("account-A", AccountTaskEvent.STOPPED)
+        assertEquals(AccountTaskState.WAITING, states.current("account-A"))
+        assertEquals(AccountTaskState.RUNNING, states.current("account-B"))
+    }
+
+    @Test
     fun stoppingAnActiveRunReturnsItToWaiting() {
         val next = AccountTaskLifecycle.transition(AccountTaskState.RUNNING, AccountTaskEvent.STOPPED)
         assertEquals(AccountTaskState.WAITING, next)
