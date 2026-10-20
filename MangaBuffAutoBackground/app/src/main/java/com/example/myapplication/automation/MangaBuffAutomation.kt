@@ -313,6 +313,7 @@ class MangaBuffAutomation(
     private var backgroundLastMetricsRequestAt = 0L
     private var backgroundLastScrollY: Long? = null
     private var backgroundLastProgressAt = 0L
+    private var backgroundLastProgressLogAt = 0L
     private var backgroundLastDiagnosticAt = 0L
     private var backgroundObservedUrl: String? = null
     private var backgroundFastScrollRunning = false
@@ -352,6 +353,7 @@ class MangaBuffAutomation(
             backgroundLastMetricsRequestAt = 0L
             backgroundLastScrollY = null
             backgroundLastProgressAt = now
+            backgroundLastProgressLogAt = 0L
             backgroundLastDiagnosticAt = 0L
             backgroundObservedUrl = webView.url.orEmpty()
             backgroundFastScrollRunning = false
@@ -785,6 +787,17 @@ class MangaBuffAutomation(
         if (previousY == null || y > previousY + 2L || y < previousY - 2L) {
             backgroundLastScrollY = y
             backgroundLastProgressAt = now
+            if (
+                backgroundLastProgressLogAt == 0L ||
+                now - backgroundLastProgressLogAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS
+            ) {
+                backgroundLastProgressLogAt = now
+                log(
+                    accountUsername,
+                    "READER: SCROLL_PROGRESS_SAMPLE y=$y height=$height viewport=$viewport " +
+                        "remaining=$backgroundRemaining screenOff=${BackgroundExecutionState.isScreenOff()}"
+                )
+            }
         } else {
             backgroundLastScrollY = y
         }
