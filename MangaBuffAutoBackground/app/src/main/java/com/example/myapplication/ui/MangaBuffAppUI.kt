@@ -16,6 +16,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,6 +34,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1470,6 +1474,69 @@ fun TaskSwitchRow(
 }
 
 
+private data class ReaderEngineOption(
+    val id: Int,
+    val title: String,
+    val buttonTitle: String,
+    val shortDescription: String,
+    val details: String
+)
+
+private val READER_ENGINE_OPTIONS = listOf(
+    ReaderEngineOption(
+        id = 0,
+        title = "Гибридная (текущая)",
+        buttonTitle = "Гибридная",
+        shortDescription = "Плавный скролл + контроль и восстановление.",
+        details = "Основной режим. Сочетает плавную прокрутку страницы с контролем продвижения и попытками восстановления, если чтение остановилось. Начинай с него."
+    ),
+    ReaderEngineOption(
+        id = 1,
+        title = "Kotlin-такт (эксп.)",
+        buttonTitle = "Kotlin-такт",
+        shortDescription = "Android запускает шаги прокрутки по таймеру.",
+        details = "Экспериментальный режим: шаги прокрутки запускает нативный таймер Android. Подходит для сравнения с обычным режимом, когда экран выключен или приложение скрыто."
+    ),
+    ReaderEngineOption(
+        id = 2,
+        title = "Автоскролл MangaBuff (эксп.)",
+        buttonTitle = "Автоскролл сайта",
+        shortDescription = "Страницу двигает встроенный автоскролл MangaBuff.",
+        details = "Экспериментальный режим: движение выполняет сам автоскролл MangaBuff, а приложение проверяет продвижение и конец главы. Резервная прокрутка приложения отключена, поэтому при остановке автоскролла чтение может зависнуть."
+    ),
+    ReaderEngineOption(
+        id = 3,
+        title = "WebView + JS-таймеры (эксп.)",
+        buttonTitle = "WebView + таймеры",
+        shortDescription = "Автоскролл сайта + попытка возобновлять таймеры.",
+        details = "Экспериментальный режим. В фоне приложение периодически вызывает onResume() и resumeTimers(), пытаясь возобновить WebView и таймеры JavaScript. resumeTimers() действует на все WebView процесса и не гарантирует, что ограничения фонового Chromium будут сняты."
+    )
+)
+
+private fun Modifier.longPressForReaderHelp(
+    holdMillis: Long = 3_000L,
+    onLongPress: () -> Unit
+): Modifier = pointerInput(holdMillis, onLongPress) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        val releasedBeforeTimeout = withTimeoutOrNull(holdMillis) {
+            while (true) {
+                val event = awaitPointerEvent()
+                if (event.changes.none { it.pressed }) {
+                    return@withTimeoutOrNull true
+                }
+            }
+        }
+        if (releasedBeforeTimeout == null) {
+            onLongPress()
+            do {
+                val event = awaitPointerEvent()
+                event.changes.forEach { it.consume() }
+            } while (event.changes.any { it.pressed })
+        }
+    }
+}
+
 @Composable
 fun TasksTab(
     accounts: List<MangaBuffAccount>,
@@ -1485,6 +1552,7 @@ fun TasksTab(
     var battleTarget by remember { mutableStateOf(settings.battleTargetCount.toString()) }
     var showTowerUpgrades by remember { mutableStateOf(false) }
     var readerEngineMenuExpanded by remember { mutableStateOf(false) }
+    var readerHelpMode by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(settings.readerChapters, settings.battleTargetCount) {
         readerChapters = settings.readerChapters.toString()
@@ -1740,7 +1808,7 @@ fun TasksTab(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                "Режим применяется при следующем запуске чтения",
+                                "Выбирается только один режим",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.outline
                             )
@@ -1748,62 +1816,70 @@ fun TasksTab(
                         Box {
                             TextButton(
                                 enabled = actionEnabled,
-                                onClick = { readerEngineMenuExpanded = true }
+                                onClick = { readerEngineMenuExpanded = true },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    when (settings.readerEngineMode.coerceIn(0, 3)) {
-                                        1 -> "Kotlin-такт"
-                                        2 -> "Автоскролл сайта"
-                                        3 -> "WebView + таймеры"
-                                        else -> "Гибридная"
-                                    },
+                                    READER_ENGINE_OPTIONS.firstOrNull {
+                                        it.id == settings.readerEngineMode.coerceIn(0, 3)
+                                    }?.buttonTitle ?: "Гибридная",
                                     maxLines = 1
                                 )
-                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Выбрать режим читалки")
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = "Выбрать один режим читалки"
+                                )
                             }
                             DropdownMenu(
                                 expanded = readerEngineMenuExpanded,
                                 onDismissRequest = { readerEngineMenuExpanded = false }
                             ) {
-                                DropdownMenuItem(
-                                    text = { Text("Гибридная (текущая)") },
-                                    enabled = actionEnabled,
-                                    onClick = {
-                                        onSaveSettings(settings.copy(readerEngineMode = 0))
-                                        readerEngineMenuExpanded = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Kotlin-такт (эксп.)") },
-                                    enabled = actionEnabled,
-                                    onClick = {
-                                        onSaveSettings(settings.copy(readerEngineMode = 1))
-                                        readerEngineMenuExpanded = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Автоскролл MangaBuff (эксп.)") },
-                                    enabled = actionEnabled,
-                                    onClick = {
-                                        onSaveSettings(settings.copy(readerEngineMode = 2))
-                                        readerEngineMenuExpanded = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("WebView + JS-таймеры (эксп.)") },
-                                    enabled = actionEnabled,
-                                    onClick = {
-                                        onSaveSettings(settings.copy(readerEngineMode = 3))
-                                        readerEngineMenuExpanded = false
-                                    }
-                                )
+                                READER_ENGINE_OPTIONS.forEach { option ->
+                                    val selected = settings.readerEngineMode.coerceIn(0, 3) == option.id
+                                    DropdownMenuItem(
+                                        modifier = Modifier
+                                            .widthIn(min = 250.dp, max = 290.dp)
+                                            .longPressForReaderHelp {
+                                                readerHelpMode = option.id
+                                                readerEngineMenuExpanded = false
+                                            },
+                                        leadingIcon = {
+                                            RadioButton(
+                                                selected = selected,
+                                                onClick = null,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        },
+                                        text = {
+                                            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                                Text(
+                                                    option.title,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    maxLines = 1
+                                                )
+                                                Text(
+                                                    option.shortDescription,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.outline,
+                                                    maxLines = 2
+                                                )
+                                            }
+                                        },
+                                        enabled = actionEnabled,
+                                        onClick = {
+                                            onSaveSettings(settings.copy(readerEngineMode = option.id))
+                                            readerEngineMenuExpanded = false
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                     Text(
-                        "WebView + JS-таймеры периодически вызывает onResume()/resumeTimers(); resumeTimers действует на все WebView.",
+                        "Подсказка: открой список и удерживай нужный режим 3 секунды.",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline
+                        color = MaterialTheme.colorScheme.outline,
+                        maxLines = 2
                     )
                 }
             }
@@ -2050,6 +2126,21 @@ fun TasksTab(
                     )
                 }
             }
+        }
+    }
+    readerHelpMode?.let { mode ->
+        val option = READER_ENGINE_OPTIONS.firstOrNull { it.id == mode }
+        if (option != null) {
+            AlertDialog(
+                onDismissRequest = { readerHelpMode = null },
+                title = { Text(option.title) },
+                text = { Text(option.details) },
+                confirmButton = {
+                    TextButton(onClick = { readerHelpMode = null }) {
+                        Text("Понятно")
+                    }
+                }
+            )
         }
     }
 }
