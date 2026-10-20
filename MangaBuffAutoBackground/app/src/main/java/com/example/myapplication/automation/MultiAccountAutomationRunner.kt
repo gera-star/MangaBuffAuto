@@ -38,7 +38,8 @@ class MultiAccountAutomationRunner(
         account: MangaBuffAccount,
         settings: GlobalSettings,
         taskType: TaskType,
-        promoCode: String = ""
+        promoCode: String = "",
+        resumePersistedProgress: Boolean = false
     ) {
         onLog(LogEntry(username = account.username, component = "RUNNER", message = "START accountId=${account.id}"))
         onLog(LogEntry(username = account.username, component = "RUNNER", message = "PREPARE accountId=${account.id}"))
@@ -57,7 +58,8 @@ class MultiAccountAutomationRunner(
             settings = settings,
             taskType = taskType,
             expectedProfileName = accountRuntime.profileName,
-            promoCode = promoCode
+            promoCode = promoCode,
+            resumePersistedProgress = resumePersistedProgress
         )
     }
 
