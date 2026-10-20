@@ -31,8 +31,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.example.myapplication.network.AppProxyConfig
+import com.example.myapplication.network.AppProxySettings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -132,6 +136,14 @@ fun BackgroundSettingsDialog(
     val context = LocalContext.current
     var refreshKey by remember { mutableStateOf(0) }
 
+    val savedProxy = remember { AppProxySettings.read(context) }
+    var proxyEnabled by remember { mutableStateOf(savedProxy.enabled) }
+    var proxyHost by remember { mutableStateOf(savedProxy.host) }
+    var proxyPort by remember { mutableStateOf(savedProxy.port.toString()) }
+    var proxyUsername by remember { mutableStateOf(savedProxy.username) }
+    var proxyPassword by remember { mutableStateOf(savedProxy.password) }
+    var proxyMessage by remember { mutableStateOf("") }
+
     val batteryOk = remember(refreshKey) { isIgnoringBatteryOptimizations(context) }
     val notificationsOk = remember(refreshKey) { hasNotifications(context) }
     val exactAlarmsOk = remember(refreshKey) { canScheduleExactAlarms(context) }
@@ -209,6 +221,114 @@ fun BackgroundSettingsDialog(
                     "Для HyperOS также рекомендуется вручную включить «Автозапуск», снять ограничения фоновой активности и при необходимости закрепить приложение в списке недавних.",
                     style = MaterialTheme.typography.bodySmall
                 )
+
+                HorizontalDivider()
+
+                Text(
+                    "Прокси для MangaBuff (временно)",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                Text(
+                    "Прокси будет использоваться сетевыми запросами приложения и всеми его WebView. Когда обычный доступ восстановится, выключи переключатель и сохрани настройки.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Использовать HTTP-прокси")
+                    Switch(
+                        checked = proxyEnabled,
+                        onCheckedChange = {
+                            proxyEnabled = it
+                            proxyMessage = ""
+                        }
+                    )
+                }
+                OutlinedTextField(
+                    value = proxyHost,
+                    onValueChange = { proxyHost = it; proxyMessage = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Адрес прокси") },
+                    placeholder = { Text("proxy.example.com или IP") },
+                    singleLine = true,
+                    enabled = proxyEnabled
+                )
+                OutlinedTextField(
+                    value = proxyPort,
+                    onValueChange = { value ->
+                        proxyPort = value.filter(Char::isDigit).take(5)
+                        proxyMessage = ""
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Порт") },
+                    placeholder = { Text("8080") },
+                    singleLine = true,
+                    enabled = proxyEnabled
+                )
+                OutlinedTextField(
+                    value = proxyUsername,
+                    onValueChange = { proxyUsername = it; proxyMessage = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Логин прокси (необязательно)") },
+                    singleLine = true,
+                    enabled = proxyEnabled
+                )
+                OutlinedTextField(
+                    value = proxyPassword,
+                    onValueChange = { proxyPassword = it; proxyMessage = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Пароль прокси (необязательно)") },
+                    singleLine = true,
+                    enabled = proxyEnabled,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                )
+                Text(
+                    "Вводи адрес сервера и порт, а не VPN-ссылку. Оставь логин и пароль пустыми, если прокси без авторизации.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                if (proxyMessage.isNotBlank()) {
+                    Text(
+                        proxyMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (proxyMessage.startsWith("Не удалось") || proxyMessage.startsWith("Проверь") || proxyMessage.startsWith("Эта версия")) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        }
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        val port = proxyPort.toIntOrNull()
+                        if (proxyEnabled && (proxyHost.isBlank() || port == null || port !in 1..65535 || proxyHost.contains("://") || proxyHost.contains("/"))) {
+                            proxyMessage = "Проверь адрес прокси и порт от 1 до 65535."
+                        } else {
+                            val config = AppProxyConfig(
+                                enabled = proxyEnabled,
+                                host = proxyHost.trim(),
+                                port = port ?: 8080,
+                                username = proxyUsername,
+                                password = proxyPassword
+                            )
+                            try {
+                                AppProxySettings.save(context, config)
+                                AppProxySettings.applyWebViewProxy(context) { success, message ->
+                                    proxyMessage = message
+                                    refreshKey++
+                                }
+                            } catch (e: Exception) {
+                                proxyMessage = e.message ?: "Не удалось сохранить прокси."
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Сохранить и применить прокси")
+                }
 
                 HorizontalDivider()
 
