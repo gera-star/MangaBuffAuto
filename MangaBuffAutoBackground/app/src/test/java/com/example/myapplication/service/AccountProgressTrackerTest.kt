@@ -40,6 +40,21 @@ class AccountProgressTrackerTest {
     }
 
     @Test
+    fun trackersKeepPerAccountDeadlinesIndependent() {
+        var now = 5_000L
+        val accountA = AccountProgressTracker { now }
+        val accountB = AccountProgressTracker { now }
+
+        accountA.mark(ProgressStage.BATTLE, "account-A-battle-result")
+        accountB.mark(ProgressStage.READER, "account-B-reader-scroll")
+
+        now += ProgressStage.BATTLE.timeoutMs
+        assertTrue(accountA.isTimedOut(now))
+        assertFalse(accountB.isTimedOut(now))
+        assertEquals("account-B-reader-scroll", accountB.snapshot().marker)
+    }
+
+    @Test
     fun eventClassificationUsesTaskStage() {
         assertEquals(
             ProgressStage.MINE,
