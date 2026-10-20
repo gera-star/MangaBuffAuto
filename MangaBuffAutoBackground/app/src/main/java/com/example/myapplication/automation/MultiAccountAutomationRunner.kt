@@ -94,8 +94,8 @@ class MultiAccountAutomationRunner(
         runtime.reloadAccount(account)
     }
 
-    fun stopAll() {
-        onLog(LogEntry(component = "RUNNER", message = "STOP_ALL"))
+    fun stopAll(reason: String = "SERVICE_DESTROYED") {
+        onLog(LogEntry(component = "RUNNER", message = "STOP_ALL reason=$reason"))
         runtime.stopAll()
     }
 
