@@ -2794,17 +2794,81 @@ class MangaBuffAutomation(
     // ACCOUNT TASKS
     // =========================================================
 
+    private fun sequenceCheckpointPreferences() =
+        context.getSharedPreferences("mangabuff_sequence_checkpoints", Context.MODE_PRIVATE)
+
+    private fun sequenceCheckpointKey(accountId: String): String =
+        "all_sequence_checkpoint::$accountId"
+
+    private fun lastCompletedSequenceStage(accountId: String): Int {
+        val saved = sequenceCheckpointPreferences().getString(sequenceCheckpointKey(accountId), null)
+            ?: return TaskSequenceCheckpoint.NO_COMPLETED_STAGE
+        val parts = saved.split('|', limit = 2)
+        if (parts.size != 2 || parts[0] != currentStatsDay()) {
+            return TaskSequenceCheckpoint.NO_COMPLETED_STAGE
+        }
+        return parts[1].toIntOrNull() ?: TaskSequenceCheckpoint.NO_COMPLETED_STAGE
+    }
+
+    private fun shouldRunSequenceStage(
+        accountId: String,
+        taskType: TaskType,
+        resumeFromCheckpoint: Boolean,
+        stageIndex: Int
+    ): Boolean {
+        if (taskType != TaskType.ALL) return true
+        return TaskSequenceCheckpoint.shouldRunStage(
+            stageIndex = stageIndex,
+            lastCompletedStage = lastCompletedSequenceStage(accountId),
+            resume = resumeFromCheckpoint
+        )
+    }
+
+    private fun markSequenceStageCompleted(
+        account: MangaBuffAccount,
+        taskType: TaskType,
+        stageIndex: Int
+    ) {
+        if (taskType != TaskType.ALL) return
+        val key = sequenceCheckpointKey(account.id)
+        val preferences = sequenceCheckpointPreferences()
+        val current = lastCompletedSequenceStage(account.id)
+        val completed = TaskSequenceCheckpoint.markCompleted(current, stageIndex)
+        preferences.edit().putString(key, "${currentStatsDay()}|$completed").apply()
+        log(
+            account.username,
+            "TASK: CHECKPOINT_STAGE_COMPLETED index=$completed accountId=${account.id}"
+        )
+    }
+
+    private fun clearSequenceCheckpoint(accountId: String) {
+        sequenceCheckpointPreferences().edit().remove(sequenceCheckpointKey(accountId)).apply()
+    }
+
     suspend fun runAccountTasks(
         account: MangaBuffAccount,
         settings: GlobalSettings,
         taskType: TaskType = TaskType.ALL,
         webView: WebView,
-        promoCode: String = ""
+        promoCode: String = "",
+        resumeFromCheckpoint: Boolean = false
     ) {
         coroutineContext.ensureActive()
 
         initDailyStats(account)
-        log(account.username, "TASK: ACCOUNT_START type=${taskType.title}")
+        if (taskType == TaskType.ALL && !resumeFromCheckpoint) {
+            clearSequenceCheckpoint(account.id)
+        }
+        val restoredStage = if (taskType == TaskType.ALL && resumeFromCheckpoint) {
+            lastCompletedSequenceStage(account.id)
+        } else {
+            TaskSequenceCheckpoint.NO_COMPLETED_STAGE
+        }
+        log(
+            account.username,
+            "TASK: ACCOUNT_START type=${taskType.title} resumeFromCheckpoint=$resumeFromCheckpoint " +
+                "lastCompletedStage=$restoredStage"
+        )
         updateStatus(
             account,
             if (taskType == TaskType.EVENTS) "🎃 Проверка Events..." else "Обновление статистики...",
