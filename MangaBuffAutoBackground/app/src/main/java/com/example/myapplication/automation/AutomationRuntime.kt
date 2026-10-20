@@ -192,7 +192,8 @@ class AutomationRuntime(
         settings: GlobalSettings,
         taskType: TaskType,
         expectedProfileName: String,
-        promoCode: String = ""
+        promoCode: String = "",
+        resumePersistedProgress: Boolean = false
     ) {
         val runtime = runtimes[account.id] ?: prepareAccount(account)
         onWebViewAssigned(account.id, runtime.webView)
@@ -342,7 +343,8 @@ class AutomationRuntime(
                 settings = settings,
                 taskType = taskType,
                 webView = runtime.webView,
-                promoCode = promoCode
+                promoCode = promoCode,
+                resumeFromCheckpoint = resumePersistedProgress
             )
             runtime.state = AccountState.IDLE
             onLog(LogEntry(username = account.username, component = "ACCOUNT", message = "FINISHED"))
