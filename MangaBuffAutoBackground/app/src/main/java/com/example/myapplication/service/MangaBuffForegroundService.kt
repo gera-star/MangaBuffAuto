@@ -1411,7 +1411,6 @@ class MangaBuffForegroundService : Service() {
         )
     }
 
-    private fun publishLog(entry: LogEntry) {
     private fun resolveAccountIdForProgress(username: String): String? {
         if (username.isBlank()) return null
         if (accountJobs.containsKey(username)) return username
@@ -1437,7 +1436,14 @@ class MangaBuffForegroundService : Service() {
         return signals.any { message.contains(it) }
     }
 
-
+    private fun publishLog(entry: LogEntry) {
+        val progressAccountId = resolveAccountIdForProgress(entry.username)
+        if (progressAccountId != null && isMeaningfulProgressLog(entry)) {
+            val currentTask = accountCurrentTaskLabels[progressAccountId].orEmpty()
+            val stage = ProgressStage.fromEvent(entry.message, entry.component, currentTask)
+            val marker = "LOG:${entry.component}:${entry.message.take(240)}"
+            accountProgressTrackers.computeIfAbsent(progressAccountId) { AccountProgressTracker() }.mark(stage, marker)
+        }
         sendRuntimeEvent(
             EVENT_LOG,
             accountId = entry.username.takeIf { it.isNotBlank() },
