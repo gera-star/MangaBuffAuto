@@ -2834,6 +2834,7 @@ class MangaBuffAutomation(
         val preferences = sequenceCheckpointPreferences()
         val current = lastCompletedSequenceStage(account.id)
         val completed = TaskSequenceCheckpoint.markCompleted(current, stageIndex)
+        if (completed <= current) return
         preferences.edit().putString(key, "${currentStatsDay()}|$completed").apply()
         log(
             account.username,
@@ -3050,9 +3051,14 @@ class MangaBuffAutomation(
                     "taskType=${taskType.title} enabled=${account.deckCommentEnabled}"
             )
         } else {
+            val restoreSkippedCompletedDeckStage =
+                taskType == TaskType.ALL &&
+                    resumeFromCheckpoint &&
+                    !shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 5)
             log(
                 account.username,
-                "COMMENT: DECK_SKIPPED reason=NOT_DECK_TASK taskType=${taskType.title}"
+                "COMMENT: DECK_SKIPPED reason=${if (restoreSkippedCompletedDeckStage) "RESTORE_STAGE_ALREADY_COMPLETED" else "NOT_DECK_TASK"} " +
+                    "taskType=${taskType.title}"
             )
         }
         markSequenceStageCompleted(account, taskType, 5)
