@@ -222,10 +222,12 @@ class MangaBuffAutomation(
 
         private const val COMMENT_DELAY_MS = 4000L
         private const val COMMENT_DAILY_LIMIT = 13
-        private const val DECK_COMMENT_DAILY_LIMIT = 8
-        private const val DECK_COMMENT_MIN_GAP_MS = 60_000L
-        // 2.3 minutes = 138 seconds.
-        private const val DECK_COMMENT_MAX_GAP_MS = 138_000L
+        private const val DECK_COMMENT_PER_RUN_LIMIT = 10
+        private const val DECK_COMMENT_DAILY_LIMIT = 10
+        // Random gap options: 1:00, 1:12, 1:30, 1:42, or 2:00.
+        private val DECK_COMMENT_GAP_OPTIONS_MS = longArrayOf(
+            60_000L, 72_000L, 90_000L, 102_000L, 120_000L
+        )
 
 
         private const val DECK_PAGE_SETTLE_MS = 2000L
@@ -12368,7 +12370,7 @@ class MangaBuffAutomation(
         syncDailyDeckCommentStats(account, dailyDeckAttemptCount)
         val remainingDaily = (DECK_COMMENT_DAILY_LIMIT - dailyDeckAttemptCount).coerceAtLeast(0)
         var sentCount = 0
-        var targetDeckCount = minOf(remainingDaily, 8)
+        var targetDeckCount = minOf(remainingDaily, DECK_COMMENT_PER_RUN_LIMIT)
 
         // UI and automation share this process-local signal. disableVersion makes
         // OFF a one-way cancellation for this run, even if the user switches ON again.
@@ -12747,9 +12749,11 @@ class MangaBuffAutomation(
             deckId.isNotBlank() &&
                 !deckCommentPrefs.getBoolean(deckAttemptPrefix + deckId.hashCode(), false)
         }
-        // At most eight deck comments per Start run, and at most thirteen
-        // send attempts per account/day, retained across app restarts.
-        val targetDecks = unattemptedDecks.take(minOf(remainingDaily, 8))
+        // Limit both each Start run and the daily total to ten deck comments.
+        // Daily attempts are retained across app restarts.
+        val targetDecks = unattemptedDecks.take(
+            minOf(remainingDaily, DECK_COMMENT_PER_RUN_LIMIT)
+        )
         targetDeckCount = targetDecks.size
         updateStatus(
             account,
@@ -12761,7 +12765,7 @@ class MangaBuffAutomation(
         log(
             account.username,
             "COMMENT: DECK_GUARD eligible=${targetDecks.size} skippedAlreadyAttempted=${decks.size - unattemptedDecks.size} " +
-                "perRunLimit=8 dailyLimit=$DECK_COMMENT_DAILY_LIMIT dailyUsed=$dailyDeckAttemptCount gapSecRange=60..138"
+                "perRunLimit=$DECK_COMMENT_PER_RUN_LIMIT dailyLimit=$DECK_COMMENT_DAILY_LIMIT dailyUsed=$dailyDeckAttemptCount gapSecOptions=60,72,90,102,120"
         )
 
         for ((index, deck) in targetDecks.withIndex()) {
@@ -12789,14 +12793,16 @@ class MangaBuffAutomation(
             val deckName = deck["name"].orEmpty()
             if (deckUrl.isBlank()) continue
 
-            // Select and persist one random 60-138 second interval for this next comment.
-            // Persisting the target keeps the same deadline if the task is stopped/restarted.
+            // Choose only 1:00, 1:12, 1:30, 1:42, or 2:00 between deck comments.
+            // Persist the selection so stopping/restarting won't reset the current deadline.
             val lastCommentAt = deckCommentPrefs.getLong(lastDeckCommentKey, 0L)
             val storedGapMs = deckCommentPrefs.getLong(deckCommentGapKey, 0L)
             val deckCommentGapMs = storedGapMs.takeIf {
-                it in DECK_COMMENT_MIN_GAP_MS..DECK_COMMENT_MAX_GAP_MS
-            } ?: Random.nextLong(DECK_COMMENT_MIN_GAP_MS, DECK_COMMENT_MAX_GAP_MS + 1L)
-            if (storedGapMs !in DECK_COMMENT_MIN_GAP_MS..DECK_COMMENT_MAX_GAP_MS) {
+                DECK_COMMENT_GAP_OPTIONS_MS.contains(it)
+            } ?: DECK_COMMENT_GAP_OPTIONS_MS[
+                Random.nextInt(DECK_COMMENT_GAP_OPTIONS_MS.size)
+            ]
+            if (!DECK_COMMENT_GAP_OPTIONS_MS.contains(storedGapMs)) {
                 deckCommentPrefs.edit().putLong(deckCommentGapKey, deckCommentGapMs).apply()
             }
             if (lastCommentAt > 0L) {
@@ -13038,10 +13044,9 @@ class MangaBuffAutomation(
                                 // trigger a duplicate comment on this deck.
                                 dailyDeckAttemptCount = (dailyDeckAttemptCount + 1)
                                     .coerceAtMost(DECK_COMMENT_DAILY_LIMIT)
-                                val nextDeckCommentGapMs = Random.nextLong(
-                                    DECK_COMMENT_MIN_GAP_MS,
-                                    DECK_COMMENT_MAX_GAP_MS + 1L
-                                )
+                                val nextDeckCommentGapMs = DECK_COMMENT_GAP_OPTIONS_MS[
+                                    Random.nextInt(DECK_COMMENT_GAP_OPTIONS_MS.size)
+                                ]
                                 deckCommentPrefs.edit()
                                     .putBoolean(
                                         deckAttemptPrefix + deckId.hashCode(),
@@ -13060,7 +13065,7 @@ class MangaBuffAutomation(
                                     account.username,
                                     "COMMENT: DECK_NEXT_GAP_SELECTED targetSec=" +
                                         ((nextDeckCommentGapMs + 999L) / 1000L) +
-                                        " rangeSec=60..138"
+                                        " allowedSec=60,72,90,102,120"
                                 )
 
                                 log(
