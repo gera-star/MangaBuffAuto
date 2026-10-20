@@ -302,7 +302,8 @@ fun MangaBuffAppUI(
     if (showBackgroundSettings) {
         BackgroundSettingsDialog(
             onDismiss = { showBackgroundSettings = false },
-            onOpenAbout = { showAboutDialog = true }
+            onOpenAbout = { showAboutDialog = true },
+            accounts = accounts
         )
     }
 
