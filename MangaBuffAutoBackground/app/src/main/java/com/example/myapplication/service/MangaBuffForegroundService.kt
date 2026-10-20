@@ -1035,7 +1035,7 @@ class MangaBuffForegroundService : Service() {
         }
         recoveryRequests.clear()
         missingWebViewSince.clear()
-        automationRunner.stopAll()
+        automationRunner.stopAll(reason = if (explicitUserStop) "EXPLICIT_USER_STOP" else "INTERNAL_STOP")
 
         if (explicitUserStop) {
             publishLog(LogEntry(message = "BG: ALL_TASKS_STOPPED_BY_USER"))
@@ -1102,6 +1102,12 @@ class MangaBuffForegroundService : Service() {
 
     private fun stopSelfIfIdle() {
         if (tradeMonitorKeepaliveRequested || accountJobs.isNotEmpty() || towerCycleJobs.isNotEmpty() || readPersistedRuns().isNotEmpty() || recoveryRequests.isNotEmpty()) return
+        publishLog(
+            LogEntry(
+                component = "BG",
+                message = "SERVICE_IDLE_STOP reason=NO_ACTIVE_JOBS"
+            )
+        )
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {
@@ -1586,7 +1592,7 @@ class MangaBuffForegroundService : Service() {
         }
 
         serviceScope.cancel()
-        automationRunner.stopAll()
+        automationRunner.stopAll(reason = "SERVICE_DESTROYED")
 
         releaseWakeLockIfIdle(force = true)
 
