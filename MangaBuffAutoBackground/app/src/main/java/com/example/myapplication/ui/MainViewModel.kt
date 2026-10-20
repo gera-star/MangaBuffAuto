@@ -687,7 +687,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 (entry.username.isNotBlank() && (it.username == entry.username || it.id == entry.username))
         }
         val normalizedEntry = entry.copy(
-            accountId = entry.accountId.ifBlank { account?.id.orEmpty() },
+            accountId = entry.accountId.ifBlank { account?.id ?: "SYSTEM" },
             task = entry.task.ifBlank { account?.currentTask.orEmpty().ifBlank { "Система" } },
             reason = entry.reason.ifBlank { entry.message },
             attempt = entry.attempt.coerceAtLeast(0)
