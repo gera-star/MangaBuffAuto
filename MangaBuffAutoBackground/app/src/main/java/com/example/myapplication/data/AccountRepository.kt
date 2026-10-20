@@ -158,6 +158,12 @@ class AccountRepository(context: Context) {
             var shouldSave = false
             val editor = prefs.edit()
 
+            val safeReaderEngineMode = ReaderEngineModes.normalize(migrated.readerEngineMode)
+            if (safeReaderEngineMode != migrated.readerEngineMode) {
+                migrated = migrated.copy(readerEngineMode = safeReaderEngineMode)
+                shouldSave = true
+            }
+
             if (!prefs.getBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, false)) {
                 migrated = migrated.copy(mineAutoExchange = false)
                 editor.putBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, true)
@@ -190,7 +196,9 @@ class AccountRepository(context: Context) {
     }
 
     fun saveSettings(settings: GlobalSettings) {
-        val json = gson.toJson(settings)
+        val json = gson.toJson(settings.copy(
+            readerEngineMode = ReaderEngineModes.normalize(settings.readerEngineMode)
+        ))
         prefs.edit()
             .putString(KEY_SETTINGS, json)
             .putBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, true)
