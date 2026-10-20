@@ -376,9 +376,10 @@ class MangaBuffAutomation(
                         generation != backgroundScrollGeneration
                     ) return
 
+                    val loadSampleNow = SystemClock.elapsedRealtime()
                     val screenOff = BackgroundExecutionState.isScreenOff()
-                    if (tickNow - loadCounterWindowAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
-                        val sampleIntervalMs = (tickNow - loadCounterWindowAt).coerceAtLeast(1L)
+                    if (loadSampleNow - loadCounterWindowAt >= BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS) {
+                        val sampleIntervalMs = (loadSampleNow - loadCounterWindowAt).coerceAtLeast(1L)
                         log(
                             accountUsername,
                             "READER: BACKGROUND_SCROLL_LOAD_SAMPLE intervalMs=$sampleIntervalMs " +
@@ -387,7 +388,7 @@ class MangaBuffAutomation(
                                 "screenOff=$screenOff metricsInFlight=$backgroundMetricsRequestInFlight " +
                                 "confirmationInFlight=$backgroundConfirmationTickInFlight"
                         )
-                        loadCounterWindowAt = tickNow
+                        loadCounterWindowAt = loadSampleNow
                         jsEvaluationCount = 0
                         metricsEvaluationCount = 0
                         confirmationTickCount = 0
