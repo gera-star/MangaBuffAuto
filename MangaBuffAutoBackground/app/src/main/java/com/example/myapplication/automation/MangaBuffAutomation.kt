@@ -11190,8 +11190,12 @@ class MangaBuffAutomation(
                                                 if (chapterDone) return;
                                                 AndroidReaderBridge.onLogStep(
                                                     ok
-                                                        ? 'READER: MANGABUFF_AUTOSCROLL_ACTIVE_WITH_BACKGROUND_SCROLL'
-                                                        : (${readerEngineMode} === 2 ? 'READER: SITE_AUTOSCROLL_CONFIG_FAILED_NO_FALLBACK' : 'READER: MANGABUFF_AUTOSCROLL_UNAVAILABLE_CUSTOM_SCROLL_ONLY')
+                                                        ? (${readerEngineMode} === 2
+                                                            ? 'READER: SITE_AUTOSCROLL_READY source=MANGABUFF'
+                                                            : 'READER: MANGABUFF_AUTOSCROLL_ACTIVE_WITH_BACKGROUND_SCROLL')
+                                                        : (${readerEngineMode} === 2
+                                                            ? 'READER: SITE_AUTOSCROLL_CONFIG_FAILED_NO_FALLBACK'
+                                                            : 'READER: MANGABUFF_AUTOSCROLL_UNAVAILABLE_CUSTOM_SCROLL_ONLY')
                                                 );
                                                 humanScroll();
                                             });
