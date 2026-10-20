@@ -7413,6 +7413,30 @@ class MangaBuffAutomation(
         return clean
     }
 
+    private fun mangaChapterTotalCacheKey(url: String): String {
+        val canonical = ensureCanonicalMangaUrl(url)
+        val slug = canonical.substringAfter("/manga/", "").substringBefore("/")
+        return slug.takeIf { it.isNotBlank() }?.let { "total_chapters_$it" }.orEmpty()
+    }
+
+    private fun loadCachedMangaChapterTotal(url: String): Int {
+        val key = mangaChapterTotalCacheKey(url)
+        if (key.isBlank()) return 0
+        return context.getSharedPreferences("mangabuff_reader_chapter_totals", Context.MODE_PRIVATE)
+            .getInt(key, 0)
+            .coerceAtLeast(0)
+    }
+
+    private fun saveCachedMangaChapterTotal(url: String, total: Int) {
+        if (total <= 0) return
+        val key = mangaChapterTotalCacheKey(url)
+        if (key.isBlank()) return
+        context.getSharedPreferences("mangabuff_reader_chapter_totals", Context.MODE_PRIVATE)
+            .edit()
+            .putInt(key, total)
+            .apply()
+    }
+
     // =========================================================
     // READER
     // =========================================================
@@ -7426,11 +7450,13 @@ class MangaBuffAutomation(
         log(account.username, "READER: OPEN")
 
         currentMangaUrl = ensureCanonicalMangaUrl(account.getSafeActiveMangaUrl())
+        totalMangaChapters = loadCachedMangaChapterTotal(currentMangaUrl)
         log(
             account.username,
             "READER: RESUME_STATE activeMangaUrl=" +
                 (currentMangaUrl.ifBlank { "NONE_CATALOG_FALLBACK" }) +
-                " title='" + account.getSafeActiveMangaTitle() + "'"
+                " title='" + account.getSafeActiveMangaTitle() + "'" +
+                " cachedChapterTotal=" + totalMangaChapters
         )
 
         skippedMangaUrls.clear()
@@ -7447,7 +7473,7 @@ class MangaBuffAutomation(
         lastFinishedChapterNumber = ""
         lastFinishedChapterId = ""
         lastFinishedMangaTitle = ""
-        totalMangaChapters = 0
+        // Keep the cached chapter count for the active manga; only scan the list on a cache miss.
 
         pendingReadQuestBefore = null
         pendingReadQuestConfirmed = false
@@ -8031,10 +8057,13 @@ class MangaBuffAutomation(
 
                     // The reader list is authoritative; the catalogue can expose only the first 100 chapters.
                     val previous = totalMangaChapters
+                    saveCachedMangaChapterTotal(currentMangaUrl, total)
                     if (previous != total) {
                         totalMangaChapters = total
-                        log(account.username, "READER: TOTAL_CHAPTERS_READER_LIST total=$total previous=$previous")
+                        log(account.username, "READER: TOTAL_CHAPTERS_READER_LIST total=$total previous=$previous cached=true")
                         updateReaderStatus(account)
+                    } else {
+                        log(account.username, "READER: TOTAL_CHAPTERS_CACHE_SAVED total=$total manga=$currentMangaUrl")
                     }
                 }
 
@@ -8043,9 +8072,12 @@ class MangaBuffAutomation(
                     val canonical = ensureCanonicalMangaUrl(url)
                     if (canonical.isNotBlank() && canonical != currentMangaUrl) {
                         currentMangaUrl = canonical
-                        totalMangaChapters = 0
+                        totalMangaChapters = loadCachedMangaChapterTotal(canonical)
                         currentSessionChaptersRead = 0
-                        log(account.username, "READER: NEW_MANGA url=$canonical")
+                        log(
+                            account.username,
+                            "READER: NEW_MANGA url=$canonical cachedChapterTotal=$totalMangaChapters"
+                        )
                     }
                     if (title.isNotBlank()) {
                         lastFinishedMangaTitle = cleanMangaTitle(title)
