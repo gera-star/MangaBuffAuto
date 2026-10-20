@@ -2245,7 +2245,13 @@ fun LogsTab(
                             val levelStr = if (log.isError) "ERROR" else "INFO"
                             val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
                             val componentStr = if (log.component.isNotBlank()) log.component else "APP"
-                            "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "] " + log.message
+                            val accountIdStr = log.accountId.takeIf { it.isNotBlank() }?.let { " [id=$it]" }.orEmpty()
+                            val taskStr = log.task.takeIf { it.isNotBlank() }?.let { " [task=$it]" }.orEmpty()
+                            val attemptStr = if (log.attempt > 0) " [try=${log.attempt}]" else ""
+                            val reasonStr = log.reason.takeIf { it.isNotBlank() && it != log.message }
+                                ?.let { " [reason=$it]" }.orEmpty()
+                            "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "]" +
+                                accountIdStr + taskStr + attemptStr + reasonStr + " " + log.message
                         }
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         val clip = android.content.ClipData.newPlainText(
@@ -2283,8 +2289,14 @@ fun LogsTab(
                     val levelStr = if (log.isError) "ERROR" else "INFO"
                     val accountStr = if (log.username.isNotBlank()) log.username else "SYS"
                     val componentStr = if (log.component.isNotBlank()) log.component else "APP"
+                    val accountIdStr = log.accountId.takeIf { it.isNotBlank() }?.let { " [id=$it]" }.orEmpty()
+                    val taskStr = log.task.takeIf { it.isNotBlank() }?.let { " [task=$it]" }.orEmpty()
+                    val attemptStr = if (log.attempt > 0) " [try=${log.attempt}]" else ""
+                    val reasonStr = log.reason.takeIf { it.isNotBlank() && it != log.message }
+                        ?.let { " [reason=$it]" }.orEmpty()
                     Text(
-                        text = "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "] " + log.message,
+                        text = "[" + timeStr + "] [" + levelStr + "] [" + accountStr + "] [" + componentStr + "]" +
+                            accountIdStr + taskStr + attemptStr + reasonStr + " " + log.message,
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = if (log.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                     )
