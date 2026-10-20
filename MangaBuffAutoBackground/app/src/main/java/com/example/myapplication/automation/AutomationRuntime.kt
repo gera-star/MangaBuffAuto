@@ -94,7 +94,8 @@ class AutomationRuntime(
                         )
                     }
                 },
-                onMineBalanceUpdate = onMineBalanceUpdate
+                onMineBalanceUpdate = onMineBalanceUpdate,
+                proxyAccountId = accountId
             )
             onLog(LogEntry(username = accountId, component = "ENGINE", message = "CREATE engineId=${engine.hashCode()}"))
             engine
