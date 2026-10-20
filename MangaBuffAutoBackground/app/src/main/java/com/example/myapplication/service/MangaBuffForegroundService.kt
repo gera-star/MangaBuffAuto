@@ -1016,7 +1016,11 @@ class MangaBuffForegroundService : Service() {
             taskLabel,
             0f
         )
-        while (!networkValidated) delay(1_000L)
+        while (!networkValidated) {
+            delay(1_000L)
+            // Poll as a fallback if Android rejects the default-network callback registration.
+            refreshDefaultNetworkState("NETWORK_WAIT_POLL")
+        }
         transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_RESTORED, "validated_internet_available")
         publishLog(LogEntry(username = username, component = "NETWORK", message = "NETWORK_WAIT_FINISHED accountId=$accountId"))
         publishStatus(accountId, "Подготовка...", true, taskLabel, 0f)
