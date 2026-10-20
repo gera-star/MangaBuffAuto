@@ -2,6 +2,8 @@ package com.example.myapplication.automation
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.graphics.Bitmap
 import android.os.Build
 import android.graphics.Color
@@ -144,7 +146,31 @@ class ProfileWebViewStore(
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: android.webkit.WebResourceError?) {
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true) {
-                    onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "LOAD_ERROR url=${request.url} error=${error?.description}", isError = true))
+                    val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                    val activeNetwork = manager.activeNetwork
+                    val capabilities = activeNetwork?.let(manager::getNetworkCapabilities)
+                    val internetValidated =
+                        capabilities != null &&
+                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    val errorCode = error?.errorCode
+                    val category = when {
+                        !internetValidated && activeNetwork == null -> "NETWORK_UNAVAILABLE"
+                        !internetValidated -> "NETWORK_INTERNET_UNVALIDATED"
+                        errorCode == WebViewClient.ERROR_HOST_LOOKUP -> "SITE_OR_DNS_UNAVAILABLE"
+                        errorCode == WebViewClient.ERROR_TIMEOUT -> "SITE_REQUEST_TIMEOUT"
+                        errorCode == WebViewClient.ERROR_CONNECT -> "SITE_CONNECTION_FAILED"
+                        else -> "SITE_LOAD_ERROR"
+                    }
+                    onLog(
+                        LogEntry(
+                            username = accountId,
+                            component = "WEBVIEW",
+                            message = "LOAD_ERROR category=$category errorCode=$errorCode url=${request.url} " +
+                                "description=${error?.description}",
+                            isError = true
+                        )
+                    )
                 }
             }
 
