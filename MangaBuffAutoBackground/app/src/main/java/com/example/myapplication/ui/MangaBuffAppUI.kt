@@ -1792,7 +1792,7 @@ fun TasksTab(
                         }
                     }
                     Text(
-                        "Kotlin-такт сам инициирует прокрутку; режим MangaBuff проверяет автоскролл сайта без подмены прокрутки приложения.",
+                        "Kotlin-такт сам прокручивает страницу (−Х2 снижает скорость); режим MangaBuff проверяет автоскролл сайта без подмены прокрутки приложения.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
