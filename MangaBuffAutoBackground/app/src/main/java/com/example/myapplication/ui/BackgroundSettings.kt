@@ -48,6 +48,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.network.AppProxyConfig
+import com.example.myapplication.network.AppProxySettings
 
 private data class BackgroundCheck(
     val title: String,
@@ -131,18 +134,15 @@ private fun hasNotifications(context: Context): Boolean =
 @Composable
 fun BackgroundSettingsDialog(
     onDismiss: () -> Unit,
-    onOpenAbout: () -> Unit = {}
+    onOpenAbout: () -> Unit = {},
+    accounts: List<MangaBuffAccount> = emptyList()
 ) {
     val context = LocalContext.current
     var refreshKey by remember { mutableStateOf(0) }
-
-    val savedProxy = remember { AppProxySettings.read(context) }
-    var proxyEnabled by remember { mutableStateOf(savedProxy.enabled) }
-    var proxyHost by remember { mutableStateOf(savedProxy.host) }
-    var proxyPort by remember { mutableStateOf(savedProxy.port.toString()) }
-    var proxyUsername by remember { mutableStateOf(savedProxy.username) }
-    var proxyPassword by remember { mutableStateOf(savedProxy.password) }
-    var proxyMessage by remember { mutableStateOf("") }
+    var showProxyPasswordDialog by remember { mutableStateOf(false) }
+    var showProxySettingsDialog by remember { mutableStateOf(false) }
+    var proxyPasswordEntry by remember { mutableStateOf("") }
+    var proxyPasswordError by remember { mutableStateOf(false) }
 
     val batteryOk = remember(refreshKey) { isIgnoringBatteryOptimizations(context) }
     val notificationsOk = remember(refreshKey) { hasNotifications(context) }
@@ -224,111 +224,25 @@ fun BackgroundSettingsDialog(
 
                 HorizontalDivider()
 
-                Text(
-                    "Прокси для MangaBuff (временно)",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                )
-                Text(
-                    "Прокси будет использоваться сетевыми запросами приложения и всеми его WebView. Когда обычный доступ восстановится, выключи переключатель и сохрани настройки.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Использовать HTTP-прокси")
-                    Switch(
-                        checked = proxyEnabled,
-                        onCheckedChange = {
-                            proxyEnabled = it
-                            proxyMessage = ""
-                        }
-                    )
-                }
-                OutlinedTextField(
-                    value = proxyHost,
-                    onValueChange = { proxyHost = it; proxyMessage = "" },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Адрес прокси") },
-                    placeholder = { Text("proxy.example.com или IP") },
-                    singleLine = true,
-                    enabled = proxyEnabled
-                )
-                OutlinedTextField(
-                    value = proxyPort,
-                    onValueChange = { value ->
-                        proxyPort = value.filter(Char::isDigit).take(5)
-                        proxyMessage = ""
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Порт") },
-                    placeholder = { Text("8080") },
-                    singleLine = true,
-                    enabled = proxyEnabled
-                )
-                OutlinedTextField(
-                    value = proxyUsername,
-                    onValueChange = { proxyUsername = it; proxyMessage = "" },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Логин прокси (необязательно)") },
-                    singleLine = true,
-                    enabled = proxyEnabled
-                )
-                OutlinedTextField(
-                    value = proxyPassword,
-                    onValueChange = { proxyPassword = it; proxyMessage = "" },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Пароль прокси (необязательно)") },
-                    singleLine = true,
-                    enabled = proxyEnabled,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
-                )
-                Text(
-                    "Вводи адрес сервера и порт, а не VPN-ссылку. Оставь логин и пароль пустыми, если прокси без авторизации.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
-                if (proxyMessage.isNotBlank()) {
-                    Text(
-                        proxyMessage,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (proxyMessage.startsWith("Не удалось") || proxyMessage.startsWith("Проверь") || proxyMessage.startsWith("Эта версия")) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        }
-                    )
-                }
+                HorizontalDivider()
+
                 OutlinedButton(
                     onClick = {
-                        val port = proxyPort.toIntOrNull()
-                        if (proxyEnabled && (proxyHost.isBlank() || port == null || port !in 1..65535 || proxyHost.contains("://") || proxyHost.contains("/"))) {
-                            proxyMessage = "Проверь адрес прокси и порт от 1 до 65535."
-                        } else {
-                            val config = AppProxyConfig(
-                                enabled = proxyEnabled,
-                                host = proxyHost.trim(),
-                                port = port ?: 8080,
-                                username = proxyUsername,
-                                password = proxyPassword
-                            )
-                            try {
-                                AppProxySettings.save(context, config)
-                                AppProxySettings.applyWebViewProxy(context) { success, message ->
-                                    proxyMessage = message
-                                    refreshKey++
-                                }
-                            } catch (e: Exception) {
-                                proxyMessage = e.message ?: "Не удалось сохранить прокси."
-                            }
-                        }
+                        proxyPasswordEntry = ""
+                        proxyPasswordError = false
+                        showProxyPasswordDialog = true
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Сохранить и применить прокси")
+                    Icon(Icons.Default.Lock, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Настройки прокси аккаунтов")
                 }
+                Text(
+                    "Раздел защищён паролем 1988. Для каждого аккаунта можно сохранить отдельный HTTP-прокси.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
 
                 HorizontalDivider()
 
@@ -414,6 +328,214 @@ fun BackgroundSettingsDialog(
             }
         }
     )
+
+    if (showProxyPasswordDialog) {
+        AlertDialog(
+            onDismissRequest = { showProxyPasswordDialog = false },
+            title = { Text("Пароль для настроек прокси") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Введи пароль, чтобы открыть настройки прокси аккаунтов.")
+                    OutlinedTextField(
+                        value = proxyPasswordEntry,
+                        onValueChange = {
+                            proxyPasswordEntry = it
+                            proxyPasswordError = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Пароль") },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                    )
+                    if (proxyPasswordError) {
+                        Text(
+                            "Неверный пароль.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (proxyPasswordEntry == "1988") {
+                            showProxyPasswordDialog = false
+                            showProxySettingsDialog = true
+                            proxyPasswordEntry = ""
+                            proxyPasswordError = false
+                        } else {
+                            proxyPasswordError = true
+                        }
+                    }
+                ) {
+                    Text("Открыть")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showProxyPasswordDialog = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+
+    if (showProxySettingsDialog) {
+        AccountProxySettingsDialog(
+            accounts = accounts,
+            onDismiss = { showProxySettingsDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun AccountProxySettingsDialog(
+    accounts: List<MangaBuffAccount>,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Прокси по аккаунтам") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.68f).dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (accounts.isEmpty()) {
+                    Text("Сначала добавь аккаунт.")
+                } else {
+                    Text(
+                        "Прокси включается отдельно для каждого аккаунта. Перед запуском задач приложение назначает WebView прокси активного аккаунта; задачи аккаунтов выполняются по очереди.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    accounts.forEach { account ->
+                        AccountProxySettingsCard(account = account)
+                        if (account != accounts.last()) HorizontalDivider()
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) { Text("Готово") }
+        }
+    )
+}
+
+@Composable
+private fun AccountProxySettingsCard(account: MangaBuffAccount) {
+    val context = LocalContext.current
+    val savedConfig = remember(account.id) { AppProxySettings.read(context, account.id) }
+    var enabled by remember(account.id) { mutableStateOf(savedConfig.enabled) }
+    var host by remember(account.id) { mutableStateOf(savedConfig.host) }
+    var port by remember(account.id) { mutableStateOf(savedConfig.port.toString()) }
+    var username by remember(account.id) { mutableStateOf(savedConfig.username) }
+    var password by remember(account.id) { mutableStateOf(savedConfig.password) }
+    var status by remember(account.id) { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    account.username.ifBlank { "Аккаунт без имени" },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                Text(
+                    if (enabled) "Прокси включён" else "Прямое подключение",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                )
+            }
+            Switch(checked = enabled, onCheckedChange = { enabled = it; status = "" })
+        }
+
+        OutlinedTextField(
+            value = host,
+            onValueChange = { host = it; status = "" },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Адрес прокси") },
+            placeholder = { Text("IP или имя хоста") },
+            singleLine = true,
+            enabled = enabled
+        )
+        OutlinedTextField(
+            value = port,
+            onValueChange = { port = it.filter(Char::isDigit).take(5); status = "" },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Порт") },
+            placeholder = { Text("8080") },
+            singleLine = true,
+            enabled = enabled
+        )
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it; status = "" },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Логин (необязательно)") },
+            singleLine = true,
+            enabled = enabled
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it; status = "" },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Пароль (необязательно)") },
+            singleLine = true,
+            enabled = enabled,
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+        )
+        OutlinedButton(
+            onClick = {
+                val portNumber = port.toIntOrNull()
+                val config = AppProxyConfig(
+                    enabled = enabled,
+                    host = host.trim(),
+                    port = portNumber ?: 8080,
+                    username = username,
+                    password = password
+                )
+                if (enabled && (
+                    !config.isValid() ||
+                        host.contains("://") ||
+                        host.contains("/")
+                    )
+                ) {
+                    status = "Проверь адрес прокси и порт от 1 до 65535."
+                } else {
+                    try {
+                        AppProxySettings.save(context, account.id, config)
+                        status = "Сохранено. Применится перед следующим запуском задач этого аккаунта."
+                    } catch (e: Exception) {
+                        status = e.message ?: "Не удалось сохранить прокси."
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Сохранить прокси этого аккаунта")
+        }
+        if (status.isNotBlank()) {
+            Text(
+                status,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (status.startsWith("Проверь") || status.startsWith("Не удалось")) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                }
+            )
+        }
+    }
 }
 
 @Composable
