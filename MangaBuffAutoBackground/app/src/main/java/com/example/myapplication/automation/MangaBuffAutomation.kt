@@ -15,6 +15,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.example.myapplication.data.GlobalSettings
+import com.example.myapplication.data.ReaderEngineModes
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.DailyStats
@@ -300,7 +301,11 @@ class MangaBuffAutomation(
     private var backgroundConfirmationTickInFlight = false
     private var backgroundConfirmationTickRequestId = 0L
 
-    private fun startBackgroundScroll(accountUsername: String, webView: WebView) {
+    private fun startBackgroundScroll(
+        accountUsername: String,
+        webView: WebView,
+        readerEngineMode: Int = ReaderEngineModes.HYBRID
+    ) {
         mainHandler.post {
             if (backgroundScrollActive && backgroundScrollWebView === webView) return@post
 
@@ -346,10 +351,15 @@ class MangaBuffAutomation(
                         log(accountUsername, "READER: BACKGROUND_SCROLL_STATE screenOff=$screenOff")
                     }
 
-                    if (screenOff) {
-                        // A detached WebView can report a 0px/1px DOM viewport even while
-                        // its native view has a valid measured size. Pass the native CSS
-                        // viewport to the reader before every locked-screen JS scroll tick.
+                    if (
+                        screenOff ||
+                        readerEngineMode == ReaderEngineModes.KOTLIN_TICK ||
+                        readerEngineMode == ReaderEngineModes.SITE_AUTOSCROLL
+                    ) {
+                        // Experimental engines receive a native controller tick even when the
+                        // display is on, so their behavior can be compared consistently.
+                        // A detached WebView may report a 0px/1px DOM viewport after lock; pass
+                        // the measured Android viewport before running each locked/experimental tick.
                         try {
                             val density = target.resources.displayMetrics.density.coerceAtLeast(0.1f)
                             val metrics = target.resources.displayMetrics
@@ -536,7 +546,14 @@ class MangaBuffAutomation(
                                     true
                                 )
                                 backgroundLastProgressAt = tickNow
-                                if (screenOff) {
+                                if (readerEngineMode == ReaderEngineModes.SITE_AUTOSCROLL) {
+                                    log(
+                                        accountUsername,
+                                        "READER: SITE_AUTOSCROLL_STALLED idleMs=$idleMs " +
+                                            "remaining=$backgroundRemaining recovery=disabled_for_mode_test",
+                                        true
+                                    )
+                                } else if (screenOff) {
                                     dispatchBackgroundRecoverySwipe(accountUsername, target, generation)
                                 } else {
                                     try {
@@ -7447,6 +7464,11 @@ class MangaBuffAutomation(
         webView: WebView
     ) {
         EventDropToggleRegistry.initializeIfAbsent(account.id, settings.eventsEnabled)
+        val readerEngineMode = ReaderEngineModes.normalize(settings.readerEngineMode)
+        log(
+            account.username,
+            "READER: ENGINE_SELECTED id=$readerEngineMode name=${ReaderEngineModes.label(readerEngineMode)}"
+        )
         log(account.username, "READER: OPEN")
 
         currentMangaUrl = ensureCanonicalMangaUrl(account.getSafeActiveMangaUrl())
@@ -7510,7 +7532,8 @@ class MangaBuffAutomation(
                     {},
                     nextChapterUrlToOpen,
                     siteAutoscrollEnabled = settings.readerSiteAutoscroll,
-                    siteAutoscrollHalfSpeed = settings.readerSiteAutoscrollHalfSpeed
+                    siteAutoscrollHalfSpeed = settings.readerSiteAutoscrollHalfSpeed,
+                    readerEngineMode = readerEngineMode
                 )
             ) {
                 is ReaderResult.ChapterRead -> {
@@ -7711,7 +7734,8 @@ class MangaBuffAutomation(
         onStepInfo: (String) -> Unit,
         startUrl: String = "",
         siteAutoscrollEnabled: Boolean = true,
-        siteAutoscrollHalfSpeed: Boolean = false
+        siteAutoscrollHalfSpeed: Boolean = false,
+        readerEngineMode: Int = ReaderEngineModes.HYBRID
     ): ReaderResult = suspendCancellableCoroutine { continuation ->
 
         var resumed = false
@@ -7897,7 +7921,7 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun startBackgroundScroll() {
                     mainHandler.post {
-                        startBackgroundScroll(account.username, webView)
+                        startBackgroundScroll(account.username, webView, readerEngineMode)
                     }
                 }
 
