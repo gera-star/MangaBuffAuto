@@ -44,7 +44,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.coroutineContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import java.util.concurrent.ConcurrentHashMap
 
 class MangaBuffForegroundService : Service() {
@@ -325,19 +328,32 @@ class MangaBuffForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private suspend fun applyProxyForAccount(account: MangaBuffAccount) {
+        suspendCancellableCoroutine<Unit> { continuation ->
+            AppProxySettings.applyWebViewProxy(applicationContext, account.id) { success, message ->
+                publishLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "PROXY",
+                        message = "ACCOUNT_PROXY_APPLY accountId=${account.id} enabled=${AppProxySettings.read(applicationContext, account.id).enabled} success=$success detail=$message",
+                        isError = !success
+                    )
+                )
+                if (!continuation.isActive) return@applyWebViewProxy
+                if (success) {
+                    continuation.resume(Unit)
+                } else {
+                    continuation.resumeWithException(IllegalStateException(message))
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        // Apply the saved app-wide WebView proxy before any account WebView is created.
-        AppProxySettings.applyWebViewProxy(applicationContext) { success, message ->
-            publishLog(
-                LogEntry(
-                    component = "PROXY",
-                    message = "BG: WEBVIEW_PROXY_APPLY success=$success detail=$message",
-                    isError = !success
-                )
-            )
-        }
+        // A WebView proxy is process-wide. It is switched for the account that owns
+        // the shared execution slot, immediately before that account's run starts.
         // Run deferred WebView-profile deletions before any account can load a Profile handle.
         cleanupPendingProfileDeletes()
 
@@ -676,6 +692,7 @@ class MangaBuffForegroundService : Service() {
                 )
                 publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
 
+                applyProxyForAccount(account)
                 automationRunner.runForAccount(
                     account = account,
                     settings = repository.getSettings(),
