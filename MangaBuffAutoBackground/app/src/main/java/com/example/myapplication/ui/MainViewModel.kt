@@ -70,7 +70,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             component = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_COMPONENT)
                                 .orEmpty().ifBlank { "BG" },
                             message = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_MESSAGE).orEmpty(),
-                            isError = intent?.getBooleanExtra(MangaBuffForegroundService.EXTRA_ERROR, false) ?: false
+                            isError = intent?.getBooleanExtra(MangaBuffForegroundService.EXTRA_ERROR, false) ?: false,
+                            accountId = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_ACCOUNT_ID).orEmpty(),
+                            task = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_LOG_TASK).orEmpty(),
+                            reason = intent?.getStringExtra(MangaBuffForegroundService.EXTRA_LOG_REASON).orEmpty(),
+                            attempt = intent?.getIntExtra(MangaBuffForegroundService.EXTRA_LOG_ATTEMPT, 0) ?: 0
                         )
                     )
                 }
@@ -678,6 +682,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun addLog(entry: LogEntry) {
-        _logs.update { appendLogEntry(it, entry) }
+        val account = _accounts.value.firstOrNull {
+            (entry.accountId.isNotBlank() && it.id == entry.accountId) ||
+                (entry.username.isNotBlank() && (it.username == entry.username || it.id == entry.username))
+        }
+        val normalizedEntry = entry.copy(
+            accountId = entry.accountId.ifBlank { account?.id.orEmpty() },
+            task = entry.task.ifBlank { account?.currentTask.orEmpty().ifBlank { "Система" } },
+            reason = entry.reason.ifBlank { entry.message },
+            attempt = entry.attempt.coerceAtLeast(0)
+        )
+        _logs.update { appendLogEntry(it, normalizedEntry) }
     }
 }
