@@ -76,7 +76,7 @@ class TowerCycleAlarmReceiver : BroadcastReceiver() {
                     retryAt,
                     pendingIntent(context, accountId, endsAtMillis, nextAttempt)
                 )
-                val message = "Не удалось запустить задачу башни: $reason. Повтор через 1 минуту ($nextAttempt/\${TowerDeliveryRetryPolicy.MAX_RETRIES})."
+                val message = "Не удалось запустить задачу башни: $reason. Повтор через 1 минуту ($nextAttempt/${TowerDeliveryRetryPolicy.MAX_RETRIES})."
                 Log.w(TAG, "Scheduled Tower delivery retry accountId=$accountId retryAt=$retryAt attempt=$nextAttempt reason=$reason")
                 showDeliveryNotification(context, accountId, message, notificationId(accountId))
                 return
