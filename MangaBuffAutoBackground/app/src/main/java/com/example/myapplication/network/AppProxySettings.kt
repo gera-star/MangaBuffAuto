@@ -86,7 +86,11 @@ object AppProxySettings {
         val executor = ContextCompat.getMainExecutor(appContext)
         try {
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
-                onComplete(false, "Эта версия Android System WebView не поддерживает прокси приложения.")
+                if (config.enabled) {
+                    onComplete(false, "Эта версия Android System WebView не поддерживает прокси приложения.")
+                } else {
+                    onComplete(true, "Прокси выключен.")
+                }
                 return
             }
 
