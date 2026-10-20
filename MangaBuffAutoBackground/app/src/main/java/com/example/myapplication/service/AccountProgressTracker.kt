@@ -32,7 +32,7 @@ internal enum class ProgressStage(val timeoutMs: Long) {
         fun fromText(value: String): ProgressStage {
             val text = value.lowercase()
             return when {
-                text.contains("battle") || text.contains("бо") -> BATTLE
+                text.contains("battle") || text.contains("бой") || text.contains("бои") || text.contains("боев") || text.contains("боёв") -> BATTLE
                 text.contains("tower") || text.contains("баш") -> TOWER
                 text.contains("ads") || text.contains("реклам") -> ADVERTISEMENT
                 text.contains("mine") || text.contains("шахт") -> MINE
