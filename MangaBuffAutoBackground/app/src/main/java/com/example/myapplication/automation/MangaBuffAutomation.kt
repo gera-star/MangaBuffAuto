@@ -4133,13 +4133,17 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ): TaskResult {
-        val battleTarget = settings.battleTargetCount.coerceAtLeast(0)
+        val configuredBattleTarget = settings.battleTargetCount.coerceAtLeast(0)
+        val dailyBattleAttempts = dailyStatsForToday().battleAttempts.coerceAtLeast(0)
+        val battleTarget = DailyTarget.remaining(configuredBattleTarget, dailyBattleAttempts)
         var battleCount = 0
         var winCount = 0
 
         log(
             account.username,
-            "BATTLE: START targetBattles=" + battleTarget + " targetWins=" + BATTLE_WIN_TARGET
+            "BATTLE: START configuredDailyTarget=" + configuredBattleTarget +
+                " completedToday=" + dailyBattleAttempts +
+                " remainingBattles=" + battleTarget + " targetWins=" + BATTLE_WIN_TARGET
         )
         updateStatus(
             account,
