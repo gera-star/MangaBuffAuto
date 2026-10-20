@@ -10,10 +10,12 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.ViewConfiguration
 import android.webkit.JavascriptInterface
+import android.webkit.HttpAuthHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.example.myapplication.network.AppProxySettings
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.ReaderEngineModes
 import com.example.myapplication.data.LogEntry
@@ -149,6 +151,17 @@ class MangaBuffAutomation(
         private val clientWebView: WebView
     ) : WebViewClient() {
 
+        override fun onReceivedHttpAuthRequest(
+            view: WebView?,
+            handler: HttpAuthHandler,
+            host: String?,
+            realm: String?
+        ) {
+            if (!AppProxySettings.handleWebViewProxyAuth(context, host, handler)) {
+                handler.cancel()
+            }
+        }
+
         override fun onRenderProcessGone(
             view: WebView?,
             detail: android.webkit.RenderProcessGoneDetail?
@@ -247,11 +260,13 @@ class MangaBuffAutomation(
         private const val EVENTS_CANDY_DAILY_LIMIT = 35
     }
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
+    private val httpClient = AppProxySettings.configureOkHttp(
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true),
+        context
+    ).build()
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val accountIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
