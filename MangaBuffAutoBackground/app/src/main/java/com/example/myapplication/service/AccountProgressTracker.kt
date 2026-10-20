@@ -46,15 +46,21 @@ internal enum class ProgressStage(val timeoutMs: Long) {
 
         fun fromEvent(message: String, component: String, currentTask: String): ProgressStage {
             val value = "${component.uppercase()} ${message.uppercase()}"
+            val componentName = component.uppercase()
             return when {
-                value.contains("BATTLE") || value.contains("БОЙ") || value.contains("БОЕВ") -> BATTLE
-                value.contains("TOWER") || value.contains("БАШН") -> TOWER
-                value.contains("ADS:") || value.contains("AD_") || value.contains("РЕКЛАМ") -> ADVERTISEMENT
-                value.contains("MINE:") || value.contains("ШAХТ") || value.contains("ШАХТ") -> MINE
-                value.contains("READER:") || value.contains("CHAPTER") || value.contains("ЧИТАЛ") -> READER
-                value.contains("COMMENT") || value.contains("КОММЕНТ") -> COMMENT
-                value.contains("PROMO") || value.contains("ПРОМО") -> PROMO
-                value.contains("BALANCE") || value.contains("STAT:") || value.contains("БАЛАНС") -> BALANCE
+                componentName.contains("BATTLE") || value.contains("BATTLE") ||
+                    value.contains("БОЙ") || value.contains("БОЕВ") -> BATTLE
+                componentName.contains("TOWER") || value.contains("TOWER") || value.contains("БАШН") -> TOWER
+                componentName.contains("ADS") || value.contains("ADS:") ||
+                    value.contains("AD_") || value.contains("РЕКЛАМ") -> ADVERTISEMENT
+                componentName.contains("MINE") || value.contains("MINE:") ||
+                    value.contains("ШАХТ") -> MINE
+                componentName.contains("READER") || value.contains("CHAPTER") ||
+                    value.contains("ЧИТАЛ") || value.contains("SCROLL_PROGRESS") -> READER
+                componentName.contains("COMMENT") || value.contains("COMMENT") || value.contains("КОММЕНТ") -> COMMENT
+                componentName.contains("PROMO") || value.contains("PROMO") || value.contains("ПРОМО") -> PROMO
+                componentName.contains("BALANCE") || value.contains("BALANCE") ||
+                    value.contains("STAT:") || value.contains("БАЛАНС") -> BALANCE
                 else -> fromText(currentTask)
             }
         }
