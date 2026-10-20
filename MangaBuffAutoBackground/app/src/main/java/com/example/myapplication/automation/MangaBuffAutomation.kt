@@ -11196,7 +11196,11 @@ class MangaBuffAutomation(
                                                 humanScroll();
                                             });
                                         } else {
-                                            AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_DISABLED_BY_SETTING');
+                                            AndroidReaderBridge.onLogStep(
+                                                ${readerEngineMode} === 1
+                                                    ? 'READER: MANGABUFF_AUTOSCROLL_DISABLED_BY_KOTLIN_TEST_MODE'
+                                                    : 'READER: MANGABUFF_AUTOSCROLL_DISABLED_BY_SETTING'
+                                            );
                                             humanScroll();
                                         }
                                     }
