@@ -1468,12 +1468,17 @@ class MangaBuffForegroundService : Service() {
         }
         if (previousState == nextState) return
         val account = repository.getAccounts().firstOrNull { it.id == accountId }
+        val taskName = accountCurrentTaskLabels[accountId]
+            ?: reason.substringAfter("task=", "unassigned").substringBefore(" ")
+        val attempt = accountTaskAttempts[accountId] ?: 0
+        val timestamp = System.currentTimeMillis()
         publishLog(
             LogEntry(
+                timestamp = timestamp,
                 username = account?.username ?: accountId,
                 component = "TASK_STATE",
-                message = "TASK_STATE accountId=$accountId from=$previousState to=$nextState " +
-                    "event=$event reason=${reason.take(180)} attempt=${accountTaskAttempts[accountId] ?: 0}"
+                message = "TASK_STATE accountId=$accountId task=$taskName from=$previousState to=$nextState " +
+                    "event=$event reason=${reason.take(180)} attempt=$attempt time=$timestamp"
             )
         )
     }
