@@ -309,6 +309,8 @@ class MangaBuffForegroundService : Service() {
     private val missingWebViewSince = ConcurrentHashMap<String, Long>()
     private val accountProgressTrackers = ConcurrentHashMap<String, AccountProgressTracker>()
     private val accountCurrentTaskLabels = ConcurrentHashMap<String, String>()
+    private val accountTaskStates = ConcurrentHashMap<String, AccountTaskState>()
+    private val accountTaskAttempts = ConcurrentHashMap<String, Int>()
     private val recoveryBudget = RecoveryBudget(RECOVERY_MAX_PER_WINDOW, RECOVERY_WINDOW_MS)
     @Volatile private var lastWakeLockAcquireAtMs = 0L
     @Volatile private var networkConnected = false
@@ -660,6 +662,8 @@ class MangaBuffForegroundService : Service() {
             runtimePrefs.edit().remove(promoCodeKey).apply()
         }
 
+        val attemptNumber = accountTaskAttempts.compute(accountId) { _, previous -> (previous ?: 0) + 1 } ?: 1
+        transitionAccountTaskState(accountId, AccountTaskEvent.QUEUED, "task=${taskType.title} attempt=$attemptNumber")
         accountJobs[accountId]?.cancel()
         automationRunner.stopAccount(accountId)
         persistRun(accountId, taskType)
@@ -682,6 +686,9 @@ class MangaBuffForegroundService : Service() {
             val currentJob = coroutineContext[Job]
             var hasExecutionPermit = false
             var exclusiveExecutionPermit: AccountExecutionGate.Permit? = null
+            var runCompleted = false
+            var runCancelled = false
+            var runFailureReason: String? = null
             if (currentJob != null) accountExecutionQueue.markQueued(accountId, currentJob)
 
             try {
@@ -725,6 +732,7 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
                 publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
+                transitionAccountTaskState(accountId, AccountTaskEvent.STARTED, "queue_and_gate_acquired task=${taskType.title}")
 
                 applyProxyForAccount(account)
                 acquireWakeLockIfNeeded()
@@ -734,7 +742,10 @@ class MangaBuffForegroundService : Service() {
                     taskType = taskType,
                     promoCode = effectivePromoCode
                 )
+                runCompleted = true
             } catch (e: CancellationException) {
+                runCancelled = true
+                runFailureReason = e.message ?: "cancelled"
                 publishLog(
                     LogEntry(
                         username = account.username,
@@ -743,6 +754,7 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
             } catch (e: Exception) {
+                runFailureReason = e.message ?: e.javaClass.simpleName
                 publishLog(
                     LogEntry(
                         username = account.username,
@@ -772,6 +784,7 @@ class MangaBuffForegroundService : Service() {
                         val recoveryExhausted = recoveryWanted && !shouldRecover
 
                         if (shouldRecover) {
+                            transitionAccountTaskState(accountId, AccountTaskEvent.RECOVERY_REQUESTED, "renderer_or_webview_recovery")
                             publishLog(
                                 LogEntry(
                                     username = account.username,
@@ -812,6 +825,16 @@ class MangaBuffForegroundService : Service() {
                             accountRecoveryRestartJobs[accountId] = restartJob
                             restartJob.start()
                         } else {
+                            when {
+                                recoveryExhausted -> transitionAccountTaskState(accountId, AccountTaskEvent.FAILED, "recovery_budget_exhausted")
+                                runFailureReason != null && (runCancelled && runFailureReason.contains("NO_PROGRESS", ignoreCase = true)) ->
+                                    transitionAccountTaskState(accountId, AccountTaskEvent.FAILED, runFailureReason.orEmpty())
+                                runFailureReason != null && !runCancelled ->
+                                    transitionAccountTaskState(accountId, AccountTaskEvent.FAILED, runFailureReason.orEmpty())
+                                runCancelled -> transitionAccountTaskState(accountId, AccountTaskEvent.STOPPED, runFailureReason.orEmpty())
+                                runCompleted -> transitionAccountTaskState(accountId, AccountTaskEvent.COMPLETED, "run_finished")
+                                else -> transitionAccountTaskState(accountId, AccountTaskEvent.FAILED, "run_ended_without_result")
+                            }
                             if (recoveryExhausted) {
                                 publishLog(
                                     LogEntry(
@@ -829,13 +852,15 @@ class MangaBuffForegroundService : Service() {
                             if (taskType == TaskType.PROMO) {
                                 runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
                             }
-                            publishStatus(
-                                accountId,
-                                if (recoveryExhausted) "Остановлено: слишком много сбоев WebView" else "Готово",
-                                false,
-                                "",
-                                0f
-                            )
+                            val terminalStatus = when {
+                                recoveryExhausted -> "Остановлено: слишком много сбоев WebView"
+                                runFailureReason != null && runCancelled && runFailureReason.contains("NO_PROGRESS", ignoreCase = true) ->
+                                    "Остановлено: нет прогресса — ${runFailureReason.orEmpty()}"
+                                runFailureReason != null && !runCancelled -> "Ошибка: ${runFailureReason.orEmpty()}"
+                                runCancelled -> "Остановлено: ${runFailureReason.orEmpty()}"
+                                else -> "Готово"
+                            }
+                            publishStatus(accountId, terminalStatus, false, "", 0f)
                             releaseWakeLockIfIdle()
                             stopSelfIfIdle()
                         }
@@ -857,6 +882,7 @@ class MangaBuffForegroundService : Service() {
     private fun requestAccountRecovery(accountId: String) {
         if (stoppingExplicitly || isAccountOffline(accountId)) return
         if (recoveryRequests.add(accountId)) {
+            transitionAccountTaskState(accountId, AccountTaskEvent.RECOVERY_REQUESTED, "webview_recovery_requested")
             publishLog(
                 LogEntry(
                     username = accountId,
@@ -938,6 +964,7 @@ class MangaBuffForegroundService : Service() {
                 ?: readPersistedRuns()[accountId]?.title.orEmpty()
             val accountName = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty()
             if (!normalizedValidated) {
+                transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_LOST, state)
                 val pauseText = if (!connected) {
                     "Пауза: нет сети"
                 } else {
@@ -952,6 +979,7 @@ class MangaBuffForegroundService : Service() {
                 )
                 publishStatus(accountId, pauseText, true, taskLabel, 0f)
             } else {
+                transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_RESTORED, reason)
                 val tracker = accountProgressTrackers[accountId]
                 val snapshot = tracker?.snapshot()
                 if (snapshot != null && snapshot.stage != ProgressStage.WAITING) {
@@ -971,6 +999,7 @@ class MangaBuffForegroundService : Service() {
 
     private suspend fun awaitValidatedNetwork(accountId: String, username: String, taskLabel: String) {
         if (networkValidated) return
+        transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_LOST, "waiting_for_validated_internet")
         publishLog(
             LogEntry(
                 username = username,
@@ -986,6 +1015,7 @@ class MangaBuffForegroundService : Service() {
             0f
         )
         while (!networkValidated) delay(1_000L)
+        transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_RESTORED, "validated_internet_available")
         publishLog(LogEntry(username = username, component = "NETWORK", message = "NETWORK_WAIT_FINISHED accountId=$accountId"))
         publishStatus(accountId, "Подготовка...", true, taskLabel, 0f)
     }
@@ -1414,6 +1444,31 @@ class MangaBuffForegroundService : Service() {
                 putExtra(EXTRA_CURRENT_TASK, currentTask)
                 putExtra(EXTRA_PROGRESS, progress)
             }
+        )
+    }
+
+    private fun transitionAccountTaskState(
+        accountId: String,
+        event: AccountTaskEvent,
+        reason: String
+    ) {
+        if (accountId.isBlank()) return
+        var previousState = AccountTaskState.WAITING
+        var nextState = AccountTaskState.WAITING
+        accountTaskStates.compute(accountId) { _, current ->
+            previousState = current ?: AccountTaskState.WAITING
+            nextState = AccountTaskLifecycle.transition(previousState, event)
+            nextState
+        }
+        if (previousState == nextState) return
+        val account = repository.getAccounts().firstOrNull { it.id == accountId }
+        publishLog(
+            LogEntry(
+                username = account?.username ?: accountId,
+                component = "TASK_STATE",
+                message = "TASK_STATE accountId=$accountId from=$previousState to=$nextState " +
+                    "event=$event reason=${reason.take(180)} attempt=${accountTaskAttempts[accountId] ?: 0}"
+            )
         )
     }
 
