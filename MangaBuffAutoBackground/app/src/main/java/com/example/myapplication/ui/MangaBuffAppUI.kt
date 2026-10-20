@@ -1484,6 +1484,7 @@ fun TasksTab(
     var readerChapters by remember { mutableStateOf(settings.readerChapters.toString()) }
     var battleTarget by remember { mutableStateOf(settings.battleTargetCount.toString()) }
     var showTowerUpgrades by remember { mutableStateOf(false) }
+    var readerEngineMenuExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(settings.readerChapters, settings.battleTargetCount) {
         readerChapters = settings.readerChapters.toString()
@@ -1725,6 +1726,76 @@ fun TasksTab(
                             compactText = true
                         )
                     }
+
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Читалка при выключенном экране",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "Режим применяется при следующем запуске чтения",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                        Box {
+                            TextButton(
+                                enabled = actionEnabled,
+                                onClick = { readerEngineMenuExpanded = true }
+                            ) {
+                                Text(
+                                    when (settings.readerEngineMode.coerceIn(0, 2)) {
+                                        1 -> "Kotlin-такт"
+                                        2 -> "Автоскролл сайта"
+                                        else -> "Гибридная"
+                                    },
+                                    maxLines = 1
+                                )
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Выбрать режим читалки")
+                            }
+                            DropdownMenu(
+                                expanded = readerEngineMenuExpanded,
+                                onDismissRequest = { readerEngineMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Гибридная (текущая)") },
+                                    enabled = actionEnabled,
+                                    onClick = {
+                                        onSaveSettings(settings.copy(readerEngineMode = 0))
+                                        readerEngineMenuExpanded = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Kotlin-такт (эксп.)") },
+                                    enabled = actionEnabled,
+                                    onClick = {
+                                        onSaveSettings(settings.copy(readerEngineMode = 1))
+                                        readerEngineMenuExpanded = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Автоскролл MangaBuff (эксп.)") },
+                                    enabled = actionEnabled,
+                                    onClick = {
+                                        onSaveSettings(settings.copy(readerEngineMode = 2))
+                                        readerEngineMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        "Экспериментальные режимы нужны для сравнения работы на заблокированном телефоне.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
                 }
             }
         }
