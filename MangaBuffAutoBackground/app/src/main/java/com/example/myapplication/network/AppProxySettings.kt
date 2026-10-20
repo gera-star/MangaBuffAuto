@@ -149,7 +149,7 @@ object AppProxySettings {
 
         builder.proxyAuthenticator(Authenticator { route, response ->
             val current = read(appContext)
-            val proxyRoute = route?.proxy()?.type() == Proxy.Type.HTTP
+            val proxyRoute = route?.proxy?.type() == Proxy.Type.HTTP
             if (
                 !current.isEnabledAndValid() ||
                 current.username.isBlank() ||
