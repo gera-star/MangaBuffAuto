@@ -8728,7 +8728,24 @@ class MangaBuffAutomation(
                         // mutable global lastKnownReadQuest.
                         val chapterReadQuestBefore = lastKnownReadQuest
 
-                        currentMangaUrl = mangaUrl
+                        // A chapter page can reveal a different active manga than the one
+                        // restored at task startup. Load that manga's persisted chapter total
+                        // immediately so subsequent chapter navigations don't reopen the list
+                        // and recount the same manga on every chapter.
+                        val previousMangaUrl = ensureCanonicalMangaUrl(currentMangaUrl)
+                        val canonicalChapterMangaUrl = ensureCanonicalMangaUrl(mangaUrl)
+                        if (canonicalChapterMangaUrl.isNotBlank() &&
+                            canonicalChapterMangaUrl != previousMangaUrl
+                        ) {
+                            val cachedTotal = loadCachedMangaChapterTotal(canonicalChapterMangaUrl)
+                            totalMangaChapters = cachedTotal
+                            log(
+                                account.username,
+                                "READER: MANGA_CHAPTER_TOTAL_RESTORE manga=$canonicalChapterMangaUrl " +
+                                    "cachedChapterTotal=$cachedTotal changed=true"
+                            )
+                        }
+                        currentMangaUrl = canonicalChapterMangaUrl
                         lastFinishedChapterUrl = currentUrl
                         lastFinishedChapterNumber = chapterNum
 
