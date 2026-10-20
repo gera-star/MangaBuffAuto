@@ -96,6 +96,9 @@ class MangaBuffForegroundService : Service() {
         const val EXTRA_MESSAGE = "EXTRA_MESSAGE"
         const val EXTRA_COMPONENT = "EXTRA_COMPONENT"
         const val EXTRA_LOG_TIMESTAMP = "EXTRA_LOG_TIMESTAMP"
+        const val EXTRA_LOG_TASK = "EXTRA_LOG_TASK"
+        const val EXTRA_LOG_REASON = "EXTRA_LOG_REASON"
+        const val EXTRA_LOG_ATTEMPT = "EXTRA_LOG_ATTEMPT"
         const val EXTRA_ERROR = "EXTRA_ERROR"
         const val EXTRA_IS_RUNNING = "EXTRA_IS_RUNNING"
         const val EXTRA_CURRENT_TASK = "EXTRA_CURRENT_TASK"
@@ -1522,6 +1525,13 @@ class MangaBuffForegroundService : Service() {
             val marker = "LOG:${entry.component}:${entry.message.take(240)}"
             accountProgressTrackers.computeIfAbsent(progressAccountId) { AccountProgressTracker() }.mark(stage, marker)
         }
+        val currentTask = progressAccountId?.let { accountCurrentTaskLabels[it] }.orEmpty()
+        val attempt = progressAccountId?.let { accountTaskAttempts[it] } ?: 0
+        val reason = when {
+            entry.reason.isNotBlank() -> entry.reason
+            entry.isError -> entry.message
+            else -> entry.message
+        }
         sendRuntimeEvent(
             EVENT_LOG,
             accountId = progressAccountId,
@@ -1530,6 +1540,9 @@ class MangaBuffForegroundService : Service() {
                 putExtra(EXTRA_MESSAGE, entry.message)
                 putExtra(EXTRA_COMPONENT, entry.component)
                 putExtra(EXTRA_LOG_TIMESTAMP, entry.timestamp)
+                putExtra(EXTRA_LOG_TASK, entry.task.ifBlank { currentTask })
+                putExtra(EXTRA_LOG_REASON, reason)
+                putExtra(EXTRA_LOG_ATTEMPT, if (entry.attempt > 0) entry.attempt else attempt)
                 putExtra(EXTRA_ERROR, entry.isError)
             }
         )
