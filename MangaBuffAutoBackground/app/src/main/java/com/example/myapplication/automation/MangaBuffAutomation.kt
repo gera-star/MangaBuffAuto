@@ -170,6 +170,7 @@ class MangaBuffAutomation(
         private const val BACKGROUND_SCROLL_METRICS_TIMEOUT_MS = 4_500L
         private const val BACKGROUND_SCROLL_STALL_MS = 8_000L
         private const val BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS = 15_000L
+        private const val BACKGROUND_WEBVIEW_RESUME_PULSE_INTERVAL_MS = 30_000L
         private const val BACKGROUND_CONFIRMATION_TICK_INTERVAL_MS = 500L
         private const val BACKGROUND_CONFIRMATION_TICK_TIMEOUT_MS = 4_500L
         private const val BACKGROUND_SCROLL_METRICS_JS = """
@@ -300,6 +301,7 @@ class MangaBuffAutomation(
     private var backgroundLastConfirmationTimeoutLogAt = 0L
     private var backgroundConfirmationTickInFlight = false
     private var backgroundConfirmationTickRequestId = 0L
+    private var backgroundLastWebViewResumePulseAt = 0L
 
     private fun startBackgroundScroll(
         accountUsername: String,
@@ -332,6 +334,7 @@ class MangaBuffAutomation(
             backgroundConfirmationTickAt = 0L
             backgroundLastConfirmationTimeoutLogAt = 0L
             backgroundConfirmationTickInFlight = false
+            backgroundLastWebViewResumePulseAt = 0L
 
             val runnable = object : Runnable {
                 override fun run() {
@@ -351,10 +354,43 @@ class MangaBuffAutomation(
                         log(accountUsername, "READER: BACKGROUND_SCROLL_STATE screenOff=$screenOff")
                     }
 
+                    val hiddenOrLocked = screenOff || !target.hasWindowFocus() || !target.isShown
+                    if (
+                        readerEngineMode == ReaderEngineModes.WEBVIEW_RESUME_PULSE &&
+                        hiddenOrLocked &&
+                        (backgroundLastWebViewResumePulseAt == 0L ||
+                            SystemClock.elapsedRealtime() - backgroundLastWebViewResumePulseAt >=
+                                BACKGROUND_WEBVIEW_RESUME_PULSE_INTERVAL_MS)
+                    ) {
+                        val pulseAt = SystemClock.elapsedRealtime()
+                        // onResume() is per-WebView; resumeTimers() is process-global for WebView timers.
+                        // This experimental mode tests whether resuming WebView processing helps
+                        // MangaBuff's own JavaScript autoscroll after the screen has been locked.
+                        try {
+                            target.onResume()
+                            target.resumeTimers()
+                            backgroundLastWebViewResumePulseAt = pulseAt
+                            log(
+                                accountUsername,
+                                "READER: WEBVIEW_RESUME_PULSE_APPLIED intervalMs=" +
+                                    BACKGROUND_WEBVIEW_RESUME_PULSE_INTERVAL_MS +
+                                    " screenOff=$screenOff shown=${target.isShown} focus=${target.hasWindowFocus()}"
+                            )
+                        } catch (e: Exception) {
+                            backgroundLastWebViewResumePulseAt = pulseAt
+                            log(
+                                accountUsername,
+                                "READER: WEBVIEW_RESUME_PULSE_ERROR error=${e.message}",
+                                true
+                            )
+                        }
+                    }
+
                     if (
                         screenOff ||
                         readerEngineMode == ReaderEngineModes.KOTLIN_TICK ||
-                        readerEngineMode == ReaderEngineModes.SITE_AUTOSCROLL
+                        readerEngineMode == ReaderEngineModes.SITE_AUTOSCROLL ||
+                        readerEngineMode == ReaderEngineModes.WEBVIEW_RESUME_PULSE
                     ) {
                         // Experimental engines receive a native controller tick even when the
                         // display is on, so their behavior can be compared consistently.
@@ -546,11 +582,19 @@ class MangaBuffAutomation(
                                     true
                                 )
                                 backgroundLastProgressAt = tickNow
-                                if (readerEngineMode == ReaderEngineModes.SITE_AUTOSCROLL) {
+                                if (
+                                    readerEngineMode == ReaderEngineModes.SITE_AUTOSCROLL ||
+                                    readerEngineMode == ReaderEngineModes.WEBVIEW_RESUME_PULSE
+                                ) {
                                     log(
                                         accountUsername,
-                                        "READER: SITE_AUTOSCROLL_STALLED idleMs=$idleMs " +
-                                            "remaining=$backgroundRemaining recovery=disabled_for_mode_test",
+                                        if (readerEngineMode == ReaderEngineModes.WEBVIEW_RESUME_PULSE) {
+                                            "READER: WEBVIEW_RESUME_PULSE_NO_PROGRESS idleMs=$idleMs " +
+                                                "remaining=$backgroundRemaining recovery=disabled_for_mode_test"
+                                        } else {
+                                            "READER: SITE_AUTOSCROLL_STALLED idleMs=$idleMs " +
+                                                "remaining=$backgroundRemaining recovery=disabled_for_mode_test"
+                                        },
                                         true
                                     )
                                 } else if (screenOff) {
@@ -10786,7 +10830,8 @@ class MangaBuffAutomation(
                                         // Keep the site's own autoscroll running alongside the
                                         // native/custom background scroll; normal stop paths still pause it.
                                         var nativeTickMode = ${readerEngineMode} === 1;
-                                        var siteAutoscrollOnlyMode = ${readerEngineMode} === 2;
+                                        var siteAutoscrollOnlyMode =
+                                            ${readerEngineMode} === 2 || ${readerEngineMode} === 3;
 
                                         // Kotlin-tick mode pauses the site's own scroller; hybrid mode
                                         // retains existing behavior; site-autoscroll mode deliberately
@@ -11186,6 +11231,7 @@ class MangaBuffAutomation(
                                         // The app's own background scroll remains active in either mode.
                                         if (
                                             ${readerEngineMode} === 2 ||
+                                            ${readerEngineMode} === 3 ||
                                             (${readerEngineMode} === 0 && ${siteAutoscrollEnabled})
                                         ) {
                                             AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_SETUP_BEGIN');
@@ -11195,10 +11241,14 @@ class MangaBuffAutomation(
                                                     ok
                                                         ? (${readerEngineMode} === 2
                                                             ? 'READER: SITE_AUTOSCROLL_READY source=MANGABUFF'
-                                                            : 'READER: MANGABUFF_AUTOSCROLL_ACTIVE_WITH_BACKGROUND_SCROLL')
+                                                            : (${readerEngineMode} === 3
+                                                                ? 'READER: WEBVIEW_RESUME_PULSE_SITE_AUTOSCROLL_READY'
+                                                                : 'READER: MANGABUFF_AUTOSCROLL_ACTIVE_WITH_BACKGROUND_SCROLL'))
                                                         : (${readerEngineMode} === 2
                                                             ? 'READER: SITE_AUTOSCROLL_CONFIG_FAILED_NO_FALLBACK'
-                                                            : 'READER: MANGABUFF_AUTOSCROLL_UNAVAILABLE_CUSTOM_SCROLL_ONLY')
+                                                            : (${readerEngineMode} === 3
+                                                                ? 'READER: WEBVIEW_RESUME_PULSE_AUTOSCROLL_CONFIG_FAILED_NO_FALLBACK'
+                                                                : 'READER: MANGABUFF_AUTOSCROLL_UNAVAILABLE_CUSTOM_SCROLL_ONLY'))
                                                 );
                                                 humanScroll();
                                             });
