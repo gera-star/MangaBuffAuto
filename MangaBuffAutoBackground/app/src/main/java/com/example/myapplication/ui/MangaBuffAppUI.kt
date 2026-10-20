@@ -1792,7 +1792,7 @@ fun TasksTab(
                         }
                     }
                     Text(
-                        "Экспериментальные режимы нужны для сравнения работы на заблокированном телефоне.",
+                        "Kotlin-такт отключает rAF; режим MangaBuff проверяет автоскролл сайта без автоматического перехода на прокрутку приложения.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
