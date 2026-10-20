@@ -2929,7 +2929,8 @@ class MangaBuffAutomation(
             )
         }
 
-        if (taskType == TaskType.ALL || taskType == TaskType.BATTLE) {
+        if ((taskType == TaskType.ALL || taskType == TaskType.BATTLE) &&
+            shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 0)) {
             coroutineContext.ensureActive()
             if (account.battleEnabled || taskType == TaskType.BATTLE) {
                 log(account.username, "TASK: BATTLE_START")
@@ -2950,8 +2951,10 @@ class MangaBuffAutomation(
                 log(account.username, "BATTLE: SKIPPED_DISABLED")
             }
         }
+        markSequenceStageCompleted(account, taskType, 0)
 
-        if (taskType == TaskType.ALL || taskType == TaskType.TOWER) {
+        if ((taskType == TaskType.ALL || taskType == TaskType.TOWER) &&
+            shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 1)) {
             coroutineContext.ensureActive()
             if (account.towerEnabled || taskType == TaskType.TOWER) {
                 log(account.username, "TASK: TOWER_START")
@@ -2963,8 +2966,10 @@ class MangaBuffAutomation(
                 log(account.username, "TOWER: SKIPPED_DISABLED")
             }
         }
+        markSequenceStageCompleted(account, taskType, 1)
 
-        if (taskType == TaskType.ALL || taskType == TaskType.ADS) {
+        if ((taskType == TaskType.ALL || taskType == TaskType.ADS) &&
+            shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 2)) {
             coroutineContext.ensureActive()
             if (account.advEnabled || taskType == TaskType.ADS) {
                 log(account.username, "TASK: ADS_START")
@@ -2985,8 +2990,10 @@ class MangaBuffAutomation(
                 }
             }
         }
+        markSequenceStageCompleted(account, taskType, 2)
 
-        if (taskType == TaskType.ALL || taskType == TaskType.MINE) {
+        if ((taskType == TaskType.ALL || taskType == TaskType.MINE) &&
+            shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 3)) {
             coroutineContext.ensureActive()
             if (account.mineEnabled || taskType == TaskType.MINE) {
                 log(account.username, "TASK: MINE_START")
@@ -3000,8 +3007,10 @@ class MangaBuffAutomation(
                 runDailyEventsRewardsAfterCalendar(account, settings, webView, source = "MINE")
             }
         }
+        markSequenceStageCompleted(account, taskType, 3)
 
-        if (taskType == TaskType.ALL || taskType == TaskType.READER) {
+        if ((taskType == TaskType.ALL || taskType == TaskType.READER) &&
+            shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 4)) {
             coroutineContext.ensureActive()
             if (account.readerEnabled || taskType == TaskType.READER) {
                 log(account.username, "TASK: READER_START")
@@ -3011,13 +3020,15 @@ class MangaBuffAutomation(
                 fetchAndLogBalanceInfo(account, webView)
             }
         }
+        markSequenceStageCompleted(account, taskType, 4)
 
         // Deck comments are a START-task action, not a side effect of statistics refresh.
         // fetchAndLogBalanceInfo() and the reader's periodic balance refresh never dispatch
         // this task. Only an explicit "Start all" or "Comments" run can enter this block,
         // and only when the per-account deck toggle is enabled.
         val deckCommentsRequestedByStart =
-            taskType == TaskType.ALL || taskType == TaskType.COMMENT
+            (taskType == TaskType.ALL || taskType == TaskType.COMMENT) &&
+                shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 5)
         if (deckCommentsRequestedByStart && account.deckCommentEnabled) {
             coroutineContext.ensureActive()
             log(
@@ -3044,8 +3055,10 @@ class MangaBuffAutomation(
                 "COMMENT: DECK_SKIPPED reason=NOT_DECK_TASK taskType=${taskType.title}"
             )
         }
+        markSequenceStageCompleted(account, taskType, 5)
 
-        if (taskType == TaskType.ALL || taskType == TaskType.COMMENT) {
+        if ((taskType == TaskType.ALL || taskType == TaskType.COMMENT) &&
+            shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 6)) {
             coroutineContext.ensureActive()
             if (account.commentEnabled || taskType == TaskType.COMMENT) {
                 log(account.username, "TASK: COMMENT_START")
@@ -3060,6 +3073,7 @@ class MangaBuffAutomation(
             }
 
         }
+        markSequenceStageCompleted(account, taskType, 6)
 
         if (taskType == TaskType.PROMO) {
             coroutineContext.ensureActive()
@@ -3069,6 +3083,7 @@ class MangaBuffAutomation(
         val finalSummary = fetchAndLogBalanceInfo(account, webView)
         updateStatus(account, finalSummary, false, "", 1.0f)
         log(account.username, "TASK: ACCOUNT_FINISHED type=${taskType.title}")
+        if (taskType == TaskType.ALL) clearSequenceCheckpoint(account.id)
     }
 
     // =========================================================
