@@ -92,6 +92,11 @@ internal class AccountProgressTracker(
     fun stalledForMs(now: Long = nowMs()): Long =
         (now - current.lastProgressAtMs).coerceAtLeast(0L)
 
+    fun hasRecentProgress(maxAgeMs: Long, now: Long = nowMs()): Boolean =
+        current.stage != ProgressStage.WAITING &&
+            maxAgeMs >= 0L &&
+            stalledForMs(now) <= maxAgeMs
+
     fun isTimedOut(now: Long = nowMs()): Boolean {
         val snapshot = current
         return snapshot.stage != ProgressStage.WAITING &&
