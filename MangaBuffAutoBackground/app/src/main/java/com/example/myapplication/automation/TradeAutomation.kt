@@ -88,7 +88,8 @@ class TradeAutomation(context: Context) {
                 .readTimeout(25, TimeUnit.SECONDS)
                 .writeTimeout(20, TimeUnit.SECONDS)
                 .followRedirects(true),
-            context
+            context,
+            account.id
         ).build()
 
         fun cancel() {
