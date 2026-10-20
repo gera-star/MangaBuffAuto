@@ -1032,6 +1032,9 @@ class MangaBuffForegroundService : Service() {
             while (isActive) {
                 delay(WATCHDOG_INTERVAL_MS)
                 if (stoppingExplicitly) continue
+                if (!networkCallbackRegistered) {
+                    refreshDefaultNetworkState("WATCHDOG_NETWORK_FALLBACK")
+                }
 
                 val now = System.currentTimeMillis()
                 val elapsedNow = SystemClock.elapsedRealtime()
