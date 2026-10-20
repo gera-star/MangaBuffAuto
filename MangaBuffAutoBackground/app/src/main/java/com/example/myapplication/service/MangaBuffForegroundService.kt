@@ -297,7 +297,7 @@ class MangaBuffForegroundService : Service() {
     // Use the dispatching Main dispatcher, not Main.immediate: account startup must not
     // finish inline inside onStartCommand/startAllInternal before every account Job is registered.
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val accountJobs = ConcurrentHashMap<String, Job>()
+    private val accountJobs = AccountJobRegistry()
     // Pending delayed restarts are tracked so OFFLINE can cancel them immediately.
     private val accountRecoveryRestartJobs = ConcurrentHashMap<String, Job>()
 
