@@ -120,7 +120,11 @@ data class LogEntry(
     val username: String = "",
     val component: String = "APP",
     val message: String,
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    val accountId: String = "",
+    val task: String = "",
+    val reason: String = "",
+    val attempt: Int = 0
 )
 
 object ReaderEngineModes {
