@@ -225,8 +225,6 @@ fun BackgroundSettingsDialog(
 
                 HorizontalDivider()
 
-                HorizontalDivider()
-
                 OutlinedButton(
                     onClick = {
                         proxyPasswordEntry = ""
