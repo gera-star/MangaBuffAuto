@@ -147,6 +147,9 @@ class MangaBuffAutomation(
     private val proxyAccountId: String = ""
 ) {
 
+    @Volatile
+    private var runtimeClosed = false
+
     private open inner class AutomationWebViewClient(
         private val accountUsername: String,
         private val clientWebView: WebView
@@ -167,6 +170,7 @@ class MangaBuffAutomation(
             view: WebView?,
             detail: android.webkit.RenderProcessGoneDetail?
         ): Boolean {
+            if (runtimeClosed) return true
             val target = view ?: clientWebView
             log(
                 accountUsername,
@@ -280,6 +284,8 @@ class MangaBuffAutomation(
         ConcurrentHashMap<String, (EventHttpResult) -> Unit>()
 
     fun closeRuntime() {
+        if (runtimeClosed) return
+        runtimeClosed = true
         // This HTTP client belongs only to this MangaBuffAutomation/account.
         accountIoScope.coroutineContext[Job]?.cancel()
         runCatching { httpClient.dispatcher.cancelAll() }
@@ -1641,6 +1647,7 @@ class MangaBuffAutomation(
     }
 
     private fun initDailyStats(account: MangaBuffAccount) {
+        if (runtimeClosed) return
         dailyStats = if (account.dailyStatsDay == currentStatsDay()) {
             DailyStats(
                 day = account.dailyStatsDay,
@@ -1678,11 +1685,13 @@ class MangaBuffAutomation(
     }
 
     private fun publishDailyStats(account: MangaBuffAccount) {
+        if (runtimeClosed) return
         dailyStatsForToday()
         onDailyStatsUpdate(account.id, dailyStats)
     }
 
     private fun addDaily(account: MangaBuffAccount, update: (DailyStats) -> DailyStats) {
+        if (runtimeClosed) return
         val today = currentStatsDay()
         val current = if (dailyStats.day == today) dailyStats else {
             log(
@@ -1937,11 +1946,16 @@ class MangaBuffAutomation(
         }
     }
 
+    private fun publishMangaActiveUrlUpdate(accountId: String, url: String, title: String) {
+        if (!runtimeClosed) onMangaActiveUrlUpdate(accountId, url, title)
+    }
+
     private fun log(
         username: String,
         message: String,
         isError: Boolean = false
     ) {
+        if (runtimeClosed) return
         val upper = message.trim()
         val component = when {
             upper.startsWith("READER:") || upper.startsWith("READ:") || upper.startsWith("CHAPTER_") || upper.startsWith("SCROLL") || upper.startsWith("PAGE:") -> "READER"
@@ -1983,6 +1997,7 @@ class MangaBuffAutomation(
         currentTask: String = "",
         progress: Float = 0f
     ) {
+        if (runtimeClosed) return
         onAccountStatusUpdate(
             account.id,
             statusMessage,
@@ -2197,6 +2212,7 @@ class MangaBuffAutomation(
                     log(account.username, "STAT: $summaryStr")
 
                     try {
+                        if (runtimeClosed) return
                         onAccountStatsUpdate(
                             account.id,
                             diamonds,
@@ -4546,7 +4562,7 @@ class MangaBuffAutomation(
                     } else {
                         0L
                     }
-                    onTowerExpeditionEndsAtUpdate(account.id, endsAtMillis)
+                    if (!runtimeClosed) onTowerExpeditionEndsAtUpdate(account.id, endsAtMillis)
                     log(
                         account.username,
                         "TOWER: TIMER_STATE active=$active complete=$complete remainingSeconds=$remainingSeconds"
@@ -7137,12 +7153,12 @@ class MangaBuffAutomation(
             class MineBridge {
                 @JavascriptInterface
                 fun onMineBalance(oreBalance: Int) {
-                    if (oreBalance >= 0) onMineBalanceUpdate(account.id, oreBalance)
+                    if (!runtimeClosed && oreBalance >= 0) onMineBalanceUpdate(account.id, oreBalance)
                 }
 
                 @JavascriptInterface
                 fun onMineProgress(clicks: Int, total: Int, ore: Int) {
-                    if (ore >= 0) onMineBalanceUpdate(account.id, ore)
+                    if (!runtimeClosed && ore >= 0) onMineBalanceUpdate(account.id, ore)
                     updateStatus(account, "⛏️ Шахта ($clicks/$total) • 🪨 $ore", true, "Шахта",
                         if (total > 0) clicks.toFloat() / total else 1f)
                 }
@@ -7158,7 +7174,7 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun onMineExchange(oreMined: Int, oreExchanged: Int, diamondsReceived: Int, oreRemaining: Int) {
                     addDaily(account) { it.copy(mineExchangeOre = it.mineExchangeOre + oreExchanged, mineDiamonds = it.mineDiamonds + diamondsReceived) }
-                    onMineBalanceUpdate(account.id, oreRemaining)
+                    if (!runtimeClosed) onMineBalanceUpdate(account.id, oreRemaining)
                     log(account.username, "MINE: EXCHANGE_SUCCESS mined=$oreMined exchanged=$oreExchanged diamonds=+$diamondsReceived remainingOre=$oreRemaining")
                     updateStatus(account, "⛏️ Шахта завершена • 🪨 осталось $oreRemaining • 💎 +$diamondsReceived", true, "Шахта", 1f)
                 }
@@ -7741,7 +7757,7 @@ class MangaBuffAutomation(
                         nextChapterUrlToOpen = ""
                         totalMangaChapters = 0
                         activeChapterContext = null
-                        onMangaActiveUrlUpdate(account.id, "", "")
+                        publishMangaActiveUrlUpdate(account.id, "", "")
 
                         if (chaptersReadCount < target) {
                             delay(1000L)
@@ -7766,7 +7782,7 @@ class MangaBuffAutomation(
                     totalMangaChapters = 0
                     currentSessionChaptersRead = chaptersReadCount
                     activeChapterContext = null
-                    onMangaActiveUrlUpdate(account.id, "", "")
+                    publishMangaActiveUrlUpdate(account.id, "", "")
                     delay(500L)
                 }
 
@@ -7780,7 +7796,7 @@ class MangaBuffAutomation(
 
                     currentMangaUrl = ""
                     nextChapterUrlToOpen = ""
-                    onMangaActiveUrlUpdate(account.id, "", "")
+                    publishMangaActiveUrlUpdate(account.id, "", "")
                     delay(1000L)
                 }
 
@@ -7793,7 +7809,7 @@ class MangaBuffAutomation(
 
                     currentMangaUrl = ""
                     nextChapterUrlToOpen = ""
-                    onMangaActiveUrlUpdate(account.id, "", "")
+                    publishMangaActiveUrlUpdate(account.id, "", "")
                 }
 
                 is ReaderResult.NoMangaAvailable -> break
@@ -8209,7 +8225,7 @@ class MangaBuffAutomation(
 
                     log(account.username, "READER: SAVE_ACTIVE_MANGA url=$currentMangaUrl title=$title")
                     log(account.username, "READER_UI: CURRENT_MANGA_CHANGED title='$title' url='$currentMangaUrl'")
-                    onMangaActiveUrlUpdate(account.id, currentMangaUrl, title)
+                    publishMangaActiveUrlUpdate(account.id, currentMangaUrl, title)
                 }
 
                 @JavascriptInterface
