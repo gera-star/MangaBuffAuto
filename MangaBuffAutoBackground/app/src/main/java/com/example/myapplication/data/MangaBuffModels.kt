@@ -127,10 +127,14 @@ object ReaderEngineModes {
     const val HYBRID = 0
     const val KOTLIN_TICK = 1
     const val SITE_AUTOSCROLL = 2
-    fun normalize(mode: Int): Int = mode.coerceIn(HYBRID, SITE_AUTOSCROLL)
+    const val WEBVIEW_RESUME_PULSE = 3
+
+    fun normalize(mode: Int): Int = mode.coerceIn(HYBRID, WEBVIEW_RESUME_PULSE)
+
     fun label(mode: Int): String = when (normalize(mode)) {
         KOTLIN_TICK -> "Kotlin-такт (эксперимент)"
         SITE_AUTOSCROLL -> "Автоскролл MangaBuff (эксперимент)"
+        WEBVIEW_RESUME_PULSE -> "WebView + JS-таймеры (эксперимент)"
         else -> "Гибридная (текущая)"
     }
 }
