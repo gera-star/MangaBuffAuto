@@ -1093,7 +1093,11 @@ class MangaBuffForegroundService : Service() {
                             }
                             continue
                         }
-                        hasProgressingJob = true
+                        // The lock may be renewed only after a fresh meaningful event,
+                        // not merely because the stage timeout has not expired yet.
+                        if (progress.hasRecentProgress(WAKELOCK_RENEW_INTERVAL_MS, elapsedNow)) {
+                            hasProgressingJob = true
+                        }
                     }
 
                     if (webViews.containsKey(accountId)) {
