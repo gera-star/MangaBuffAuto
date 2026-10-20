@@ -10785,16 +10785,22 @@ class MangaBuffAutomation(
                                         // throttle rAF heavily when the display is locked.
                                         // Keep the site's own autoscroll running alongside the
                                         // native/custom background scroll; normal stop paths still pause it.
-                                        try { stopScroll(true); } catch(e) {}
+                                        var nativeTickMode = ${readerEngineMode} === 1;
+                                        var siteAutoscrollOnlyMode = ${readerEngineMode} === 2;
+
+                                        // Kotlin-tick mode pauses the site's own scroller; hybrid mode
+                                        // retains existing behavior; site-autoscroll mode deliberately
+                                        // avoids app scroll fallback so it can be tested independently.
+                                        try { stopScroll(!nativeTickMode); } catch(e) {}
 
                                         window.__mbBackgroundStep = function() {
                                             try {
-                                                if (
-                                                    chapterDone ||
-                                                    !window.__mbFastScrollRunning
-                                                ) {
+                                                if (chapterDone) return;
+                                                if (siteAutoscrollOnlyMode) {
+                                                    try { checkEnd(); } catch(ignoreSiteEnd) {}
                                                     return;
                                                 }
+                                                if (!window.__mbFastScrollRunning) return;
 
                                                 var scrollMetrics = window.__mbGetReaderScrollMetrics(false);
                                                 // Prefer actual DOM measurements, but fall back to the
@@ -10821,6 +10827,9 @@ class MangaBuffAutomation(
                                                     378,
                                                     Math.max(126, Math.floor(viewport * 0.18))
                                                 );
+                                                if (remaining < viewport * 1.5) {
+                                                    step = Math.max(1, Math.floor(step * Math.max(0.18, remaining / (viewport * 1.5))));
+                                                }
                                                 step = Math.min(step, remaining);
                                                 mbScrollReaderBy(step);
                                                 try { checkEnd(); } catch(ignoreEnd) {}
@@ -10849,6 +10858,19 @@ class MangaBuffAutomation(
                                             (${siteAutoscrollHalfSpeed} ? 0.5 : 1);
                                         var lastFrame = performance.now();
                                         window.__mbFastScrollRunning = true;
+
+                                        if (nativeTickMode) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: ENGINE_KOTLIN_TICK_ACTIVE source=ANDROID_180MS'
+                                            );
+                                            return;
+                                        }
+                                        if (siteAutoscrollOnlyMode) {
+                                            AndroidReaderBridge.onLogStep(
+                                                'READER: ENGINE_SITE_AUTOSCROLL_ACTIVE source=MANGABUFF_WITH_NATIVE_END_CHECK'
+                                            );
+                                            return;
+                                        }
 
                                         AndroidReaderBridge.onLogStep(
                                             'READER: FAST_SMOOTH_SCROLL_STARTED speed=' + speedPxPerSecond
@@ -11159,7 +11181,10 @@ class MangaBuffAutomation(
 
                                         // The site-level autoscroll is user-toggleable from the Reading task row.
                                         // The app's own background scroll remains active in either mode.
-                                        if (${siteAutoscrollEnabled}) {
+                                        if (
+                                            ${readerEngineMode} === 2 ||
+                                            (${readerEngineMode} === 0 && ${siteAutoscrollEnabled})
+                                        ) {
                                             AndroidReaderBridge.onLogStep('READER: MANGABUFF_AUTOSCROLL_SETUP_BEGIN');
                                             configureMangaBuffAutoscroll(function(ok) {
                                                 if (chapterDone) return;
