@@ -11791,6 +11791,133 @@ class MangaBuffAutomation(
     // INLINE COMMENT
     // =========================================================
 
+    private fun normalizeCommentPageUrl(url: String): String =
+        url.trim().substringBefore('?').substringBefore('#').trimEnd('/')
+
+    /**
+     * Balance/deck tasks share the account WebView with regular comments and can leave it
+     * on /balance or /decks/. Restore the last known chapter before looking for reader UI.
+     * Never attempt to send a comment until both the actual WebView URL and DOM URL confirm
+     * that the requested chapter document has finished loading.
+     */
+    private suspend fun ensureCommentChapterPage(
+        account: MangaBuffAccount,
+        webView: WebView,
+        targetUrl: String
+    ): Boolean {
+        val target = normalizeCommentPageUrl(targetUrl)
+        val chapterUrlPattern =
+            Regex("^https://mangabuff\\.ru/manga/[^/]+/\\d+/\\d+(?:\\.\\d+)?$")
+        if (!chapterUrlPattern.matches(target)) {
+            log(account.username, "COMMENT: CHAPTER_NAVIGATION_REJECTED reason=INVALID_TARGET target=$target", true)
+            return false
+        }
+
+        val currentBefore = withContext(Dispatchers.Main) {
+            normalizeCommentPageUrl(webView.url.orEmpty())
+        }
+        if (currentBefore != target) {
+            log(
+                account.username,
+                "COMMENT: CHAPTER_NAVIGATION_START from=$currentBefore to=$target reason=RESTORE_CHAPTER_AFTER_OTHER_TASK"
+            )
+            withContext(Dispatchers.Main) {
+                if (normalizeCommentPageUrl(webView.url.orEmpty()) != target) {
+                    try {
+                        webView.stopLoading()
+                        webView.loadUrl(target)
+                    } catch (e: Exception) {
+                        log(account.username, "COMMENT: CHAPTER_NAVIGATION_ERROR error=${e.message}", true)
+                    }
+                }
+            }
+        } else {
+            log(account.username, "COMMENT: CHAPTER_ALREADY_OPEN url=$target")
+        }
+
+        val loaded = withTimeoutOrNull(20_000L) {
+            while (true) {
+                coroutineContext.ensureActive()
+                val rawState = suspendCancellableCoroutine<String?> { continuation ->
+                    mainHandler.post {
+                        if (!continuation.isActive) return@post
+                        val actual = normalizeCommentPageUrl(webView.url.orEmpty())
+                        if (actual != target) {
+                            continuation.resume(null)
+                            return@post
+                        }
+
+                        val script = """
+                            (function() {
+                                try {
+                                    var path = window.location.pathname || '';
+                                    var parts = path.split('/').filter(Boolean);
+                                    var isChapter = parts.length === 4 &&
+                                        parts[0] === 'manga' &&
+                                        /^\\d+$/.test(parts[2]) &&
+                                        /^\\d+(?:\\.\\d+)?$/.test(parts[3]);
+                                    return JSON.stringify({
+                                        href: window.location.href || '',
+                                        ready: document.readyState || '',
+                                        isChapter: isChapter
+                                    });
+                                } catch (e) {
+                                    return JSON.stringify({href: window.location.href || '', ready: '', isChapter: false});
+                                }
+                            })();
+                        """.trimIndent()
+                        try {
+                            webView.evaluateJavascript(script) { value ->
+                                if (continuation.isActive) continuation.resume(value)
+                            }
+                        } catch (_: Exception) {
+                            if (continuation.isActive) continuation.resume(null)
+                        }
+                    }
+                }
+
+                val stateText = try {
+                    com.google.gson.Gson().fromJson(rawState, String::class.java).orEmpty()
+                } catch (_: Exception) {
+                    ""
+                }
+                val state = try {
+                    JSONObject(stateText)
+                } catch (_: Exception) {
+                    null
+                }
+                val domUrl = normalizeCommentPageUrl(state?.optString("href").orEmpty())
+                val readyState = state?.optString("ready").orEmpty()
+                if (
+                    domUrl == target &&
+                    state?.optBoolean("isChapter", false) == true &&
+                    (readyState == "interactive" || readyState == "complete")
+                ) {
+                    return@withTimeoutOrNull true
+                }
+                delay(300L)
+            }
+            @Suppress("UNREACHABLE_CODE")
+            false
+        } ?: false
+
+        val currentAfter = withContext(Dispatchers.Main) {
+            normalizeCommentPageUrl(webView.url.orEmpty())
+        }
+        log(
+            account.username,
+            "COMMENT: CHAPTER_PAGE_READY ready=$loaded expected=$target current=$currentAfter"
+        )
+        if (!loaded) {
+            log(
+                account.username,
+                "COMMENT: CHAPTER_PAGE_READY_TIMEOUT target=$target current=$currentAfter timeoutMs=20000",
+                true
+            )
+        }
+        return loaded
+    }
+
     private suspend fun runCommentOnCurrentChapter(
         account: MangaBuffAccount,
         webView: WebView,
@@ -11809,6 +11936,19 @@ class MangaBuffAutomation(
 
         if (!cleanTarget.startsWith("https://mangabuff.ru/manga/")) {
             log(account.username, "COMMENT: NON_CHAPTER_URL", true)
+            return false
+        }
+
+        val actualPage = withContext(Dispatchers.Main) {
+            normalizeCommentPageUrl(webView.url.orEmpty())
+        }
+        val expectedPage = normalizeCommentPageUrl(cleanTarget)
+        if (actualPage != expectedPage) {
+            log(
+                account.username,
+                "COMMENT: WRONG_PAGE expected=$expectedPage actual=$actualPage",
+                true
+            )
             return false
         }
 
@@ -12147,6 +12287,14 @@ class MangaBuffAutomation(
         }
 
         log(account.username, "COMMENT_TARGET_FOUND url=$targetClean")
+
+        if (!ensureCommentChapterPage(account, webView, targetClean)) {
+            log(
+                account.username,
+                "COMMENT: TASK_SKIPPED reason=CHAPTER_PAGE_NOT_READY target=$targetClean"
+            )
+            return
+        }
 
         var successCount = 0
         var failedCount = 0
