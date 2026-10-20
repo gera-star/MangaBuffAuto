@@ -180,7 +180,8 @@ object AppProxySettings {
         if (
             !current.isEnabledAndValid() ||
             current.username.isBlank() ||
-            !host.equals(current.host, ignoreCase = true)
+            !(host.equals(current.host, ignoreCase = true) ||
+                host.equals("${current.host}:${current.port}", ignoreCase = true))
         ) {
             return false
         }
