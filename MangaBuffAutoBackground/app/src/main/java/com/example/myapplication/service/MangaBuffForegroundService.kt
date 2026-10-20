@@ -1439,7 +1439,8 @@ class MangaBuffForegroundService : Service() {
             val status = statusMessage.lowercase()
             val isQueueWait = status.contains("в очереди") ||
                 status.contains("ожидание освобождения общего слота") ||
-                status.startsWith("пауза:")
+                status.startsWith("пауза:") ||
+                status.startsWith("интернет восстановлен")
             if (isRunning && !isQueueWait) {
                 val stage = ProgressStage.fromEvent(statusMessage, "STATUS", currentTask)
                 val marker = "STATUS:$statusMessage|progress=${progress.coerceIn(0f, 1f).toBits()}"
