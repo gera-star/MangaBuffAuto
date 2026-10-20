@@ -10827,8 +10827,11 @@ class MangaBuffAutomation(
                                                     378,
                                                     Math.max(126, Math.floor(viewport * 0.18))
                                                 );
-                                                if (nativeTickMode && remaining < viewport * 1.5) {
-                                                    step = Math.max(1, Math.floor(step * Math.max(0.18, remaining / (viewport * 1.5))));
+                                                if (nativeTickMode) {
+                                                    step = Math.max(1, Math.floor(step * (${siteAutoscrollHalfSpeed} ? 0.5 : 1)));
+                                                    if (remaining < viewport * 1.5) {
+                                                        step = Math.max(1, Math.floor(step * Math.max(0.18, remaining / (viewport * 1.5))));
+                                                    }
                                                 }
                                                 step = Math.min(step, remaining);
                                                 mbScrollReaderBy(step);
