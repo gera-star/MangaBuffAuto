@@ -11854,8 +11854,8 @@ class MangaBuffAutomation(
                                     var parts = path.split('/').filter(Boolean);
                                     var isChapter = parts.length === 4 &&
                                         parts[0] === 'manga' &&
-                                        /^\\d+$/.test(parts[2]) &&
-                                        /^\\d+(?:\\.\\d+)?$/.test(parts[3]);
+                                        /^\d+$/.test(parts[2]) &&
+                                        /^\d+(?:\.\d+)?$/.test(parts[3]);
                                     return JSON.stringify({
                                         href: window.location.href || '',
                                         ready: document.readyState || '',
