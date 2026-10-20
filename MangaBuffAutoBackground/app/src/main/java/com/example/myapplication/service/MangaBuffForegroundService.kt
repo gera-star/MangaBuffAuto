@@ -666,6 +666,7 @@ class MangaBuffForegroundService : Service() {
         }
 
         val attemptNumber = accountTaskAttempts.compute(accountId) { _, previous -> (previous ?: 0) + 1 } ?: 1
+        accountCurrentTaskLabels[accountId] = taskType.title
         transitionAccountTaskState(accountId, AccountTaskEvent.QUEUED, "task=${taskType.title} attempt=$attemptNumber")
         // Remove the old generation before cancelling it, so its finally block cannot mistake
         // itself for the current job and delete the newly persisted run.
@@ -673,7 +674,6 @@ class MangaBuffForegroundService : Service() {
         automationRunner.stopAccount(accountId)
         persistRun(accountId, taskType)
         accountProgressTrackers.remove(accountId)
-        accountCurrentTaskLabels[accountId] = taskType.title
 
         publishLog(
             LogEntry(
@@ -869,6 +869,7 @@ class MangaBuffForegroundService : Service() {
                             releaseWakeLockIfIdle()
                             stopSelfIfIdle()
                         }
+                        accountCurrentTaskLabels.remove(accountId)
                     }
                 } finally {
                     if (currentJob != null) accountExecutionQueue.forget(accountId, currentJob)
