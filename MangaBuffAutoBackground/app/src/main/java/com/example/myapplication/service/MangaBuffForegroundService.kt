@@ -11,6 +11,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -308,6 +311,10 @@ class MangaBuffForegroundService : Service() {
     private val accountCurrentTaskLabels = ConcurrentHashMap<String, String>()
     private val recoveryBudget = RecoveryBudget(RECOVERY_MAX_PER_WINDOW, RECOVERY_WINDOW_MS)
     @Volatile private var lastWakeLockAcquireAtMs = 0L
+    @Volatile private var networkConnected = false
+    @Volatile private var networkValidated = false
+    @Volatile private var networkStateKnown = false
+    @Volatile private var networkCallbackRegistered = false
     private var watchdogJob: Job? = null
     private val repository by lazy { AccountRepository(applicationContext) }
     private lateinit var automationRunner: MultiAccountAutomationRunner
@@ -328,6 +335,25 @@ class MangaBuffForegroundService : Service() {
                 Intent.ACTION_SCREEN_OFF -> BackgroundExecutionState.setScreenOff(true)
                 Intent.ACTION_SCREEN_ON -> BackgroundExecutionState.setScreenOff(false)
             }
+        }
+    }
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            refreshDefaultNetworkState("DEFAULT_NETWORK_AVAILABLE")
+        }
+
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            updateNetworkState(
+                connected = true,
+                validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                reason = "DEFAULT_NETWORK_CAPABILITIES"
+            )
+        }
+
+        override fun onLost(network: Network) {
+            refreshDefaultNetworkState("DEFAULT_NETWORK_LOST")
         }
     }
 
@@ -404,6 +430,7 @@ class MangaBuffForegroundService : Service() {
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
         screenRegistered = true
+        registerNetworkMonitor()
 
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         BackgroundExecutionState.setScreenOff(!powerManager.isInteractive)
@@ -666,6 +693,7 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
                 publishStatus(accountId, "В очереди — ожидает освобождения аккаунта", true, taskType.title, 0f)
+                awaitValidatedNetwork(accountId, account.username, taskType.title)
 
                 accountExecutionQueue.acquire()
                 hasExecutionPermit = true
@@ -838,6 +866,128 @@ class MangaBuffForegroundService : Service() {
                 )
             )
         }
+    }
+
+    private fun registerNetworkMonitor() {
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        refreshDefaultNetworkState("INITIAL")
+        try {
+            manager.registerDefaultNetworkCallback(networkCallback)
+            networkCallbackRegistered = true
+            publishLog(LogEntry(component = "NETWORK", message = "NETWORK_CALLBACK_REGISTERED"))
+        } catch (e: Exception) {
+            publishLog(
+                LogEntry(
+                    component = "NETWORK",
+                    message = "NETWORK_CALLBACK_REGISTER_FAILED reason=${e.message}",
+                    isError = true
+                )
+            )
+        }
+    }
+
+    private fun unregisterNetworkMonitor() {
+        if (!networkCallbackRegistered) return
+        try {
+            (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager)
+                .unregisterNetworkCallback(networkCallback)
+        } catch (e: Exception) {
+            publishLog(LogEntry(component = "NETWORK", message = "NETWORK_CALLBACK_UNREGISTER_FAILED reason=${e.message}"))
+        } finally {
+            networkCallbackRegistered = false
+        }
+    }
+
+    private fun refreshDefaultNetworkState(reason: String) {
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = manager.activeNetwork
+        val capabilities = network?.let(manager::getNetworkCapabilities)
+        updateNetworkState(
+            connected = network != null,
+            validated = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+            reason = reason
+        )
+    }
+
+    private fun updateNetworkState(connected: Boolean, validated: Boolean, reason: String) {
+        val normalizedValidated = connected && validated
+        val wasKnown = networkStateKnown
+        val changed = !wasKnown || networkConnected != connected || networkValidated != normalizedValidated
+        networkConnected = connected
+        networkValidated = normalizedValidated
+        networkStateKnown = true
+        if (!changed) return
+
+        val state = when {
+            !connected -> "NO_NETWORK"
+            !normalizedValidated -> "NETWORK_CONNECTED_INTERNET_UNVALIDATED"
+            else -> "INTERNET_VALIDATED"
+        }
+        publishLog(
+            LogEntry(
+                component = "NETWORK",
+                message = "NETWORK_STATE state=$state connected=$connected validated=$normalizedValidated reason=$reason"
+            )
+        )
+
+        val activeJobs = accountJobs.entries.toList()
+        for ((accountId, job) in activeJobs) {
+            if (!job.isActive || accountExecutionQueue.isQueued(accountId, job)) continue
+            val taskLabel = accountCurrentTaskLabels[accountId]
+                ?: readPersistedRuns()[accountId]?.title.orEmpty()
+            val accountName = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty()
+            if (!normalizedValidated) {
+                val pauseText = if (!connected) {
+                    "Пауза: нет сети"
+                } else {
+                    "Пауза: сеть есть, интернет не подтверждён"
+                }
+                publishLog(
+                    LogEntry(
+                        username = accountName,
+                        component = "NETWORK",
+                        message = "NETWORK_PAUSE accountId=$accountId state=$state reason=$reason"
+                    )
+                )
+                publishStatus(accountId, pauseText, true, taskLabel, 0f)
+            } else {
+                val tracker = accountProgressTrackers[accountId]
+                val snapshot = tracker?.snapshot()
+                if (snapshot != null && snapshot.stage != ProgressStage.WAITING) {
+                    tracker.mark(snapshot.stage, "NETWORK_RESTORED:${SystemClock.elapsedRealtime()}")
+                }
+                publishLog(
+                    LogEntry(
+                        username = accountName,
+                        component = "NETWORK",
+                        message = "NETWORK_RESUMED accountId=$accountId reason=$reason"
+                    )
+                )
+                publishStatus(accountId, "Интернет восстановлен — продолжаем текущий этап", true, taskLabel, 0f)
+            }
+        }
+    }
+
+    private suspend fun awaitValidatedNetwork(accountId: String, username: String, taskLabel: String) {
+        if (networkValidated) return
+        publishLog(
+            LogEntry(
+                username = username,
+                component = "NETWORK",
+                message = "NETWORK_WAIT_START accountId=$accountId reason=${if (networkConnected) "internet_unvalidated" else "no_network"}"
+            )
+        )
+        publishStatus(
+            accountId,
+            if (networkConnected) "Пауза: сеть есть, интернет не подтверждён" else "Пауза: нет сети",
+            true,
+            taskLabel,
+            0f
+        )
+        while (!networkValidated) delay(1_000L)
+        publishLog(LogEntry(username = username, component = "NETWORK", message = "NETWORK_WAIT_FINISHED accountId=$accountId"))
+        publishStatus(accountId, "Подготовка...", true, taskLabel, 0f)
     }
 
     private fun startWatchdog() {
@@ -1238,7 +1388,9 @@ class MangaBuffForegroundService : Service() {
         if (accountId.isNotBlank()) {
             if (currentTask.isNotBlank()) accountCurrentTaskLabels[accountId] = currentTask
             val status = statusMessage.lowercase()
-            val isQueueWait = status.contains("в очереди") || status.contains("ожидание освобождения общего слота")
+            val isQueueWait = status.contains("в очереди") ||
+                status.contains("ожидание освобождения общего слота") ||
+                status.startsWith("пауза:")
             if (isRunning && !isQueueWait) {
                 val stage = ProgressStage.fromEvent(statusMessage, "STATUS", currentTask)
                 val marker = "STATUS:$statusMessage|progress=${progress.coerceIn(0f, 1f).toBits()}"
@@ -1699,6 +1851,7 @@ class MangaBuffForegroundService : Service() {
         if (this == "QUIZ") TaskType.TOWER else runCatching { TaskType.valueOf(this) }.getOrNull()
 
     override fun onDestroy() {
+        unregisterNetworkMonitor()
         watchdogJob?.cancel()
         watchdogJob = null
         recoveryRequests.clear()
