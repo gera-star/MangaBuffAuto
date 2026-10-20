@@ -123,6 +123,18 @@ data class LogEntry(
     val isError: Boolean = false
 )
 
+object ReaderEngineModes {
+    const val HYBRID = 0
+    const val KOTLIN_TICK = 1
+    const val SITE_AUTOSCROLL = 2
+    fun normalize(mode: Int): Int = mode.coerceIn(HYBRID, SITE_AUTOSCROLL)
+    fun label(mode: Int): String = when (normalize(mode)) {
+        KOTLIN_TICK -> "Kotlin-такт (эксперимент)"
+        SITE_AUTOSCROLL -> "Автоскролл MangaBuff (эксперимент)"
+        else -> "Гибридная (текущая)"
+    }
+}
+
 data class GlobalSettings(
     val quizMaxClicks: Int = 15,
     // Kept for compatibility with previously saved settings; runtime enforces 3 ads/day.
@@ -144,7 +156,9 @@ data class GlobalSettings(
     /** Halve the app-controlled reader scroll speed when enabled. */
     val readerSiteAutoscrollHalfSpeed: Boolean = false,
     /** Collect event candy/pumpkin drops through the existing reader session. */
-    val eventsEnabled: Boolean = true
+    val eventsEnabled: Boolean = true,
+    /** 0 = current hybrid, 1 = Kotlin-driven scroll ticks, 2 = site autoscroll with native end checks. */
+    val readerEngineMode: Int = ReaderEngineModes.HYBRID
 ) {
     companion object {
         const val MAX_READER_CHAPTERS = 100
