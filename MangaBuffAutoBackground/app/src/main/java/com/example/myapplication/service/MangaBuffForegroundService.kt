@@ -1477,7 +1477,9 @@ class MangaBuffForegroundService : Service() {
     private fun resolveAccountIdForProgress(username: String): String? {
         if (username.isBlank()) return null
         if (accountJobs.containsKey(username)) return username
-        return repository.getAccounts().firstOrNull { it.username == username }?.id
+        val accounts = repository.getAccounts()
+        return accounts.firstOrNull { it.id == username }?.id
+            ?: accounts.firstOrNull { it.username == username }?.id
     }
 
     private fun isMeaningfulProgressLog(entry: LogEntry): Boolean {
@@ -1510,7 +1512,7 @@ class MangaBuffForegroundService : Service() {
         }
         sendRuntimeEvent(
             EVENT_LOG,
-            accountId = entry.username.takeIf { it.isNotBlank() },
+            accountId = progressAccountId,
             username = entry.username,
             extras = {
                 putExtra(EXTRA_MESSAGE, entry.message)
