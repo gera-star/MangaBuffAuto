@@ -312,7 +312,7 @@ class MangaBuffForegroundService : Service() {
     private val missingWebViewSince = ConcurrentHashMap<String, Long>()
     private val accountProgressTrackers = ConcurrentHashMap<String, AccountProgressTracker>()
     private val accountCurrentTaskLabels = ConcurrentHashMap<String, String>()
-    private val accountTaskStates = ConcurrentHashMap<String, AccountTaskState>()
+    private val accountTaskStates = AccountTaskStateRegistry()
     private val accountTaskAttempts = ConcurrentHashMap<String, Int>()
     private val recoveryBudget = RecoveryBudget(RECOVERY_MAX_PER_WINDOW, RECOVERY_WINDOW_MS)
     @Volatile private var lastWakeLockAcquireAtMs = 0L
@@ -1467,13 +1467,9 @@ class MangaBuffForegroundService : Service() {
         reason: String
     ) {
         if (accountId.isBlank()) return
-        var previousState = AccountTaskState.WAITING
-        var nextState = AccountTaskState.WAITING
-        accountTaskStates.compute(accountId) { _, current ->
-            previousState = current ?: AccountTaskState.WAITING
-            nextState = AccountTaskLifecycle.transition(previousState, event)
-            nextState
-        }
+        val transition = accountTaskStates.transition(accountId, event)
+        val previousState = transition.from
+        val nextState = transition.to
         if (previousState == nextState) return
         val account = repository.getAccounts().firstOrNull { it.id == accountId }
         val taskName = accountCurrentTaskLabels[accountId]
