@@ -50,8 +50,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.myapplication.data.MangaBuffAccount
-import com.example.myapplication.network.AppProxyConfig
-import com.example.myapplication.network.AppProxySettings
 
 private data class BackgroundCheck(
     val title: String,
