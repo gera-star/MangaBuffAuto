@@ -1437,7 +1437,7 @@ class MangaBuffForegroundService : Service() {
         val signals = listOf(
             "PAGE_STARTED", "PAGE_FINISHED", "HOME_READY", "ROUND_START", "RESULT=",
             "BATTLE:", "TOWER:", "MINE:", "ADS:", "PROMO:", "COMMENT:",
-            "READER:", "CHAPTER_COMPLETED", "DECK_COMMENT", "TRADE:",
+            "READER:", "CHAPTER_COMPLETED", "SCROLL_PROGRESS", "DECK_COMMENT", "TRADE:",
             "TASK: ", "STAT: BALANCE_PARSED"
         )
         return signals.any { message.contains(it) }
