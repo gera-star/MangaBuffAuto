@@ -76,7 +76,7 @@ class TradeAutomation(context: Context) {
     private val skippedLogged = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val suitableLogged = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     @Volatile private var activeSession: TradeSession? = null
-    private class TradeSession(val account: MangaBuffAccount) {
+    private class TradeSession(val account: MangaBuffAccount, context: Context) {
         @Volatile var csrfToken: String = account.getSafeCsrfToken()
         @Volatile var ownUserId: String? = null
         @Volatile var autoAccept: Boolean = false
@@ -172,7 +172,7 @@ class TradeAutomation(context: Context) {
             return
         }
         val coefficient = if (profitCoefficient.isFinite()) profitCoefficient.coerceIn(1.0, 10.0) else 1.5
-        val session = TradeSession(account).apply { autoAccept = savedAutoAcceptEnabled(account.id) }
+        val session = TradeSession(account, appContext).apply { autoAccept = savedAutoAcceptEnabled(account.id) }
         activeSession = session
         _activeAccountId.value = account.id
         _isRunning.value = true
