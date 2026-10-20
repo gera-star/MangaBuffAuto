@@ -1016,6 +1016,12 @@ class MangaBuffForegroundService : Service() {
                         missingWebViewSince.remove(accountId)
                         continue
                     }
+                    // No progress timeout/recovery is applied while the default network has no
+                    // validated Internet. The same coroutine remains alive to continue its stage.
+                    if (!networkValidated) {
+                        missingWebViewSince.remove(accountId)
+                        continue
+                    }
                     // Queued jobs intentionally do not own a WebView yet; starting
                     // recovery for them would cancel/restart a healthy queue entry.
                     val accountJob = accountJobs[accountId]
