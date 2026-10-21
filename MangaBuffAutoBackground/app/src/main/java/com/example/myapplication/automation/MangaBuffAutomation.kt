@@ -4423,11 +4423,13 @@ class MangaBuffAutomation(
             class BattleBridge {
                 @JavascriptInterface
                 fun onStateLog(state: String, details: String) {
+                    if (!continuation.isActive) return
                     log(account.username, "BATTLE: $state $details")
                 }
 
                 @JavascriptInterface
                 fun onHomeReady() {
+                    if (!continuation.isActive) return
                     log(account.username, "BATTLE: HOME_READY")
                     mainHandler.postDelayed({
                         if (!continuation.isActive) return@postDelayed
@@ -4455,6 +4457,7 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onBattleResult(result: String) {
+                    if (!continuation.isActive) return
                     val normalized = result.trim().lowercase()
                     log(account.username, "BATTLE: RESULT_DETECTED value=" + normalized)
 
@@ -4473,6 +4476,7 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onRoundFailed(reason: String) {
+                    if (!continuation.isActive) return
                     safeResume(TaskResult.Failed(reason))
                 }
             }
@@ -7275,18 +7279,22 @@ class MangaBuffAutomation(
             class MineBridge {
                 @JavascriptInterface
                 fun onMineBalance(oreBalance: Int) {
-                    if (!runtimeClosed && oreBalance >= 0) onMineBalanceUpdate(account.id, oreBalance)
+                    if (continuation.isActive && !runtimeClosed && oreBalance >= 0) {
+                        onMineBalanceUpdate(account.id, oreBalance)
+                    }
                 }
 
                 @JavascriptInterface
                 fun onMineProgress(clicks: Int, total: Int, ore: Int) {
-                    if (!runtimeClosed && ore >= 0) onMineBalanceUpdate(account.id, ore)
+                    if (!continuation.isActive || runtimeClosed) return
+                    if (ore >= 0) onMineBalanceUpdate(account.id, ore)
                     updateStatus(account, "⛏️ Шахта ($clicks/$total) • 🪨 $ore", true, "Шахта",
                         if (total > 0) clicks.toFloat() / total else 1f)
                 }
 
                 @JavascriptInterface
                 fun onMineMined(oreMined: Int) {
+                    if (!continuation.isActive || runtimeClosed) return
                     log(account.username, "MINE: ORE_STAT_CALLBACK mined=$oreMined")
                     if (oreMined > 0) {
                         addDaily(account) { it.copy(mineOre = it.mineOre + oreMined) }
@@ -7295,6 +7303,7 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onMineExchange(oreMined: Int, oreExchanged: Int, diamondsReceived: Int, oreRemaining: Int) {
+                    if (!continuation.isActive || runtimeClosed) return
                     addDaily(account) { it.copy(mineExchangeOre = it.mineExchangeOre + oreExchanged, mineDiamonds = it.mineDiamonds + diamondsReceived) }
                     if (!runtimeClosed) onMineBalanceUpdate(account.id, oreRemaining)
                     log(account.username, "MINE: EXCHANGE_SUCCESS mined=$oreMined exchanged=$oreExchanged diamonds=+$diamondsReceived remainingOre=$oreRemaining")
@@ -7302,7 +7311,10 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
-                fun onMineLog(msg: String) { log(account.username, "MINE: $msg") }
+                fun onMineLog(msg: String) {
+                    if (!continuation.isActive || runtimeClosed) return
+                    log(account.username, "MINE: $msg")
+                }
 
                 @JavascriptInterface
                 fun onMineComplete() { safeResume(true) }
