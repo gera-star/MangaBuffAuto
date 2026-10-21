@@ -309,6 +309,7 @@ class MangaBuffForegroundService : Service() {
     private val towerCycleJobs = ConcurrentHashMap<String, Job>()
     private val towerCycleEndsAt = ConcurrentHashMap<String, Long>()
     private val recoveryRequests = ConcurrentHashMap.newKeySet<String>()
+    private val networkPauseRequests = ConcurrentHashMap.newKeySet<String>()
     private val missingWebViewSince = ConcurrentHashMap<String, Long>()
     private val accountProgressTrackers = ConcurrentHashMap<String, AccountProgressTracker>()
     private val accountCurrentTaskLabels = ConcurrentHashMap<String, String>()
@@ -596,6 +597,7 @@ class MangaBuffForegroundService : Service() {
         // A previous explicit "Stop all" must not permanently disable renderer recovery.
         stoppingExplicitly = false
         recoveryRequests.remove(accountId)
+        networkPauseRequests.remove(accountId)
         missingWebViewSince.remove(accountId)
         val account = repository.getAccounts().firstOrNull { it.id == accountId }
         if (account == null) {
@@ -780,29 +782,53 @@ class MangaBuffForegroundService : Service() {
                         automationRunner.stopAccount(accountId)
 
                         val recoveryRequested = recoveryRequests.remove(accountId)
+                        val networkResumeRequested = networkPauseRequests.remove(accountId)
                         missingWebViewSince.remove(accountId)
                         val persistedTask = readPersistedRuns()[accountId]
                         val recoveryWanted =
                             recoveryRequested &&
                                 !stoppingExplicitly &&
                                 persistedTask == taskType
-                        val shouldRecover = recoveryWanted &&
-                            recoveryBudget.tryConsume(accountId, SystemClock.elapsedRealtime())
+                        val networkResumeWanted = NetworkPauseResumePolicy.shouldResume(
+                            networkPauseRequested = networkResumeRequested,
+                            persistedTaskMatches = persistedTask == taskType,
+                            stoppingExplicitly = stoppingExplicitly,
+                            accountOffline = isAccountOffline(accountId)
+                        )
+                        // A temporary network pause is not a WebView crash and must not consume
+                        // the bounded renderer-recovery budget.
+                        val shouldRecover = networkResumeWanted || (
+                            recoveryWanted &&
+                                recoveryBudget.tryConsume(accountId, SystemClock.elapsedRealtime())
+                            )
                         val recoveryExhausted = recoveryWanted && !shouldRecover
 
                         if (shouldRecover) {
-                            transitionAccountTaskState(accountId, AccountTaskEvent.RECOVERY_REQUESTED, "renderer_or_webview_recovery")
+                            val resumeReason = if (networkResumeWanted) {
+                                "network_restored_checkpoint"
+                            } else {
+                                "renderer_or_webview_recovery"
+                            }
+                            transitionAccountTaskState(accountId, AccountTaskEvent.RECOVERY_REQUESTED, resumeReason)
                             publishLog(
                                 LogEntry(
                                     username = account.username,
-                                    component = "BG",
-                                    message = "WATCHDOG_RECOVERY_SCHEDULED accountId=$accountId taskType=${taskType.title}",
-                                    isError = true
+                                    component = if (networkResumeWanted) "NETWORK" else "BG",
+                                    message = if (networkResumeWanted) {
+                                        "NETWORK_RESUME_SCHEDULED accountId=$accountId taskType=${taskType.title} checkpoint=true"
+                                    } else {
+                                        "WATCHDOG_RECOVERY_SCHEDULED accountId=$accountId taskType=${taskType.title}"
+                                    },
+                                    isError = !networkResumeWanted
                                 )
                             )
                             publishStatus(
                                 accountId,
-                                "Восстановление после сбоя WebView...",
+                                if (networkResumeWanted) {
+                                    "Ожидание сети — продолжение с последнего сохранённого этапа"
+                                } else {
+                                    "Восстановление после сбоя WebView..."
+                                },
                                 true,
                                 taskType.title,
                                 0f
@@ -986,6 +1012,20 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
                 publishStatus(accountId, pauseText, true, taskLabel, 0f)
+                // Stop the active WebView stage when the network disappears. The service's
+                // finally block will release the queue/Gate and restart from the persisted
+                // checkpoint after validated Internet returns.
+                if (accountJobs[accountId] === job && networkPauseRequests.add(accountId)) {
+                    publishLog(
+                        LogEntry(
+                            username = accountName,
+                            component = "NETWORK",
+                            message = "NETWORK_ACTIVE_TASK_CANCEL accountId=$accountId state=$state " +
+                                "reason=network_lost resume=last_completed_checkpoint"
+                        )
+                    )
+                    job.cancel(CancellationException("NETWORK_LOST state=$state reason=$reason"))
+                }
             } else {
                 transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_RESTORED, reason)
                 val tracker = accountProgressTrackers[accountId]
@@ -1306,6 +1346,7 @@ class MangaBuffForegroundService : Service() {
             editor.apply()
         }
         recoveryRequests.clear()
+        networkPauseRequests.clear()
         missingWebViewSince.clear()
         automationRunner.stopAll(reason = if (explicitUserStop) "EXPLICIT_USER_STOP" else "INTERNAL_STOP")
 
@@ -1939,6 +1980,7 @@ class MangaBuffForegroundService : Service() {
         watchdogJob?.cancel()
         watchdogJob = null
         recoveryRequests.clear()
+        networkPauseRequests.clear()
         missingWebViewSince.clear()
         accountRecoveryRestartJobs.values.forEach { it.cancel() }
         accountRecoveryRestartJobs.clear()
