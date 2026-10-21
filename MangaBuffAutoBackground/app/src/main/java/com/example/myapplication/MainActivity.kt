@@ -178,6 +178,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val webViewsByAccount by AutomationWebViewRegistry.webViewsByAccount.collectAsState()
                     val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
+                    val webViewMountRevision by viewModel.webViewMountRevision.collectAsState()
                     val webViewAccountIds = webViewsByAccount.keys.toList()
                     var selectedDebugAccountId by remember { mutableStateOf<String?>(null) }
 
@@ -230,7 +231,7 @@ class MainActivity : ComponentActivity() {
                         )
 
                         debugWebView?.let { webView ->
-                            key(webView) {
+                            key(webView, webViewMountRevision) {
                                 AndroidView(
                                     factory = {
                                         FrameLayout(this@MainActivity).apply {

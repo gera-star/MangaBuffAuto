@@ -11,11 +11,14 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import android.view.ViewGroup
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import com.example.myapplication.automation.AutomationWebViewRegistry
+import com.example.myapplication.network.AppProxySettings
 import com.example.myapplication.network.ExitIpChecker
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -60,6 +63,7 @@ import kotlinx.coroutines.delay
 private const val SUPPORT_PAYMENT_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019df8ad-96b5-7cd8-82aa-e64b36e96b93"
 private const val SUPPORT_RECIPIENT = "Алексей Г."
 private const val SUPPORT_TELEGRAM_URL = "https://t.me/mangabuffauto"
+private const val BALANCE_URL = "https://mangabuff.ru/balance"
 
 @SuppressLint("RestrictedApi")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -82,6 +86,12 @@ fun MangaBuffAppUI(
     val showPromoDialog by viewModel.showPromoDialog.collectAsState()
 
     var selectedBalanceAccount by remember { mutableStateOf<MangaBuffAccount?>(null) }
+    var pendingBalanceAccount by remember { mutableStateOf<MangaBuffAccount?>(null) }
+    var pendingBalanceWebView by remember { mutableStateOf<WebView?>(null) }
+    var balanceWebViewToReuse by remember { mutableStateOf<WebView?>(null) }
+    var balanceReturnUrl by remember { mutableStateOf<String?>(null) }
+    var showBalanceSwitchConfirmation by remember { mutableStateOf(false) }
+    var balanceUnavailableMessage by remember { mutableStateOf<String?>(null) }
     var promoCodeText by remember { mutableStateOf("") }
     var showBackgroundSettings by remember { mutableStateOf(false) }
     var showSupportDialog by remember { mutableStateOf(false) }
@@ -89,6 +99,47 @@ fun MangaBuffAppUI(
     var showWebViewAccountMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
+
+    fun closeBalanceViewer() {
+        val reusedWebView = balanceWebViewToReuse
+        val returnUrl = balanceReturnUrl
+        if (reusedWebView != null && !returnUrl.isNullOrBlank()) {
+            runCatching { reusedWebView.loadUrl(returnUrl) }
+        }
+        selectedBalanceAccount = null
+        balanceWebViewToReuse = null
+        balanceReturnUrl = null
+        // The live automation WebView was temporarily moved into the dialog. Recreate its
+        // hidden/debug host after the dialog releases the WebView.
+        if (reusedWebView != null) viewModel.refreshWebViewMount()
+    }
+
+    fun requestBalance(account: MangaBuffAccount) {
+        val liveWebView = AutomationWebViewRegistry.webViewsByAccount.value[account.id]
+        if (liveWebView != null) {
+            // Reusing the exact reader WebView preserves its current WebView proxy route.
+            // Navigation still interrupts the reader page, so ask before switching it.
+            pendingBalanceAccount = account
+            pendingBalanceWebView = liveWebView
+            showBalanceSwitchConfirmation = true
+            return
+        }
+
+        if (account.isRunning || accounts.any { it.isRunning }) {
+            balanceUnavailableMessage = if (account.isRunning) {
+                "WebView этого аккаунта ещё запускается или восстанавливается. Подожди немного и повтори."
+            } else {
+                "Нельзя безопасно менять общий прокси WebView, пока выполняется задача другого аккаунта. Останови задачи и повтори."
+            }
+            return
+        }
+
+        // No reader WebView exists while the account is idle. The fallback will use the same
+        // persistent profile and explicitly apply this account's proxy before its first request.
+        balanceWebViewToReuse = null
+        balanceReturnUrl = null
+        selectedBalanceAccount = account
+    }
 
     Scaffold(
         modifier = Modifier.statusBarsPadding(),
@@ -275,7 +326,7 @@ fun MangaBuffAppUI(
                     onStopAll = { viewModel.stopAllTasks() },
                     onDelete = { account -> viewModel.deleteAccount(account.id) },
                     onRefresh = { account -> viewModel.reloadAccount(account) },
-                    onOpenBalance = { account -> selectedBalanceAccount = account },
+                    onOpenBalance = { account -> requestBalance(account) },
                     onOpenAddAccount = { viewModel.setShowAddAccountDialog(true) },
                     onChangeManga = { account -> viewModel.changeCurrentManga(account.id) },
                     onUpdateTasks = { account, r, q, a, m, c, d, b -> viewModel.updateAccountTasks(account, r, q, a, m, c, d, b) },
@@ -444,11 +495,66 @@ fun MangaBuffAppUI(
         )
     }
 
+    if (showBalanceSwitchConfirmation) {
+        AlertDialog(
+            onDismissRequest = {
+                showBalanceSwitchConfirmation = false
+                pendingBalanceAccount = null
+                pendingBalanceWebView = null
+            },
+            title = { Text("Открыть баланс в читалке?") },
+            text = {
+                Text(
+                    "Будет использован тот же WebView и тот же прокси, что у автоматизации. " +
+                        "Переход на /balance прервёт текущую страницу читалки и может нарушить текущую задачу. " +
+                        "При закрытии приложение попробует вернуть исходный URL. Продолжить?"
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val account = pendingBalanceAccount
+                        val webView = pendingBalanceWebView
+                        if (account != null && webView != null) {
+                            balanceWebViewToReuse = webView
+                            balanceReturnUrl = webView.url
+                                ?.takeIf { it.startsWith("https://mangabuff.ru/") && it != BALANCE_URL }
+                            selectedBalanceAccount = account
+                        }
+                        showBalanceSwitchConfirmation = false
+                        pendingBalanceAccount = null
+                        pendingBalanceWebView = null
+                    }
+                ) { Text("Продолжить") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showBalanceSwitchConfirmation = false
+                        pendingBalanceAccount = null
+                        pendingBalanceWebView = null
+                    }
+                ) { Text("Отмена") }
+            }
+        )
+    }
+
+    balanceUnavailableMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { balanceUnavailableMessage = null },
+            title = { Text("Баланс пока недоступен") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { balanceUnavailableMessage = null }) { Text("Понятно") }
+            }
+        )
+    }
+
     // ДИАЛОГ ПРОСМОТРА БАЛАНСА НА САЙТЕ ПО КЛИКУ НА АВАТАР
     if (selectedBalanceAccount != null) {
         val acc = selectedBalanceAccount!!
         Dialog(
-            onDismissRequest = { selectedBalanceAccount = null },
+            onDismissRequest = { closeBalanceViewer() },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Surface(
@@ -460,6 +566,14 @@ fun MangaBuffAppUI(
                 Box(modifier = Modifier.fillMaxSize()) {
                     AndroidView(
                         factory = { ctx ->
+                            val liveWebView = balanceWebViewToReuse
+                            if (liveWebView != null) {
+                                // Move, don't clone: this is the exact WebView used by the reader.
+                                (liveWebView.parent as? ViewGroup)?.removeView(liveWebView)
+                                liveWebView.loadUrl(BALANCE_URL)
+                                return@AndroidView liveWebView
+                            }
+
                             val profileName = "mb_${acc.id}"
                             println("PROFILE: BALANCE accountId=${acc.id} profile=$profileName")
                             val wv = WebView(ctx)
@@ -592,39 +706,51 @@ fun MangaBuffAppUI(
                                 }
                             }
 
-                            val balanceUrl = "https://mangabuff.ru/balance"
-                            val existingCookies = runCatching {
-                                profileCookieManager?.getCookie(balanceUrl)
-                            }.getOrNull()
-
-                            if (profileCookieManager == null || !existingCookies.isNullOrBlank()) {
-                                // Keep the active profile's current cookies; they may be newer than
-                                // the saved account snapshot after a reader session.
-                                wv.loadUrl(balanceUrl)
-                            } else {
-                                // On a fresh profile, seed saved cookies one by one and only then navigate.
-                                val savedCookies = acc.getSafeCookiesJson()
-                                    .split(';')
-                                    .map { it.trim() }
-                                    .filter { it.isNotEmpty() && it.indexOf('=') > 0 }
-
-                                if (savedCookies.isEmpty()) {
-                                    wv.loadUrl(balanceUrl)
+                            // ProxyController is process-wide. Only reach this fallback when no
+                            // account task is running, then apply this account's route before loading.
+                            AppProxySettings.applyWebViewProxy(ctx, acc.id) { proxySuccess, proxyMessage ->
+                                if (!proxySuccess) {
+                                    Toast.makeText(
+                                        ctx,
+                                        "Не удалось открыть баланс: $proxyMessage",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                    selectedBalanceAccount = null
                                 } else {
-                                    fun setNextCookie(index: Int) {
-                                        if (index >= savedCookies.size) {
-                                            profileCookieManager.flush()
-                                            wv.loadUrl(balanceUrl)
-                                            return
-                                        }
-                                        profileCookieManager.setCookie(
-                                            "https://mangabuff.ru",
-                                            savedCookies[index]
-                                        ) {
-                                            setNextCookie(index + 1)
+                                    val existingCookies = runCatching {
+                                        profileCookieManager?.getCookie(BALANCE_URL)
+                                    }.getOrNull()
+
+                                    if (profileCookieManager == null || !existingCookies.isNullOrBlank()) {
+                                        // Keep the active profile's current cookies; they may be newer than
+                                        // the saved account snapshot after a reader session.
+                                        wv.loadUrl(BALANCE_URL)
+                                    } else {
+                                        // On a fresh profile, seed saved cookies one by one and only then navigate.
+                                        val savedCookies = acc.getSafeCookiesJson()
+                                            .split(';')
+                                            .map { it.trim() }
+                                            .filter { it.isNotEmpty() && it.indexOf('=') > 0 }
+
+                                        if (savedCookies.isEmpty()) {
+                                            wv.loadUrl(BALANCE_URL)
+                                        } else {
+                                            fun setNextCookie(index: Int) {
+                                                if (index >= savedCookies.size) {
+                                                    profileCookieManager.flush()
+                                                    wv.loadUrl(BALANCE_URL)
+                                                    return
+                                                }
+                                                profileCookieManager.setCookie(
+                                                    "https://mangabuff.ru",
+                                                    savedCookies[index]
+                                                ) {
+                                                    setNextCookie(index + 1)
+                                                }
+                                            }
+                                            setNextCookie(0)
                                         }
                                     }
-                                    setNextCookie(0)
                                 }
                             }
                             wv
@@ -642,7 +768,7 @@ fun MangaBuffAppUI(
                             .size(38.dp)
                             .clip(CircleShape)
                             .background(Color(0xDD171A24))
-                            .clickable { selectedBalanceAccount = null },
+                            .clickable { closeBalanceViewer() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(

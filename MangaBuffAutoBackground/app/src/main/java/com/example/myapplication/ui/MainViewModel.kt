@@ -39,6 +39,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _debugWebViewVisible = MutableStateFlow(false)
     val debugWebViewVisible: StateFlow<Boolean> = _debugWebViewVisible.asStateFlow()
 
+    // Bump this after a dialog temporarily reparents a live WebView so MainActivity can
+    // recreate its original host when the dialog closes.
+    private val _webViewMountRevision = MutableStateFlow(0)
+    val webViewMountRevision: StateFlow<Int> = _webViewMountRevision.asStateFlow()
+
+    fun refreshWebViewMount() {
+        _webViewMountRevision.update { it + 1 }
+    }
+
     fun setDebugWebViewVisible(visible: Boolean) {
         _debugWebViewVisible.value = visible
     }
