@@ -186,6 +186,10 @@ class MangaBuffAutomation(
     companion object {
         private const val READER_END_STABLE_MS = 3_000L
         private const val BACKGROUND_SCROLL_SAMPLE_INTERVAL_MS = 2_000L
+        // Poll less often during healthy reading; return to the existing 180 ms cadence
+        // once progress stalls so recovery checks stay responsive.
+        private const val BACKGROUND_SCROLL_NORMAL_TICK_INTERVAL_MS = 500L
+        private const val BACKGROUND_SCROLL_RECOVERY_TICK_INTERVAL_MS = 180L
         private const val BACKGROUND_SCROLL_METRICS_TIMEOUT_MS = 4_500L
         private const val BACKGROUND_SCROLL_STALL_MS = 8_000L
         private const val BACKGROUND_SCROLL_DIAGNOSTIC_INTERVAL_MS = 15_000L
@@ -346,6 +350,7 @@ class MangaBuffAutomation(
             var metricsEvaluationCount = 0
             var confirmationTickCount = 0
             var scrollStepCount = 0
+            var lastScheduledTickDelayMs = BACKGROUND_SCROLL_NORMAL_TICK_INTERVAL_MS
             backgroundScrollActive = true
             backgroundScrollWebView = webView
             backgroundScreenWasOff = false
@@ -388,6 +393,7 @@ class MangaBuffAutomation(
                             "READER: BACKGROUND_SCROLL_LOAD_SAMPLE intervalMs=$sampleIntervalMs " +
                                 "jsEvaluations=$jsEvaluationCount metricsEvaluations=$metricsEvaluationCount " +
                                 "confirmationTicks=$confirmationTickCount scrollStepCalls=$scrollStepCount " +
+                                "tickDelayMs=$lastScheduledTickDelayMs " +
                                 "screenOff=$screenOff metricsInFlight=$backgroundMetricsRequestInFlight " +
                                 "confirmationInFlight=$backgroundConfirmationTickInFlight"
                         )
@@ -707,7 +713,13 @@ class MangaBuffAutomation(
                     }
 
                     if (backgroundScrollActive && generation == backgroundScrollGeneration) {
-                        mainHandler.postDelayed(this, 180L)
+                        lastScheduledTickDelayMs = ReaderPollingPolicy.nextDelayMs(
+                            idleMs = (SystemClock.elapsedRealtime() - backgroundLastProgressAt).coerceAtLeast(0L),
+                            stallThresholdMs = BACKGROUND_SCROLL_STALL_MS,
+                            normalIntervalMs = BACKGROUND_SCROLL_NORMAL_TICK_INTERVAL_MS,
+                            recoveryIntervalMs = BACKGROUND_SCROLL_RECOVERY_TICK_INTERVAL_MS
+                        )
+                        mainHandler.postDelayed(this, lastScheduledTickDelayMs)
                     }
                 }
             }
