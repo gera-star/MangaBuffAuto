@@ -16,6 +16,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import com.example.myapplication.network.ExitIpChecker
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
@@ -1037,6 +1039,47 @@ fun AccountsTab(
     }
 }
 
+/** Temporary compact diagnostic: masked exit address of this account's HTTP client. Tap to refresh. */
+@Composable
+private fun AccountExitIpRow(accountId: String) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var text by remember(accountId) { mutableStateOf("IP: проверка…") }
+    var busy by remember(accountId) { mutableStateOf(false) }
+
+    fun refresh() {
+        if (busy) return
+        busy = true
+        text = "IP: проверка…"
+        scope.launch {
+            val result = ExitIpChecker.check(context, accountId)
+            val route = if (result.viaProxy) "прокси" else "напрямую"
+            text = if (result.maskedIp != null) {
+                "IP: " + result.maskedIp + " · " + route
+            } else {
+                "IP: нет данных (" + result.error + ") · " + route
+            }
+            busy = false
+        }
+    }
+
+    LaunchedEffect(accountId) { refresh() }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp),
+        horizontalArrangement = Arrangement.End
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.clickable { refresh() }
+        )
+    }
+}
+
 @Composable
 fun AccountCard(
     account: MangaBuffAccount,
@@ -1390,6 +1433,8 @@ fun AccountCard(
                             modifier = Modifier.height(30.dp)
                         )
                     }
+
+                    AccountExitIpRow(account.id)
                 }
             }
         }
