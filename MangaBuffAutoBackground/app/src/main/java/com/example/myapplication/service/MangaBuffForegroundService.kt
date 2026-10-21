@@ -313,6 +313,7 @@ class MangaBuffForegroundService : Service() {
     private val towerCycleEndsAt = ConcurrentHashMap<String, Long>()
     private val recoveryRequests = ConcurrentHashMap.newKeySet<String>()
     private val networkPauseRequests = ConcurrentHashMap.newKeySet<String>()
+    private val networkUnvalidatedGraceJobs = ConcurrentHashMap<String, Job>()
     private val missingWebViewSince = ConcurrentHashMap<String, Long>()
     private val accountProgressTrackers = ConcurrentHashMap<String, AccountProgressTracker>()
     private val accountCurrentTaskLabels = ConcurrentHashMap<String, String>()
@@ -602,6 +603,7 @@ class MangaBuffForegroundService : Service() {
         stoppingExplicitly = false
         recoveryRequests.remove(accountId)
         networkPauseRequests.remove(accountId)
+        networkUnvalidatedGraceJobs.remove(accountId)?.cancel()
         missingWebViewSince.remove(accountId)
         val account = repository.getAccounts().firstOrNull { it.id == accountId }
         if (account == null) {
@@ -721,7 +723,18 @@ class MangaBuffForegroundService : Service() {
                 // Sequential mode (default) keeps one account in the shared queue/gate. Parallel mode
                 // is an explicit user choice: this account runs beside others with its own WebView,
                 // profile and OkHttp client, so it takes neither the queue permit nor the shared gate.
-                val parallelMode = repository.getSettings().parallelAccounts
+                val executionSettings = repository.getSettings()
+                val parallelModeRequested = executionSettings.parallelAccounts
+                val parallelMode = effectiveParallelMode(executionSettings)
+                if (parallelModeRequested && !parallelMode) {
+                    publishLog(
+                        LogEntry(
+                            username = account.username,
+                            component = "QUEUE",
+                            message = "ACCOUNT_PARALLEL_BLOCKED reason=WEBVIEW_PROXY_CONTROLLER_PROCESS_WIDE; using queue"
+                        )
+                    )
+                }
                 if (parallelMode) {
                     if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
                     publishLog(
@@ -832,6 +845,7 @@ class MangaBuffForegroundService : Service() {
                         // Clean up the previous account before yielding the queue permit.
                         automationRunner.stopAccount(accountId)
 
+                        networkUnvalidatedGraceJobs.remove(accountId)?.cancel()
                         val recoveryRequested = recoveryRequests.remove(accountId)
                         val networkResumeRequested = networkPauseRequests.remove(accountId)
                         missingWebViewSince.remove(accountId)
@@ -1097,21 +1111,84 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
                 publishStatus(accountId, pauseText, true, taskLabel, 0f)
-                // Stop the active WebView stage when the network disappears. The service's
-                // finally block will release the queue/Gate and restart from the persisted
-                // checkpoint after validated Internet returns.
-                if (accountJobs[accountId] === job && networkPauseRequests.add(accountId)) {
+                // Android can briefly report a connected network as unvalidated during Wi-Fi/VPN
+                // transitions. Do not destroy the reader WebView for that transient state.
+                // A real disconnection still pauses immediately; an unvalidated connection gets
+                // a bounded grace period before restarting from the persisted checkpoint.
+                if (accountJobs[accountId] === job) {
+                    if (NetworkPauseResumePolicy.shouldDelayPause(connected, normalizedValidated)) {
+                        val existingGrace = networkUnvalidatedGraceJobs[accountId]
+                        if (existingGrace == null || !existingGrace.isActive) {
+                            if (existingGrace != null) {
+                                networkUnvalidatedGraceJobs.remove(accountId, existingGrace)
+                            }
+                            val graceJob = serviceScope.launch(start = CoroutineStart.LAZY) {
+                                delay(NetworkPauseResumePolicy.UNVALIDATED_GRACE_MS)
+                                val thisJob = coroutineContext[Job]
+                                if (thisJob != null) {
+                                    networkUnvalidatedGraceJobs.remove(accountId, thisJob)
+                                }
+                                if (networkValidated ||
+                                    accountJobs[accountId] !== job ||
+                                    !job.isActive
+                                ) {
+                                    return@launch
+                                }
+                                if (networkPauseRequests.add(accountId)) {
+                                    publishLog(
+                                        LogEntry(
+                                            username = accountName,
+                                            component = "NETWORK",
+                                            message = "NETWORK_VALIDATION_GRACE_EXPIRED accountId=$accountId " +
+                                                "graceMs=${NetworkPauseResumePolicy.UNVALIDATED_GRACE_MS} " +
+                                                "resume=last_completed_checkpoint"
+                                        )
+                                    )
+                                    job.cancel(
+                                        CancellationException(
+                                            "NETWORK_UNVALIDATED_GRACE_EXPIRED state=$state reason=$reason"
+                                        )
+                                    )
+                                }
+                            }
+                            networkUnvalidatedGraceJobs[accountId] = graceJob
+                            graceJob.start()
+                            publishLog(
+                                LogEntry(
+                                    username = accountName,
+                                    component = "NETWORK",
+                                    message = "NETWORK_VALIDATION_GRACE_STARTED accountId=$accountId " +
+                                        "graceMs=${NetworkPauseResumePolicy.UNVALIDATED_GRACE_MS}"
+                                )
+                            )
+                        }
+                    } else {
+                        networkUnvalidatedGraceJobs.remove(accountId)?.cancel()
+                        if (networkPauseRequests.add(accountId)) {
+                            publishLog(
+                                LogEntry(
+                                    username = accountName,
+                                    component = "NETWORK",
+                                    message = "NETWORK_ACTIVE_TASK_CANCEL accountId=$accountId state=$state " +
+                                        "reason=network_lost resume=last_completed_checkpoint"
+                                )
+                            )
+                            job.cancel(CancellationException("NETWORK_LOST state=$state reason=$reason"))
+                        }
+                    }
+                }
+            } else {
+                val pendingNetworkGrace = networkUnvalidatedGraceJobs.remove(accountId)
+                if (pendingNetworkGrace != null) {
+                    pendingNetworkGrace.cancel()
                     publishLog(
                         LogEntry(
                             username = accountName,
                             component = "NETWORK",
-                            message = "NETWORK_ACTIVE_TASK_CANCEL accountId=$accountId state=$state " +
-                                "reason=network_lost resume=last_completed_checkpoint"
+                            message = "NETWORK_VALIDATION_RECOVERED_WITHIN_GRACE accountId=$accountId"
                         )
                     )
-                    job.cancel(CancellationException("NETWORK_LOST state=$state reason=$reason"))
                 }
-            } else {
                 transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_RESTORED, reason)
                 val tracker = accountProgressTrackers[accountId]
                 val snapshot = tracker?.snapshot()
@@ -1157,6 +1234,16 @@ class MangaBuffForegroundService : Service() {
         publishStatus(accountId, "Подготовка...", true, taskLabel, 0f)
     }
 
+    private fun effectiveParallelMode(settings: GlobalSettings): Boolean {
+        val anyOnlineAccountProxyEnabled = repository.getAccounts()
+            .filterNot { it.isOffline }
+            .any { account -> AppProxySettings.read(applicationContext, account.id).enabled }
+        return AccountExecutionModePolicy.shouldUseParallel(
+            requestedParallel = settings.parallelAccounts,
+            anyEnabledAccountProxy = anyOnlineAccountProxyEnabled
+        )
+    }
+
     private suspend fun resetNetworkBetweenAccountsIfNeeded(
         accountId: String,
         username: String,
@@ -1166,7 +1253,7 @@ class MangaBuffForegroundService : Service() {
         val settings = repository.getSettings()
         val hasNextAccount = accountExecutionQueue.hasQueuedOtherAccount(accountId)
         val shouldReset = NetworkResetPolicy.shouldResetBetweenAccounts(
-            enabled = settings.networkResetEnabled && !settings.parallelAccounts,
+            enabled = settings.networkResetEnabled && !effectiveParallelMode(settings),
             mode = settings.networkResetMode,
             runCompleted = runCompleted,
             hasNextAccount = hasNextAccount,
@@ -1476,6 +1563,7 @@ class MangaBuffForegroundService : Service() {
         cancelTowerCycle(accountId, clearPersisted = true)
         recoveryRequests.remove(accountId)
         networkPauseRequests.remove(accountId)
+        networkUnvalidatedGraceJobs.remove(accountId)?.cancel()
         missingWebViewSince.remove(accountId)
         removePersistedRun(accountId)
         runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
@@ -1534,6 +1622,8 @@ class MangaBuffForegroundService : Service() {
         }
         recoveryRequests.clear()
         networkPauseRequests.clear()
+        networkUnvalidatedGraceJobs.values.forEach { it.cancel() }
+        networkUnvalidatedGraceJobs.clear()
         missingWebViewSince.clear()
         automationRunner.stopAll(reason = if (explicitUserStop) "EXPLICIT_USER_STOP" else "INTERNAL_STOP")
         ids.forEach { accountId ->
@@ -2181,6 +2271,8 @@ class MangaBuffForegroundService : Service() {
         watchdogJob = null
         recoveryRequests.clear()
         networkPauseRequests.clear()
+        networkUnvalidatedGraceJobs.values.forEach { it.cancel() }
+        networkUnvalidatedGraceJobs.clear()
         missingWebViewSince.clear()
         accountRecoveryRestartJobs.values.forEach { it.cancel() }
         accountRecoveryRestartJobs.clear()

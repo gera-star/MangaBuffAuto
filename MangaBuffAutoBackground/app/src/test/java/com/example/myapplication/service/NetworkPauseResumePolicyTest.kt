@@ -6,6 +6,13 @@ import org.junit.Test
 
 class NetworkPauseResumePolicyTest {
     @Test
+    fun briefConnectedButUnvalidatedStateUsesGracePeriod() {
+        assertTrue(NetworkPauseResumePolicy.shouldDelayPause(connected = true, validated = false))
+        assertFalse(NetworkPauseResumePolicy.shouldDelayPause(connected = false, validated = false))
+        assertFalse(NetworkPauseResumePolicy.shouldDelayPause(connected = true, validated = true))
+    }
+
+    @Test
     fun resumesOnlyTheSamePersistedTaskAfterNetworkPause() {
         assertTrue(
             NetworkPauseResumePolicy.shouldResume(
