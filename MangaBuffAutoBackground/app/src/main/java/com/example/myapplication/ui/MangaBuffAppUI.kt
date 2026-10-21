@@ -1634,6 +1634,29 @@ fun TasksTab(
                             )
                         }
 
+                        FilledTonalButton(
+                            onClick = {
+                                onSaveSettings(
+                                    settings.copy(parallelAccounts = !settings.parallelAccounts)
+                                )
+                            },
+                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(9.dp)
+                        ) {
+                            Icon(
+                                if (settings.parallelAccounts) Icons.Default.Sync else Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                if (settings.parallelAccounts) "Одновременно" else "Очередь",
+                                fontSize = 10.sp,
+                                maxLines = 1
+                            )
+                        }
+
                         if (isRunning) {
                             FilledTonalButton(
                                 onClick = onStopAll,

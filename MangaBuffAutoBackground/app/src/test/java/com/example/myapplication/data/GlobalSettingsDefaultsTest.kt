@@ -9,4 +9,9 @@ class GlobalSettingsDefaultsTest {
         assertEquals(10, GlobalSettings().readerChapters)
         assertEquals(0, DailyStats().readerChapters)
     }
+
+    @Test
+    fun accountsRunOneAfterAnotherByDefault() {
+        assertEquals(false, GlobalSettings().parallelAccounts)
+    }
 }

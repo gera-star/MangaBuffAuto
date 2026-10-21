@@ -718,6 +718,20 @@ class MangaBuffForegroundService : Service() {
                 publishStatus(accountId, "В очереди — ожидает освобождения аккаунта", true, taskType.title, 0f)
                 awaitValidatedNetwork(accountId, account.username, taskType.title)
 
+                // Sequential mode (default) keeps one account in the shared queue/gate. Parallel mode
+                // is an explicit user choice: this account runs beside others with its own WebView,
+                // profile and OkHttp client, so it takes neither the queue permit nor the shared gate.
+                val parallelMode = repository.getSettings().parallelAccounts
+                if (parallelMode) {
+                    if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
+                    publishLog(
+                        LogEntry(
+                            username = account.username,
+                            component = "QUEUE",
+                            message = "ACCOUNT_PARALLEL_START accountId=$accountId taskType=${taskType.title} queue=bypassed"
+                        )
+                    )
+                } else {
                 accountExecutionQueue.acquire()
                 hasExecutionPermit = true
                 if (currentJob != null) {
@@ -753,6 +767,7 @@ class MangaBuffForegroundService : Service() {
                         message = "ACCOUNT_EXECUTION_GATE_ACQUIRED accountId=$accountId"
                     )
                 )
+                }
                 publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
                 transitionAccountTaskState(accountId, AccountTaskEvent.STARTED, "queue_and_gate_acquired task=${taskType.title}")
                 // Start the stage deadline before navigation/JavaScript callbacks begin, so a
@@ -1151,7 +1166,7 @@ class MangaBuffForegroundService : Service() {
         val settings = repository.getSettings()
         val hasNextAccount = accountExecutionQueue.hasQueuedOtherAccount(accountId)
         val shouldReset = NetworkResetPolicy.shouldResetBetweenAccounts(
-            enabled = settings.networkResetEnabled,
+            enabled = settings.networkResetEnabled && !settings.parallelAccounts,
             mode = settings.networkResetMode,
             runCompleted = runCompleted,
             hasNextAccount = hasNextAccount,
