@@ -2980,7 +2980,7 @@ class MangaBuffAutomation(
                     if (result is TaskResult.Cancelled) {
                         throw CancellationException("BATTLE_STAGE_CANCELLED")
                     }
-                    throw IllegalStateException("BATTLE_STAGE_NOT_COMPLETED; checkpoint preserved")
+                    throw IncompleteTaskSequenceException("BATTLE_STAGE_NOT_COMPLETED; checkpoint preserved")
                 }
                 fetchAndLogBalanceInfo(account, webView)
             } else {

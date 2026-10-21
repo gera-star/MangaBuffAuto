@@ -28,6 +28,7 @@ import com.example.myapplication.R
 import com.example.myapplication.automation.BackgroundExecutionState
 import com.example.myapplication.automation.AccountExecutionGate
 import com.example.myapplication.automation.MultiAccountAutomationRunner
+import com.example.myapplication.automation.IncompleteTaskSequenceException
 import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.network.AppProxySettings
@@ -697,6 +698,7 @@ class MangaBuffForegroundService : Service() {
             var runCompleted = false
             var runCancelled = false
             var runFailureReason: String? = null
+            var incompleteSequenceFailure = false
             if (currentJob != null) accountExecutionQueue.markQueued(accountId, currentJob)
 
             try {
@@ -779,6 +781,12 @@ class MangaBuffForegroundService : Service() {
                 )
             } catch (e: Exception) {
                 runFailureReason = e.message ?: e.javaClass.simpleName
+                incompleteSequenceFailure = e is IncompleteTaskSequenceException
+                if (incompleteSequenceFailure && !stoppingExplicitly && !isAccountOffline(accountId)) {
+                    // Resume this account from its persisted stage checkpoint. A bounded retry
+                    // budget prevents a persistent battle/site error from creating an endless loop.
+                    recoveryRequests.add(accountId)
+                }
                 publishLog(
                     LogEntry(
                         username = account.username,
@@ -819,30 +827,38 @@ class MangaBuffForegroundService : Service() {
                         val recoveryExhausted = recoveryWanted && !shouldRecover
 
                         if (shouldRecover) {
-                            val resumeReason = if (networkResumeWanted) {
-                                "network_restored_checkpoint"
-                            } else {
-                                "renderer_or_webview_recovery"
+                            val resumeReason = when {
+                                networkResumeWanted -> "network_restored_checkpoint"
+                                incompleteSequenceFailure -> "incomplete_sequence_checkpoint"
+                                else -> "renderer_or_webview_recovery"
                             }
                             transitionAccountTaskState(accountId, AccountTaskEvent.RECOVERY_REQUESTED, resumeReason)
                             publishLog(
                                 LogEntry(
                                     username = account.username,
-                                    component = if (networkResumeWanted) "NETWORK" else "BG",
-                                    message = if (networkResumeWanted) {
-                                        "NETWORK_RESUME_SCHEDULED accountId=$accountId taskType=${taskType.title} checkpoint=true"
-                                    } else {
-                                        "WATCHDOG_RECOVERY_SCHEDULED accountId=$accountId taskType=${taskType.title}"
+                                    component = when {
+                                        networkResumeWanted -> "NETWORK"
+                                        incompleteSequenceFailure -> "TASK"
+                                        else -> "BG"
                                     },
-                                    isError = !networkResumeWanted
+                                    message = when {
+                                        networkResumeWanted ->
+                                            "NETWORK_RESUME_SCHEDULED accountId=$accountId taskType=${taskType.title} checkpoint=true"
+                                        incompleteSequenceFailure ->
+                                            "SEQUENCE_RESUME_SCHEDULED accountId=$accountId taskType=${taskType.title} " +
+                                                "checkpoint=true attempt=${accountTaskAttempts[accountId] ?: 0}"
+                                        else ->
+                                            "WATCHDOG_RECOVERY_SCHEDULED accountId=$accountId taskType=${taskType.title}"
+                                    },
+                                    isError = !networkResumeWanted && !incompleteSequenceFailure
                                 )
                             )
                             publishStatus(
                                 accountId,
-                                if (networkResumeWanted) {
-                                    "Ожидание сети — продолжение с последнего сохранённого этапа"
-                                } else {
-                                    "Восстановление после сбоя WebView..."
+                                when {
+                                    networkResumeWanted -> "Ожидание сети — продолжение с последнего сохранённого этапа"
+                                    incompleteSequenceFailure -> "Повтор этапа боёв с сохранённой контрольной точки..."
+                                    else -> "Восстановление после сбоя WebView..."
                                 },
                                 true,
                                 taskType.title,
@@ -887,9 +903,12 @@ class MangaBuffForegroundService : Service() {
                                 publishLog(
                                     LogEntry(
                                         username = account.username,
-                                        component = "BG",
-                                        message = "WATCHDOG_RECOVERY_GIVE_UP accountId=$accountId " +
-                                            "taskType=${taskType.title} " +
+                                        component = if (incompleteSequenceFailure) "TASK" else "BG",
+                                        message = (if (incompleteSequenceFailure) {
+                                            "SEQUENCE_RESUME_GIVE_UP reason=incomplete_battle_stage "
+                                        } else {
+                                            "WATCHDOG_RECOVERY_GIVE_UP "
+                                        }) + "accountId=$accountId taskType=${taskType.title} " +
                                             "limit=$RECOVERY_MAX_PER_WINDOW/${RECOVERY_WINDOW_MS / 60_000L}min " +
                                             "state=STOPPED_SAFE",
                                         isError = true
@@ -901,6 +920,8 @@ class MangaBuffForegroundService : Service() {
                                 runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
                             }
                             val terminalStatus = when {
+                                recoveryExhausted && incompleteSequenceFailure ->
+                                    "Остановлено: этап боёв не завершён после повторных попыток"
                                 recoveryExhausted -> "Остановлено: слишком много сбоев WebView"
                                 runFailureReason != null && runCancelled && runFailureReason.contains("NO_PROGRESS", ignoreCase = true) ->
                                     "Остановлено: нет прогресса — ${runFailureReason.orEmpty()}"

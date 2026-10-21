@@ -14,3 +14,6 @@ internal object TaskSequenceCheckpoint {
             else -> currentCompletedStage
         }
 }
+
+/** Signals that an ordered task stage failed and later stages must not run. */
+internal class IncompleteTaskSequenceException(message: String) : IllegalStateException(message)
