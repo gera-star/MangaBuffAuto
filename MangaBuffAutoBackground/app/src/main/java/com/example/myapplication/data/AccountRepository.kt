@@ -197,6 +197,28 @@ class AccountRepository(context: Context) {
                 shouldSave = true
             }
 
+            val safeReaderChapters = if (migrated.readerChapters <= 0) {
+                10
+            } else {
+                migrated.readerChapters.coerceIn(1, GlobalSettings.MAX_READER_CHAPTERS)
+            }
+            val safeReaderSlowdown = ReaderSpeedMode.normalize(
+                migrated.readerSiteAutoscrollSlowdown,
+                legacyHalfSpeed = migrated.readerSiteAutoscrollHalfSpeed
+            )
+            if (
+                migrated.readerChapters != safeReaderChapters ||
+                migrated.readerSiteAutoscrollSlowdown != safeReaderSlowdown ||
+                migrated.readerSiteAutoscrollHalfSpeed
+            ) {
+                migrated = migrated.copy(
+                    readerChapters = safeReaderChapters,
+                    readerSiteAutoscrollSlowdown = safeReaderSlowdown,
+                    readerSiteAutoscrollHalfSpeed = false
+                )
+                shouldSave = true
+            }
+
             if (shouldSave) {
                 editor.putString(KEY_SETTINGS, gson.toJson(migrated)).apply()
             }
@@ -208,6 +230,9 @@ class AccountRepository(context: Context) {
 
     fun saveSettings(settings: GlobalSettings) {
         val json = gson.toJson(settings.copy(
+            readerChapters = settings.readerChapters.coerceIn(1, GlobalSettings.MAX_READER_CHAPTERS),
+            readerSiteAutoscrollSlowdown = ReaderSpeedMode.normalize(settings.readerSiteAutoscrollSlowdown),
+            readerSiteAutoscrollHalfSpeed = false,
             readerEngineMode = ReaderEngineModes.normalize(settings.readerEngineMode)
         ))
         prefs.edit()

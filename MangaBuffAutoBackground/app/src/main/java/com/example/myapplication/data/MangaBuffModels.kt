@@ -148,6 +148,29 @@ enum class NetworkResetMode {
     AIRPLANE_MODE
 }
 
+/** Reader scroll-speed preset: 1 = off, 2/3/4 = divide the normal speed by that factor. */
+object ReaderSpeedMode {
+    const val OFF = 1
+
+    fun normalize(multiplier: Int, legacyHalfSpeed: Boolean = false): Int = when (multiplier) {
+        2, 3, 4 -> multiplier
+        1 -> if (legacyHalfSpeed) 2 else OFF
+        else -> if (legacyHalfSpeed) 2 else OFF
+    }
+
+    fun next(multiplier: Int): Int = when (normalize(multiplier)) {
+        2 -> 3
+        3 -> 4
+        4 -> OFF
+        else -> 2
+    }
+
+    fun isEnabled(multiplier: Int): Boolean = normalize(multiplier) != OFF
+
+    fun label(multiplier: Int): String =
+        if (isEnabled(multiplier)) "−Х${normalize(multiplier)}" else "−Х2"
+}
+
 data class GlobalSettings(
     val quizMaxClicks: Int = 15,
     // Kept for compatibility with previously saved settings; runtime enforces 3 ads/day.
@@ -168,8 +191,11 @@ data class GlobalSettings(
     /** false = accounts run one after another (default); true = accounts run at the same time. */
     val parallelAccounts: Boolean = false,
     val readerSiteAutoscroll: Boolean = false,
-    /** Halve the app-controlled reader scroll speed when enabled. */
+    /** Legacy field retained to migrate settings saved by older versions. */
+    @Deprecated("Use readerSiteAutoscrollSlowdown")
     val readerSiteAutoscrollHalfSpeed: Boolean = false,
+    /** 1 = normal/off, 2 = half speed, 3 = one-third, 4 = one-quarter speed. */
+    val readerSiteAutoscrollSlowdown: Int = ReaderSpeedMode.OFF,
     /** Collect event candy/pumpkin drops through the existing reader session. */
     val eventsEnabled: Boolean = true,
     /** 0 = current hybrid, 1 = Kotlin-driven scroll ticks, 2 = site autoscroll with native end checks. */
@@ -179,6 +205,6 @@ data class GlobalSettings(
     val networkResetMode: NetworkResetMode = NetworkResetMode.NONE
 ) {
     companion object {
-        const val MAX_READER_CHAPTERS = 100
+        const val MAX_READER_CHAPTERS = 500
     }
 }

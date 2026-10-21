@@ -51,6 +51,7 @@ import androidx.webkit.ProfileStore
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.example.myapplication.data.GlobalSettings
+import com.example.myapplication.data.ReaderSpeedMode
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.TaskType
@@ -1965,7 +1966,7 @@ fun TasksTab(
                                     .size(32.dp)
                                     .clip(CircleShape)
                                     .background(
-                                        if (settings.readerSiteAutoscrollHalfSpeed) {
+                                        if (ReaderSpeedMode.isEnabled(settings.readerSiteAutoscrollSlowdown)) {
                                             Color(0xFF4CAF50)
                                         } else {
                                             MaterialTheme.colorScheme.surfaceVariant
@@ -1974,17 +1975,20 @@ fun TasksTab(
                                     .clickable(enabled = actionEnabled) {
                                         onSaveSettings(
                                             settings.copy(
-                                                readerSiteAutoscrollHalfSpeed = !settings.readerSiteAutoscrollHalfSpeed
+                                                readerSiteAutoscrollSlowdown = ReaderSpeedMode.next(
+                                                    settings.readerSiteAutoscrollSlowdown
+                                                ),
+                                                readerSiteAutoscrollHalfSpeed = false
                                             )
                                         )
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    "−Х2",
+                                    ReaderSpeedMode.label(settings.readerSiteAutoscrollSlowdown),
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (settings.readerSiteAutoscrollHalfSpeed) {
+                                    color = if (ReaderSpeedMode.isEnabled(settings.readerSiteAutoscrollSlowdown)) {
                                         Color.White
                                     } else {
                                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -2286,7 +2290,7 @@ fun TasksTab(
                         CompactNumberField(
                             readerChapters,
                             { readerChapters = it },
-                            "📖 Главы 1–100",
+                            "📖 Главы 1–500",
                             Modifier.weight(1f)
                         )
                     }

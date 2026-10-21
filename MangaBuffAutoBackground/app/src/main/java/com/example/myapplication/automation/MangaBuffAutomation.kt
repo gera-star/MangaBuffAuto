@@ -18,6 +18,7 @@ import android.webkit.WebViewClient
 import com.example.myapplication.network.AppProxySettings
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.ReaderEngineModes
+import com.example.myapplication.data.ReaderSpeedMode
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.data.DailyStats
@@ -7843,7 +7844,7 @@ class MangaBuffAutomation(
                     {},
                     nextChapterUrlToOpen,
                     siteAutoscrollEnabled = settings.readerSiteAutoscroll,
-                    siteAutoscrollHalfSpeed = settings.readerSiteAutoscrollHalfSpeed,
+                    siteAutoscrollSlowdown = ReaderSpeedMode.normalize(settings.readerSiteAutoscrollSlowdown),
                     readerEngineMode = readerEngineMode
                 )
             ) {
@@ -8069,7 +8070,7 @@ class MangaBuffAutomation(
         onStepInfo: (String) -> Unit,
         startUrl: String = "",
         siteAutoscrollEnabled: Boolean = true,
-        siteAutoscrollHalfSpeed: Boolean = false,
+        siteAutoscrollSlowdown: Int = ReaderSpeedMode.OFF,
         readerEngineMode: Int = ReaderEngineModes.HYBRID
     ): ReaderResult = suspendCancellableCoroutine { continuation ->
 
@@ -10385,7 +10386,7 @@ class MangaBuffAutomation(
                                                 return;
                                             }
 
-                                            var targetSpeed = ${siteAutoscrollHalfSpeed} ? '225' : '450';
+                                            var targetSpeed = String(Math.round(450 / ${siteAutoscrollSlowdown}));
                                             try {
                                                 speed.value = targetSpeed;
                                                 speed.dispatchEvent(new Event('input', { bubbles: true }));
@@ -11236,7 +11237,7 @@ class MangaBuffAutomation(
                                                     Math.max(126, Math.floor(viewport * 0.18))
                                                 );
                                                 if (nativeTickMode) {
-                                                    step = Math.max(1, Math.floor(step * (${siteAutoscrollHalfSpeed} ? 0.5 : 1)));
+                                                    step = Math.max(1, Math.floor(step / ${siteAutoscrollSlowdown}));
                                                     if (remaining < viewport * 1.5) {
                                                         step = Math.max(1, Math.floor(step * Math.max(0.18, remaining / (viewport * 1.5))));
                                                     }
@@ -11263,10 +11264,10 @@ class MangaBuffAutomation(
                                             );
                                         }
 
-                                        // Optional −Х2 mode halves the app-controlled scroll speed.
+                                        // Optional −Х2/−Х3/−Х4 presets divide app-controlled scroll speed.
                                         var speedPxPerSecond =
-                                            (1980 + Math.floor(Math.random() * 721)) *
-                                            (${siteAutoscrollHalfSpeed} ? 0.5 : 1);
+                                            (1980 + Math.floor(Math.random() * 721)) /
+                                            ${siteAutoscrollSlowdown};
                                         var lastFrame = performance.now();
                                         window.__mbFastScrollRunning = true;
 
