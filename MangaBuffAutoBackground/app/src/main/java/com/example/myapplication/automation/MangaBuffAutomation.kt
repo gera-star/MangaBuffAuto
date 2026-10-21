@@ -2949,9 +2949,7 @@ class MangaBuffAutomation(
             log(account.username, "STAT: REFRESH_BEFORE_START (Обновление баланса и статистики)")
             val balanceResult = fetchAndLogBalanceInfo(account, webView)
 
-            if (balanceResult.contains("Требуется повторный вход") ||
-                account.getSafeStatusMessage().contains("Требуется повторный вход")
-            ) {
+            if (balanceResult.contains("Требуется повторный вход")) {
                 log(account.username, "AUTH: ABORTING_TASKS due to expired session")
                 throw MangaBuffAuthenticationRequiredException()
             }
