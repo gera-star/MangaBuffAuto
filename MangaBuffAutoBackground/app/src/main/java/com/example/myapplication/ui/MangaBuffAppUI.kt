@@ -604,6 +604,17 @@ fun MangaBuffAppUI(
                             // Keep the site's native navigation behavior, but repair profile popups
                             // that the balance page positions partly above the WebView viewport.
                             wv.webViewClient = object : WebViewClient() {
+                                override fun onReceivedHttpAuthRequest(
+                                    view: WebView?,
+                                    handler: android.webkit.HttpAuthHandler,
+                                    host: String?,
+                                    realm: String?
+                                ) {
+                                    if (!AppProxySettings.handleWebViewProxyAuth(ctx, acc.id, host, handler)) {
+                                        handler.cancel()
+                                    }
+                                }
+
                                 override fun onPageFinished(view: WebView?, url: String?) {
                                     super.onPageFinished(view, url)
                                     view?.evaluateJavascript(
