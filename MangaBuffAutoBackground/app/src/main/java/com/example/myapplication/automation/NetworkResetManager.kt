@@ -375,16 +375,6 @@ class NetworkResetManager(
                 )
             }
 
-            val finished = process.waitFor(5, TimeUnit.SECONDS)
-            if (!finished) {
-                process.destroyForcibly()
-                return RootCommandResult(
-                    success = false,
-                    exitCode = -1,
-                    output = "root shell command timeout"
-                )
-            }
-
             val output = BufferedReader(
                 InputStreamReader(process.inputStream)
             ).use { it.readText() }
