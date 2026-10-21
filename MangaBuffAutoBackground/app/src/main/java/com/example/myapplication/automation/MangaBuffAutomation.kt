@@ -1922,6 +1922,8 @@ class MangaBuffAutomation(
     /** Chapters actually included in successful /addHistory 2xx batches. */
     private val historyServerAcceptedChapterIds = ConcurrentHashMap.newKeySet<String>()
     private val currentHistoryPostChapterIds = ConcurrentHashMap.newKeySet<String>()
+    @Volatile
+    private var historyPostInFlight = false
 
     fun getCurrentMangaUrl(): String = currentMangaUrl
     fun getLastFinishedChapterId(): String = lastFinishedChapterId
@@ -7791,6 +7793,7 @@ class MangaBuffAutomation(
         readChapterUrlsInRun.clear()
         historyServerAcceptedChapterIds.clear()
         currentHistoryPostChapterIds.clear()
+        historyPostInFlight = false
 
         activeChapterContext = null
         heartbeatChapterContext = Pair("", "")
@@ -8007,6 +8010,30 @@ class MangaBuffAutomation(
                 }
                 is ReaderResult.Cancelled -> break
             }
+        }
+
+        // At the target boundary, allow any already-started site-owned /addHistory request
+        // to finish. Never synthesize a POST to force a CCL batch that the site hasn't sent.
+        if (historyPostInFlight || currentHistoryPostChapterIds.isNotEmpty()) {
+            val waitStartedAt = SystemClock.elapsedRealtime()
+            val waitDeadline = waitStartedAt + 10_000L
+            log(
+                account.username,
+                "READER: FINAL_CCL_POST_DRAIN_START timeoutMs=10000 " +
+                    "inFlight=$historyPostInFlight pendingItems=${currentHistoryPostChapterIds.size}"
+            )
+            while (
+                (historyPostInFlight || currentHistoryPostChapterIds.isNotEmpty()) &&
+                SystemClock.elapsedRealtime() < waitDeadline
+            ) {
+                coroutineContext.ensureActive()
+                delay(100L)
+            }
+            log(
+                account.username,
+                "READER: FINAL_CCL_POST_DRAIN_END elapsedMs=${SystemClock.elapsedRealtime() - waitStartedAt} " +
+                    "completed=${!historyPostInFlight && currentHistoryPostChapterIds.isEmpty()}"
+            )
         }
 
         val pendingHistoryIds = completedChapterIds
@@ -8603,6 +8630,7 @@ class MangaBuffAutomation(
                 @JavascriptInterface
                 fun onHistoryPostStarted(url: String, currentChapterId: String) {
                     currentHistoryPostChapterIds.clear()
+                    historyPostInFlight = true
                     log(account.username, "READER: MB_HISTORY_POST_STARTED")
                     log(account.username, "url=$url method=POST currentChapterId=$currentChapterId")
                     log(account.username, "[READQUEST_DIAG] POST_PREPARE quest=$lastKnownReadQuest poolSize=$lastPoolSize")
@@ -8705,6 +8733,7 @@ class MangaBuffAutomation(
                         log(account.username, "[READQUEST_DIAG] POST_HTTP_FAILED status=$status", true)
                     }
                     currentHistoryPostChapterIds.clear()
+                    historyPostInFlight = false
                 }
 
                 @JavascriptInterface
