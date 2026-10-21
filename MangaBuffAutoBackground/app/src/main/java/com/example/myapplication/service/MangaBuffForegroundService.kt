@@ -725,13 +725,13 @@ class MangaBuffForegroundService : Service() {
                 // profile and OkHttp client, so it takes neither the queue permit nor the shared gate.
                 val executionSettings = repository.getSettings()
                 val parallelModeRequested = executionSettings.parallelAccounts
-                val parallelMode = effectiveParallelMode(executionSettings)
+                val parallelMode = AccountExecutionModePolicy.shouldUseParallel()
                 if (parallelModeRequested && !parallelMode) {
                     publishLog(
                         LogEntry(
                             username = account.username,
                             component = "QUEUE",
-                            message = "ACCOUNT_PARALLEL_BLOCKED reason=WEBVIEW_PROXY_CONTROLLER_PROCESS_WIDE; using queue"
+                            message = "ACCOUNT_PARALLEL_BLOCKED reason=STRICT_SEQUENTIAL_MODE; using queue"
                         )
                     )
                 }
@@ -1232,16 +1232,6 @@ class MangaBuffForegroundService : Service() {
         transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_RESTORED, "validated_internet_available")
         publishLog(LogEntry(username = username, component = "NETWORK", message = "NETWORK_WAIT_FINISHED accountId=$accountId"))
         publishStatus(accountId, "Подготовка...", true, taskLabel, 0f)
-    }
-
-    private fun effectiveParallelMode(settings: GlobalSettings): Boolean {
-        val anyOnlineAccountProxyEnabled = repository.getAccounts()
-            .filterNot { it.isOffline }
-            .any { account -> AppProxySettings.read(applicationContext, account.id).enabled }
-        return AccountExecutionModePolicy.shouldUseParallel(
-            requestedParallel = settings.parallelAccounts,
-            anyEnabledAccountProxy = anyOnlineAccountProxyEnabled
-        )
     }
 
     private suspend fun resetNetworkBetweenAccountsIfNeeded(

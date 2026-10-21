@@ -1,12 +1,9 @@
 package com.example.myapplication.service
 
 /**
- * WebView's ProxyController override is process-wide. Separate account profiles are safe to run
- * concurrently only when no account-specific WebView proxy is enabled.
+ * The app intentionally runs one account at a time. Profiles and clients are isolated as well,
+ * but that is not a reason to allow concurrent account tasks.
  */
 internal object AccountExecutionModePolicy {
-    fun shouldUseParallel(
-        requestedParallel: Boolean,
-        anyEnabledAccountProxy: Boolean
-    ): Boolean = requestedParallel && !anyEnabledAccountProxy
+    fun shouldUseParallel(): Boolean = false
 }
