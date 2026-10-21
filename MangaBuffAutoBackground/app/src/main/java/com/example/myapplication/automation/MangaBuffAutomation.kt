@@ -2973,6 +2973,15 @@ class MangaBuffAutomation(
                     is TaskResult.Cancelled -> log(account.username, "BATTLE: TASK_CANCELLED")
                     else -> log(account.username, "BATTLE: TASK_FINISHED elapsed=${elapsed}ms")
                 }
+                if (taskType == TaskType.ALL && !battleStageCompleted) {
+                    // A later stage must not outrun the first-incomplete checkpoint.
+                    // Stop this sequence so a restart can resume the battle stage without replaying
+                    // a Tower/Ads/Mine/Reader stage that completed after it.
+                    if (result is TaskResult.Cancelled) {
+                        throw CancellationException("BATTLE_STAGE_CANCELLED")
+                    }
+                    throw IllegalStateException("BATTLE_STAGE_NOT_COMPLETED; checkpoint preserved")
+                }
                 fetchAndLogBalanceInfo(account, webView)
             } else {
                 log(account.username, "BATTLE: SKIPPED_DISABLED")
