@@ -34,7 +34,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.text.font.FontWeight
@@ -87,7 +86,6 @@ fun MangaBuffAppUI(
     var showAboutDialog by remember { mutableStateOf(false) }
     var showWebViewAccountMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val currentLocale = LocalLocale.current.platformLocale
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     Scaffold(
@@ -178,7 +176,7 @@ fun MangaBuffAppUI(
                                                 .trim()
                                                 .replace(Regex("\\s+"), "")
                                                 .take(2)
-                                                .uppercase(currentLocale)
+                                                .uppercase()
                                                 .ifEmpty { "?" }
                                             Box(
                                                 modifier = Modifier
@@ -1052,13 +1050,12 @@ fun AccountCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showDeleteConfirmation by remember(account.id) { mutableStateOf(false) }
-    val currentLocale = LocalLocale.current.platformLocale
-    val accountInitials = remember(account.username, currentLocale) {
+    val accountInitials = remember(account.username) {
         account.username
             .trim()
             .replace(Regex("\\s+"), "")
             .take(2)
-            .uppercase(currentLocale)
+            .uppercase()
             .ifEmpty { "??" }
     }
 
@@ -2197,9 +2194,8 @@ fun LogsTab(
     onClearLogs: () -> Unit
 ) {
     val visibleLogs = logs
-    val currentLocale = LocalLocale.current.platformLocale
-
-    val dateFormat = remember(currentLocale) { SimpleDateFormat("HH:mm:ss.SSS", currentLocale) }
+    // Log timestamps use a stable, locale-neutral format.
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.ROOT) }
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 
