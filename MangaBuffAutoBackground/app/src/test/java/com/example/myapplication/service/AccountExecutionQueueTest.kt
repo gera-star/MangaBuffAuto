@@ -60,6 +60,7 @@ class AccountExecutionQueueTest {
             queue.markQueued("account-waiting", currentJob)
             queue.acquire()
             try {
+                queue.markWaitingForSharedGate("account-waiting", currentJob)
                 localPermitAcquired.complete(Unit)
                 val gatePermit = AccountExecutionGate.acquire()
                 try {
@@ -79,6 +80,10 @@ class AccountExecutionQueueTest {
             "watchdog must treat an account waiting for the shared Gate as queued",
             queue.isQueued("account-waiting", queuedJob)
         )
+        assertFalse(
+            "network-loss handling must distinguish a shared-gate waiter from a local queue waiter",
+            queue.isWaitingForLocalPermit("account-waiting", queuedJob)
+        )
 
         firstGatePermit.release()
         queuedJob.join()
@@ -93,14 +98,21 @@ class AccountExecutionQueueTest {
 
         queue.markQueued("account-1", oldJob)
         assertTrue(queue.isQueued("account-1", oldJob))
+        assertTrue(queue.isWaitingForLocalPermit("account-1", oldJob))
         assertFalse(queue.isQueued("account-1", newJob))
+
+        queue.markWaitingForSharedGate("account-1", oldJob)
+        assertTrue(queue.isQueued("account-1", oldJob))
+        assertFalse(queue.isWaitingForLocalPermit("account-1", oldJob))
 
         queue.markQueued("account-1", newJob)
         queue.forget("account-1", oldJob)
         assertTrue(queue.isQueued("account-1", newJob))
+        assertTrue(queue.isWaitingForLocalPermit("account-1", newJob))
 
         queue.markAcquired("account-1", newJob)
         assertFalse(queue.isQueued("account-1", newJob))
+        assertFalse(queue.isWaitingForLocalPermit("account-1", newJob))
     }
 
     @Test

@@ -712,6 +712,9 @@ class MangaBuffForegroundService : Service() {
 
                 accountExecutionQueue.acquire()
                 hasExecutionPermit = true
+                if (currentJob != null) {
+                    accountExecutionQueue.markWaitingForSharedGate(accountId, currentJob)
+                }
 
                 publishLog(
                     LogEntry(
@@ -1005,7 +1008,7 @@ class MangaBuffForegroundService : Service() {
 
         val activeJobs = accountJobs.entries.toList()
         for ((accountId, job) in activeJobs) {
-            if (!job.isActive || accountExecutionQueue.isQueued(accountId, job)) continue
+            if (!job.isActive || accountExecutionQueue.isWaitingForLocalPermit(accountId, job)) continue
             val taskLabel = accountCurrentTaskLabels[accountId]
                 ?: readPersistedRuns()[accountId]?.title.orEmpty()
             val accountName = repository.getAccounts().firstOrNull { it.id == accountId }?.username.orEmpty()
