@@ -1957,20 +1957,22 @@ class MangaBuffAutomation(
     }
 
     private fun updateReaderStatus(account: MangaBuffAccount) {
-        val totalStr = if (totalMangaChapters > 0) totalMangaChapters.toString() else "?"
-        val countStr = currentSessionChaptersRead.toString()
+        val progressLabel = ReaderProgressFormatter.format(
+            completed = currentSessionChaptersRead,
+            target = currentSessionTarget
+        )
         updateStatus(
             account,
-            "Чтение: $countStr / $totalStr",
+            "Чтение: $progressLabel",
             true,
             "Чтение",
             if (currentSessionTarget > 0) (currentSessionChaptersRead.toFloat() / currentSessionTarget).coerceAtMost(1f) else 1f
         )
-        if (totalMangaChapters > 0) {
-            log(account.username, "READER: PROGRESS count=$currentSessionChaptersRead total=$totalMangaChapters")
-        } else {
-            log(account.username, "READER: TOTAL_CHAPTERS_UNKNOWN")
-        }
+        log(
+            account.username,
+            "READER: PROGRESS count=$currentSessionChaptersRead target=$currentSessionTarget " +
+                "mangaTotal=${totalMangaChapters.takeIf { it > 0 } ?: "UNKNOWN"}"
+        )
     }
 
     private fun publishMangaActiveUrlUpdate(accountId: String, url: String, title: String) {
