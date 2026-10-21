@@ -594,8 +594,9 @@ class MangaBuffForegroundService : Service() {
         promoCode: String? = null,
         resumePersistedProgress: Boolean = false
     ) {
-        // A deliberate new start supersedes any delayed retry for this account.
+        // A deliberate new start supersedes delayed retries and any prior cleanup/reset wait.
         accountRecoveryRestartJobs.remove(accountId)?.cancel()
+        accountJobs.cancelFinishingAndRemove(accountId, "SUPERSEDED_BY_NEW_RUN")
         // A new user/background start opens a fresh recovery window.
         // A previous explicit "Stop all" must not permanently disable renderer recovery.
         stoppingExplicitly = false
@@ -799,8 +800,7 @@ class MangaBuffForegroundService : Service() {
                 )
             } finally {
                 try {
-                    if (currentJob != null && accountJobs[accountId] === currentJob) {
-                        accountJobs.remove(accountId)
+                    if (currentJob != null && accountJobs.markFinishing(accountId, currentJob)) {
                         accountProgressTrackers.remove(accountId)
                         accountCurrentTaskLabels.remove(accountId)
                         // Clean up the previous account before yielding the queue permit.
@@ -956,7 +956,10 @@ class MangaBuffForegroundService : Service() {
                         accountCurrentTaskLabels.remove(accountId)
                     }
                 } finally {
-                    if (currentJob != null) accountExecutionQueue.forget(accountId, currentJob)
+                    if (currentJob != null) {
+                        accountExecutionQueue.forget(accountId, currentJob)
+                        accountJobs.removeFinishingIfCurrent(accountId, currentJob)
+                    }
                     // Release the shared gate before waking the next local-queue waiter, so a
                     // newly admitted account cannot jump ahead of trades already waiting on Gate.
                     exclusiveExecutionPermit?.release()
@@ -1442,6 +1445,7 @@ class MangaBuffForegroundService : Service() {
         missingWebViewSince.remove(accountId)
         removePersistedRun(accountId)
         runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
+        accountJobs.cancelFinishingAndRemove(accountId, "EXPLICIT_ACCOUNT_STOP")
         accountJobs.remove(accountId)?.cancel()
         automationRunner.stopAccount(accountId)
         publishStatus(
@@ -1479,9 +1483,10 @@ class MangaBuffForegroundService : Service() {
         towerCycleEndsAt.clear()
         runtimePrefs.edit().remove(KEY_TOWER_CYCLE_ENDS).apply()
 
-        val ids = accountJobs.keys.toList()
+        val ids = accountJobs.allAccountIds()
         ids.forEach { accountId ->
             removePersistedRun(accountId)
+            accountJobs.cancelFinishingAndRemove(accountId, "EXPLICIT_STOP_ALL")
             accountJobs.remove(accountId)?.cancel()
         }
         val promoKeys = runtimePrefs.all.keys.filter { it.startsWith("promo_code_") }
@@ -1563,7 +1568,8 @@ class MangaBuffForegroundService : Service() {
         val hasExecutingJob = accountJobs.any { (accountId, job) ->
             job.isActive && !accountExecutionQueue.isQueued(accountId, job)
         }
-        if (force || (!hasExecutingJob && recoveryRequests.isEmpty())) {
+        val hasFinishingJob = accountJobs.hasFinishingJobs()
+        if (force || (!hasExecutingJob && !hasFinishingJob && recoveryRequests.isEmpty())) {
             try {
                 if (wakeLock.isHeld) {
                     wakeLock.release()
@@ -1576,7 +1582,9 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun stopSelfIfIdle() {
-        if (tradeMonitorKeepaliveRequested || accountJobs.isNotEmpty() || towerCycleJobs.isNotEmpty() || readPersistedRuns().isNotEmpty() || recoveryRequests.isNotEmpty()) return
+        if (tradeMonitorKeepaliveRequested || accountJobs.isNotEmpty() || accountJobs.hasFinishingJobs() ||
+            towerCycleJobs.isNotEmpty() || readPersistedRuns().isNotEmpty() || recoveryRequests.isNotEmpty()
+        ) return
         publishLog(
             LogEntry(
                 component = "BG",

@@ -39,6 +39,33 @@ class AccountJobRegistryTest {
     }
 
     @Test
+    fun finishingAccountCanBeStoppedWithoutCancellingAnotherAccount() = runBlocking {
+        val registry = AccountJobRegistry()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        try {
+            val jobA = scope.launch { awaitCancellation() }
+            val jobB = scope.launch { awaitCancellation() }
+            registry["A"] = jobA
+            registry["B"] = jobB
+
+            assertTrue(registry.markFinishing("A", jobA))
+            assertNull(registry["A"])
+            assertTrue(registry.isFinishing("A", jobA))
+            assertTrue(registry.hasFinishingJobs())
+
+            registry.cancelFinishingAndRemove("A", "EXPLICIT_ACCOUNT_STOP")
+
+            assertFalse(jobA.isActive)
+            assertFalse(registry.isFinishing("A", jobA))
+            assertTrue(jobB.isActive)
+            assertSame(jobB, registry["B"])
+            assertFalse(registry.hasFinishingJobs())
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun failureAndFinallyCleanupForAccountADoNotRemoveOrCancelAccountB() = runBlocking {
         val failures = mutableListOf<Throwable>()
         val handler = CoroutineExceptionHandler { _, throwable -> failures += throwable }
