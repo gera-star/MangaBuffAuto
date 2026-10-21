@@ -1552,7 +1552,8 @@ class MangaBuffForegroundService : Service() {
             )
         )
 
-        persisted.forEach { (accountId, taskType) ->
+        val configuredAccountOrder = repository.getAccounts().map { it.id }
+        PersistedRunOrder.order(persisted, configuredAccountOrder).forEach { (accountId, taskType) ->
             startAccountInternal(accountId, taskType, resumePersistedProgress = true)
         }
     }
