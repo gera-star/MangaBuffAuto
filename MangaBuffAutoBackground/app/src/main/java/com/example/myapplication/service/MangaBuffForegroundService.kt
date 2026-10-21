@@ -720,6 +720,9 @@ class MangaBuffForegroundService : Service() {
                         message = "ACCOUNT_QUEUE_ACQUIRED taskType=${taskType.title}"
                     )
                 )
+                // The network can disappear while this account is waiting in the queue.
+                // Re-check before competing for the shared gate and before touching the WebView.
+                awaitValidatedNetwork(accountId, account.username, taskType.title)
                 publishLog(
                     LogEntry(
                         username = account.username,
@@ -1303,6 +1306,7 @@ class MangaBuffForegroundService : Service() {
         accountRecoveryRestartJobs.remove(accountId)?.cancel()
         cancelTowerCycle(accountId, clearPersisted = true)
         recoveryRequests.remove(accountId)
+        networkPauseRequests.remove(accountId)
         missingWebViewSince.remove(accountId)
         removePersistedRun(accountId)
         runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
@@ -1454,22 +1458,28 @@ class MangaBuffForegroundService : Service() {
         stopSelf()
     }
 
+    private val persistedRunsLock = Any()
+
     private fun persistRun(accountId: String, taskType: TaskType) {
-        val values = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).orEmpty().toMutableSet()
-        values.removeAll { it.startsWith("$accountId|") }
-        values.add("$accountId|${taskType.name}")
-        runtimePrefs.edit().putStringSet(KEY_ACTIVE_RUNS, values).apply()
+        synchronized(persistedRunsLock) {
+            val values = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).orEmpty().toMutableSet()
+            values.removeAll { it.startsWith("$accountId|") }
+            values.add("$accountId|${taskType.name}")
+            runtimePrefs.edit().putStringSet(KEY_ACTIVE_RUNS, values).apply()
+        }
     }
 
     private fun removePersistedRun(accountId: String) {
-        val values = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).orEmpty().toMutableSet()
-        values.removeAll { it.startsWith("$accountId|") }
-        runtimePrefs.edit().putStringSet(KEY_ACTIVE_RUNS, values).apply()
+        synchronized(persistedRunsLock) {
+            val values = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).orEmpty().toMutableSet()
+            values.removeAll { it.startsWith("$accountId|") }
+            runtimePrefs.edit().putStringSet(KEY_ACTIVE_RUNS, values).apply()
+        }
     }
 
-    private fun readPersistedRuns(): Map<String, TaskType> {
+    private fun readPersistedRuns(): Map<String, TaskType> = synchronized(persistedRunsLock) {
         val raw = runtimePrefs.getStringSet(KEY_ACTIVE_RUNS, emptySet()).orEmpty()
-        return raw.mapNotNull { item ->
+        raw.mapNotNull { item ->
             val p = item.indexOf('|')
             if (p <= 0 || p >= item.length - 1) return@mapNotNull null
             val id = item.substring(0, p)

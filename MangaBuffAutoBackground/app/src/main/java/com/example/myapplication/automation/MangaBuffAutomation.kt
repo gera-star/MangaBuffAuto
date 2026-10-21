@@ -2847,7 +2847,16 @@ class MangaBuffAutomation(
         val preferences = sequenceCheckpointPreferences()
         val current = lastCompletedSequenceStage(account.id)
         val completed = TaskSequenceCheckpoint.markCompleted(current, stageIndex)
-        if (completed <= current) return
+        if (completed <= current) {
+            if (stageIndex > current + 1) {
+                log(
+                    account.username,
+                    "TASK: CHECKPOINT_STAGE_BLOCKED index=$stageIndex lastCompleted=$current " +
+                        "nextExpected=${current + 1} accountId=${account.id}"
+                )
+            }
+            return
+        }
         preferences.edit().putString(key, "${currentStatsDay()}|$completed").apply()
         log(
             account.username,
@@ -2943,6 +2952,7 @@ class MangaBuffAutomation(
             )
         }
 
+        var battleStageCompleted = true
         if ((taskType == TaskType.ALL || taskType == TaskType.BATTLE) &&
             shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 0)) {
             coroutineContext.ensureActive()
@@ -2951,6 +2961,9 @@ class MangaBuffAutomation(
                 val start = SystemClock.elapsedRealtime()
                 val result = runBattleTask(account, settings, webView)
                 val elapsed = SystemClock.elapsedRealtime() - start
+                if (result is TaskResult.Failed || result is TaskResult.Cancelled) {
+                    battleStageCompleted = false
+                }
 
                 when (result) {
                     is TaskResult.Success -> {
@@ -2965,7 +2978,14 @@ class MangaBuffAutomation(
                 log(account.username, "BATTLE: SKIPPED_DISABLED")
             }
         }
-        markSequenceStageCompleted(account, taskType, 0)
+        if (battleStageCompleted) {
+            markSequenceStageCompleted(account, taskType, 0)
+        } else if (taskType == TaskType.ALL) {
+            log(
+                account.username,
+                "TASK: CHECKPOINT_STAGE_UNCOMPLETED index=0 reason=BATTLE_NOT_COMPLETED"
+            )
+        }
 
         if ((taskType == TaskType.ALL || taskType == TaskType.TOWER) &&
             shouldRunSequenceStage(account.id, taskType, resumeFromCheckpoint, 1)) {
@@ -3102,7 +3122,18 @@ class MangaBuffAutomation(
         val finalSummary = fetchAndLogBalanceInfo(account, webView)
         updateStatus(account, finalSummary, false, "", 1.0f)
         log(account.username, "TASK: ACCOUNT_FINISHED type=${taskType.title}")
-        if (taskType == TaskType.ALL) clearSequenceCheckpoint(account.id)
+        if (taskType == TaskType.ALL) {
+            val lastCompleted = lastCompletedSequenceStage(account.id)
+            if (lastCompleted >= 6) {
+                clearSequenceCheckpoint(account.id)
+            } else {
+                log(
+                    account.username,
+                    "TASK: CHECKPOINT_RETAINED lastCompletedStage=$lastCompleted " +
+                        "nextExpectedStage=${lastCompleted + 1} reason=SEQUENCE_INCOMPLETE"
+                )
+            }
+        }
     }
 
     // =========================================================

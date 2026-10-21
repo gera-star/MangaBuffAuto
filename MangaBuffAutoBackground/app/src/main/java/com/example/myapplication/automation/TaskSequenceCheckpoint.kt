@@ -8,5 +8,9 @@ internal object TaskSequenceCheckpoint {
         !resume || stageIndex > lastCompletedStage
 
     fun markCompleted(currentCompletedStage: Int, newCompletedStage: Int): Int =
-        maxOf(currentCompletedStage, newCompletedStage)
+        when {
+            newCompletedStage <= currentCompletedStage -> currentCompletedStage
+            newCompletedStage == currentCompletedStage + 1 -> newCompletedStage
+            else -> currentCompletedStage
+        }
 }

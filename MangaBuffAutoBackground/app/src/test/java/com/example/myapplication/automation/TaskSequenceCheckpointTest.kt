@@ -27,4 +27,13 @@ class TaskSequenceCheckpointTest {
         assertEquals(4, TaskSequenceCheckpoint.markCompleted(4, 2))
         assertEquals(5, TaskSequenceCheckpoint.markCompleted(4, 5))
     }
+
+    @Test
+    fun checkpointCannotSkipAnUncompletedStage() {
+        assertEquals(-1, TaskSequenceCheckpoint.markCompleted(-1, 1))
+        assertEquals(0, TaskSequenceCheckpoint.markCompleted(-1, 0))
+        assertEquals(1, TaskSequenceCheckpoint.markCompleted(0, 1))
+        assertEquals(1, TaskSequenceCheckpoint.markCompleted(1, 3))
+        assertEquals(3, TaskSequenceCheckpoint.markCompleted(2, 3))
+    }
 }
