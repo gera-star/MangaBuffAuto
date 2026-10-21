@@ -1243,7 +1243,7 @@ class MangaBuffForegroundService : Service() {
         val settings = repository.getSettings()
         val hasNextAccount = accountExecutionQueue.hasQueuedOtherAccount(accountId)
         val shouldReset = NetworkResetPolicy.shouldResetBetweenAccounts(
-            enabled = settings.networkResetEnabled && !effectiveParallelMode(settings),
+            enabled = settings.networkResetEnabled && !AccountExecutionModePolicy.shouldUseParallel(),
             mode = settings.networkResetMode,
             runCompleted = runCompleted,
             hasNextAccount = hasNextAccount,
