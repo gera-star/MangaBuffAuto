@@ -619,10 +619,13 @@ class MangaBuffForegroundService : Service() {
 
         if (account.isOffline) {
             // OFFLINE survives process restarts and blocks queued/stale start intents too.
+            transitionAccountTaskState(accountId, AccountTaskEvent.STOP_REQUESTED, "account_offline")
+            transitionAccountTaskState(accountId, AccountTaskEvent.CLEANUP_STARTED, "account_offline_cleanup")
             cancelTowerCycle(accountId, clearPersisted = true)
             removePersistedRun(accountId)
             accountJobs.remove(accountId)?.cancel()
             automationRunner.stopAccount(accountId)
+            transitionAccountTaskState(accountId, AccountTaskEvent.STOPPED, "account_offline_cleanup_complete")
             runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
             publishStatus(
                 accountId,
@@ -801,6 +804,14 @@ class MangaBuffForegroundService : Service() {
             } finally {
                 try {
                     if (currentJob != null && accountJobs.markFinishing(accountId, currentJob)) {
+                        if (runCancelled) {
+                            transitionAccountTaskState(
+                                accountId,
+                                AccountTaskEvent.STOP_REQUESTED,
+                                runFailureReason ?: "task_cancelled"
+                            )
+                        }
+                        transitionAccountTaskState(accountId, AccountTaskEvent.CLEANUP_STARTED, "task_finally_cleanup")
                         accountProgressTrackers.remove(accountId)
                         accountCurrentTaskLabels.remove(accountId)
                         // Clean up the previous account before yielding the queue permit.
@@ -1149,6 +1160,11 @@ class MangaBuffForegroundService : Service() {
         )
         if (!shouldReset) return
 
+        transitionAccountTaskState(
+            accountId,
+            AccountTaskEvent.NETWORK_WAIT_STARTED,
+            "network_reset mode=${settings.networkResetMode} next_account_waiting=true"
+        )
         publishLog(
             LogEntry(
                 username = username,
@@ -1185,6 +1201,7 @@ class MangaBuffForegroundService : Service() {
         }
 
         if (resetReady) {
+            transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_RESTORED, "network_reset_complete")
             publishLog(
                 LogEntry(
                     username = username,
@@ -1439,6 +1456,8 @@ class MangaBuffForegroundService : Service() {
 
     private fun stopAccountInternal(accountId: String) {
         accountRecoveryRestartJobs.remove(accountId)?.cancel()
+        transitionAccountTaskState(accountId, AccountTaskEvent.STOP_REQUESTED, "explicit_account_stop")
+        transitionAccountTaskState(accountId, AccountTaskEvent.CLEANUP_STARTED, "explicit_account_cleanup")
         cancelTowerCycle(accountId, clearPersisted = true)
         recoveryRequests.remove(accountId)
         networkPauseRequests.remove(accountId)
@@ -1448,6 +1467,7 @@ class MangaBuffForegroundService : Service() {
         accountJobs.cancelFinishingAndRemove(accountId, "EXPLICIT_ACCOUNT_STOP")
         accountJobs.remove(accountId)?.cancel()
         automationRunner.stopAccount(accountId)
+        transitionAccountTaskState(accountId, AccountTaskEvent.STOPPED, "explicit_account_cleanup_complete")
         publishStatus(
             accountId,
             if (isAccountOffline(accountId)) {
@@ -1485,6 +1505,8 @@ class MangaBuffForegroundService : Service() {
 
         val ids = accountJobs.allAccountIds()
         ids.forEach { accountId ->
+            transitionAccountTaskState(accountId, AccountTaskEvent.STOP_REQUESTED, "explicit_stop_all")
+            transitionAccountTaskState(accountId, AccountTaskEvent.CLEANUP_STARTED, "explicit_stop_all_cleanup")
             removePersistedRun(accountId)
             accountJobs.cancelFinishingAndRemove(accountId, "EXPLICIT_STOP_ALL")
             accountJobs.remove(accountId)?.cancel()
@@ -1499,6 +1521,9 @@ class MangaBuffForegroundService : Service() {
         networkPauseRequests.clear()
         missingWebViewSince.clear()
         automationRunner.stopAll(reason = if (explicitUserStop) "EXPLICIT_USER_STOP" else "INTERNAL_STOP")
+        ids.forEach { accountId ->
+            transitionAccountTaskState(accountId, AccountTaskEvent.STOPPED, "stop_all_cleanup_complete")
+        }
 
         if (explicitUserStop) {
             publishLog(LogEntry(message = "BG: ALL_TASKS_STOPPED_BY_USER"))
