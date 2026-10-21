@@ -19,6 +19,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.network.AppProxySettings
+import com.example.myapplication.service.AccountExecutionModePolicy
 import com.example.myapplication.network.ExitIpChecker
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -1746,6 +1747,10 @@ fun TasksTab(
 
     val actionEnabled = !isRunning && accounts.isNotEmpty()
     val context = LocalContext.current
+    val parallelProxyRoutesCompatible = AccountExecutionModePolicy.areProxyRoutesCompatible(
+        accounts.filterNot { it.isOffline }.map { AppProxySettings.read(context, it.id) }
+    )
+    val parallelModeActive = settings.parallelAccounts && parallelProxyRoutesCompatible
 
     LazyColumn(
         modifier = Modifier
@@ -1820,25 +1825,35 @@ fun TasksTab(
 
                         FilledTonalButton(
                             onClick = {
-                                onSaveSettings(settings.copy(parallelAccounts = false))
-                                Toast.makeText(
-                                    context,
-                                    "Аккаунты выполняются строго по очереди — параллельный запуск отключён.",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                val requestedParallel = !settings.parallelAccounts
+                                if (requestedParallel && !parallelProxyRoutesCompatible) {
+                                    Toast.makeText(
+                                        context,
+                                        "Одновременный запуск невозможен с разными маршрутами прокси: " +
+                                            "у WebView ProxyController общий для процесса. " +
+                                            "Отключи прокси аккаунтов или задай всем одинаковые адрес и порт.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } else {
+                                    onSaveSettings(settings.copy(parallelAccounts = requestedParallel))
+                                }
                             },
                             contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
                             modifier = Modifier.height(32.dp),
                             shape = RoundedCornerShape(9.dp)
                         ) {
                             Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = null,
+                                if (parallelModeActive) Icons.Default.Sync else Icons.Default.PlayArrow,
+                                contentDescription = if (parallelModeActive) {
+                                    "Аккаунты выполняются одновременно"
+                                } else {
+                                    "Аккаунты выполняются по очереди"
+                                },
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(Modifier.width(3.dp))
                             Text(
-                                "Очередь",
+                                if (parallelModeActive) "Одновременно" else "Очередь",
                                 fontSize = 10.sp,
                                 maxLines = 1
                             )

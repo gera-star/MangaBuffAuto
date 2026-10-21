@@ -219,11 +219,6 @@ class AccountRepository(context: Context) {
                 shouldSave = true
             }
 
-            if (migrated.parallelAccounts) {
-                migrated = migrated.copy(parallelAccounts = false)
-                shouldSave = true
-            }
-
             if (shouldSave) {
                 editor.putString(KEY_SETTINGS, gson.toJson(migrated)).apply()
             }
@@ -235,7 +230,6 @@ class AccountRepository(context: Context) {
 
     fun saveSettings(settings: GlobalSettings) {
         val json = gson.toJson(settings.copy(
-            parallelAccounts = false,
             readerChapters = settings.readerChapters.coerceIn(1, GlobalSettings.MAX_READER_CHAPTERS),
             readerSiteAutoscrollSlowdown = ReaderSpeedMode.normalize(settings.readerSiteAutoscrollSlowdown),
             readerSiteAutoscrollHalfSpeed = false,

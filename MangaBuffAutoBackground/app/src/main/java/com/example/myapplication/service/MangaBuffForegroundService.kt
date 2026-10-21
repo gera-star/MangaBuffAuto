@@ -714,10 +714,11 @@ class MangaBuffForegroundService : Service() {
                     LogEntry(
                         username = account.username,
                         component = "QUEUE",
-                        message = "ACCOUNT_QUEUED taskType=${taskType.title} activeLimit=1"
+                        message = "ACCOUNT_SCHEDULED taskType=${taskType.title} " +
+                            "requestedMode=${if (repository.getSettings().parallelAccounts) "PARALLEL" else "SEQUENTIAL"}"
                     )
                 )
-                publishStatus(accountId, "В очереди — ожидает освобождения аккаунта", true, taskType.title, 0f)
+                publishStatus(accountId, "Ожидание запуска аккаунта...", true, taskType.title, 0f)
                 awaitValidatedNetwork(accountId, account.username, taskType.title)
 
                 // Sequential mode (default) keeps one account in the shared queue/gate. Parallel mode
@@ -725,13 +726,14 @@ class MangaBuffForegroundService : Service() {
                 // profile and OkHttp client, so it takes neither the queue permit nor the shared gate.
                 val executionSettings = repository.getSettings()
                 val parallelModeRequested = executionSettings.parallelAccounts
-                val parallelMode = AccountExecutionModePolicy.shouldUseParallel()
+                val parallelMode = effectiveParallelMode(executionSettings)
                 if (parallelModeRequested && !parallelMode) {
                     publishLog(
                         LogEntry(
                             username = account.username,
                             component = "QUEUE",
-                            message = "ACCOUNT_PARALLEL_BLOCKED reason=STRICT_SEQUENTIAL_MODE; using queue"
+                            message = "ACCOUNT_PARALLEL_BLOCKED " +
+                                "reason=INCOMPATIBLE_WEBVIEW_PROXY_ROUTES; using queue"
                         )
                     )
                 }
@@ -741,7 +743,8 @@ class MangaBuffForegroundService : Service() {
                         LogEntry(
                             username = account.username,
                             component = "QUEUE",
-                            message = "ACCOUNT_PARALLEL_START accountId=$accountId taskType=${taskType.title} queue=bypassed"
+                            message = "ACCOUNT_PARALLEL_START accountId=$accountId taskType=${taskType.title} " +
+                            "queue=bypassed isolatedRuntime=true profilePerAccount=true proxyRoutesCompatible=true"
                         )
                     )
                 } else {
@@ -1236,6 +1239,17 @@ class MangaBuffForegroundService : Service() {
         publishStatus(accountId, "Подготовка...", true, taskLabel, 0f)
     }
 
+    private fun effectiveParallelMode(settings: GlobalSettings): Boolean {
+        val eligibleAccounts = repository.getAccounts().filterNot { it.isOffline }
+        val proxyConfigs = eligibleAccounts.map { account ->
+            AppProxySettings.read(applicationContext, account.id)
+        }
+        return AccountExecutionModePolicy.shouldUseParallel(
+            requestedParallel = settings.parallelAccounts,
+            configs = proxyConfigs
+        )
+    }
+
     private suspend fun resetNetworkBetweenAccountsIfNeeded(
         accountId: String,
         username: String,
@@ -1245,7 +1259,7 @@ class MangaBuffForegroundService : Service() {
         val settings = repository.getSettings()
         val hasNextAccount = accountExecutionQueue.hasQueuedOtherAccount(accountId)
         val shouldReset = NetworkResetPolicy.shouldResetBetweenAccounts(
-            enabled = settings.networkResetEnabled && !AccountExecutionModePolicy.shouldUseParallel(),
+            enabled = settings.networkResetEnabled && !effectiveParallelMode(settings),
             mode = settings.networkResetMode,
             runCompleted = runCompleted,
             hasNextAccount = hasNextAccount,
