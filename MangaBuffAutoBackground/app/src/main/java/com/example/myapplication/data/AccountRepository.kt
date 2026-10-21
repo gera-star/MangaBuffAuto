@@ -176,8 +176,10 @@ class AccountRepository(context: Context) {
                     battleTargetCount = if (migrated.battleTargetCount == 20 || migrated.battleTargetCount <= 0) {
                         25
                     } else migrated.battleTargetCount,
-                    readerChapters = if (migrated.readerChapters == 10 || migrated.readerChapters <= 0) {
-                        45
+                    // Preserve the established default of 10 and any user-selected target.
+                    // Only repair invalid stored values; do not silently rewrite 10 to 45.
+                    readerChapters = if (migrated.readerChapters <= 0) {
+                        10
                     } else migrated.readerChapters,
                     readerSiteAutoscroll = false,
                     eventsEnabled = true

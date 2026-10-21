@@ -150,7 +150,23 @@ class AutomationRuntime(
     fun stopAccount(accountId: String) {
         executionJobs.remove(accountId)?.cancel()
 
+        // Remove both identities first so late callbacks from this run are treated as stale.
         val runtime = runtimes.remove(accountId)
+        val engine = automationEngines.remove(accountId)
+
+        // Cancel this engine's IO scope, queued HTTP calls, pooled sockets and Handler work
+        // before destroying the WebView it may still reference.
+        if (engine != null) {
+            engine.closeRuntime()
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "ENGINE",
+                    message = "STOP / DESTROY engineId=${engine.hashCode()} accountId=$accountId"
+                )
+            )
+        }
+
         if (runtime != null) {
             runtime.state = AccountState.STOPPED
             onWebViewCleared(accountId, runtime.webView)
@@ -160,18 +176,6 @@ class AutomationRuntime(
                     username = accountId,
                     component = "ACCOUNT",
                     message = "STOPPED accountId=$accountId runId=${runtime.runId} webView=${runtime.webView.hashCode()}"
-                )
-            )
-        }
-
-        val engine = automationEngines.remove(accountId)
-        if (engine != null) {
-            engine.closeRuntime()
-            onLog(
-                LogEntry(
-                    username = accountId,
-                    component = "ENGINE",
-                    message = "STOP / DESTROY engineId=${engine.hashCode()} accountId=$accountId"
                 )
             )
         }
@@ -274,7 +278,10 @@ class AutomationRuntime(
             // that still contain only the old hard-coded fallback, use this device's real
             // WebView UA for native requests instead of retaining a stale placeholder.
             val savedAccount = AccountRepository(context.applicationContext).updateAccount(account.id) { current ->
-                if (current.userAgent.isNullOrBlank() || current.userAgent == legacyDefaultUa) {
+                if (
+                    current.userAgent.isNullOrBlank() ||
+                    current.userAgent.trim() == legacyDefaultUa.trim()
+                ) {
                     current.copy(userAgent = webViewUa)
                 } else {
                     current

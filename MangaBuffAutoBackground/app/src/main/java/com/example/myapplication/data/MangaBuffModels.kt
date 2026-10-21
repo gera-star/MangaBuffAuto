@@ -150,7 +150,7 @@ data class GlobalSettings(
     val mineClicks: Int = 100,
     val mineAutoUpgrade: Boolean = true,
     val mineAutoExchange: Boolean = false,
-    val readerChapters: Int = 45,
+    val readerChapters: Int = 10,
     val commentCount: Int = 3,
     val battleTargetCount: Int = 25,
     // Tower headquarters skills that should be upgraded with the site's "На все" action.
