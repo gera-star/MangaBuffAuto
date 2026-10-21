@@ -23,6 +23,20 @@ object ExitIpMask {
     }
 }
 
+/** Pulls the visitor address out of the Yandex "internet" page text, preferring the IPv4 label. */
+object YandexInternetPageParser {
+    private val ipv4 = Regex("""\b(?:\d{1,3}\.){3}\d{1,3}\b""")
+    private val labelled = Regex("""IPv4[^0-9]{0,200}((?:\d{1,3}\.){3}\d{1,3})""")
+
+    fun extract(html: String): String? {
+        val candidate = labelled.find(html)?.groupValues?.get(1)
+            ?: ipv4.find(html)?.value
+        return candidate?.takeIf { part ->
+            part.split('.').all { (it.toIntOrNull() ?: 256) in 0..255 }
+        }
+    }
+}
+
 /**
  * Temporary diagnostic: asks a public echo service which address this account's HTTP client
  * currently exits from, using the same per-account proxy settings as automation requests.
@@ -31,7 +45,10 @@ object ExitIpMask {
 object ExitIpChecker {
     data class Result(val maskedIp: String?, val viaProxy: Boolean, val error: String?)
 
+    private const val YANDEX_URL = "https://yandex.com/internet/"
     private const val ECHO_URL = "https://api.ipify.org"
+    private const val BROWSER_UA =
+        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
     suspend fun check(context: Context, accountId: String): Result = withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
@@ -44,19 +61,31 @@ object ExitIpChecker {
             appContext,
             accountId
         ).build()
-        try {
-            client.newCall(Request.Builder().url(ECHO_URL).build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result(null, viaProxy, "HTTP " + response.code)
+        var lastError = "нет ответа"
+        // The Yandex page is tried first (reachable from Russia); the plain echo service is the fallback.
+        for (source in listOf(YANDEX_URL, ECHO_URL)) {
+            try {
+                val request = Request.Builder().url(source).header("User-Agent", BROWSER_UA).build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        lastError = "HTTP " + response.code
+                        return@use
+                    }
+                    val body = response.body?.source()?.let { src ->
+                        src.request(200_000L)
+                        src.buffer.clone().readUtf8()
+                    }.orEmpty()
+                    val raw = if (source == YANDEX_URL) YandexInternetPageParser.extract(body) else body
+                    val masked = raw?.let { ExitIpMask.mask(it) }
+                    if (masked != null) return@withContext Result(masked, viaProxy, null)
+                    lastError = "нет ответа"
                 }
-                val masked = ExitIpMask.mask(response.body?.string().orEmpty())
-                if (masked == null) Result(null, viaProxy, "нет ответа")
-                else Result(masked, viaProxy, null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e.javaClass.simpleName
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Result(null, viaProxy, e.javaClass.simpleName)
         }
+        Result(null, viaProxy, lastError)
     }
 }
