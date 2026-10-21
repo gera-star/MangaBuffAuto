@@ -148,6 +148,9 @@ class MangaBuffAutomation(
     initialDailyStats: DailyStats = DailyStats(day = currentStatsDay())
 ) {
 
+    private val engineRunId = UUID.randomUUID().toString()
+    @Volatile
+    private var activeReaderTaskRunId = ""
     @Volatile
     private var runtimeClosed = false
 
@@ -7769,6 +7772,7 @@ class MangaBuffAutomation(
         settings: GlobalSettings,
         webView: WebView
     ) {
+        activeReaderTaskRunId = UUID.randomUUID().toString()
         EventDropToggleRegistry.initializeIfAbsent(account.id, settings.eventsEnabled)
         val readerEngineMode = ReaderEngineModes.normalize(settings.readerEngineMode)
         log(
@@ -8524,7 +8528,32 @@ class MangaBuffAutomation(
                 }
 
                 @JavascriptInterface
-                fun onMangaMarkedRead(title: String, found: Boolean = true) {
+                fun onMangaMarkedRead(
+                    callbackRunId: String,
+                    callbackTaskRunId: String,
+                    callbackChapterRunId: String,
+                    callbackDocumentId: String,
+                    title: String,
+                    found: Boolean
+                ) {
+                    val ctx = activeChapterContext
+                    val callbackTokensMatch = ctx != null &&
+                        ctx.accountId == account.id &&
+                        callbackRunId == ctx.runId &&
+                        callbackTaskRunId == ctx.taskRunId &&
+                        callbackChapterRunId == ctx.chapterRunId &&
+                        callbackDocumentId == ctx.documentId
+                    if (!callbackTokensMatch) {
+                        log(
+                            account.username,
+                            "READER: STALE_MARK_READ_CALLBACK_IGNORED found=$found " +
+                                "callbackRunId=${callbackRunId.take(8)} contextRunId=${ctx?.runId?.take(8).orEmpty()} " +
+                                "callbackDocumentId=${callbackDocumentId.take(8)} " +
+                                "contextDocumentId=${ctx?.documentId?.take(8).orEmpty()}",
+                            true
+                        )
+                        return
+                    }
                     val terminalResult = pendingTerminalChapterResult
                     if (!found) {
                         // A failure for an attempt that already has an outcome (the watchdog got
@@ -8863,6 +8892,10 @@ class MangaBuffAutomation(
 
                 @JavascriptInterface
                 fun onChapterFinishedWithElapsed(
+                    callbackRunId: String,
+                    callbackTaskRunId: String,
+                    callbackChapterRunId: String,
+                    callbackDocumentId: String,
                     chapterUrl: String,
                     number: String,
                     chapterId: String,
@@ -8877,16 +8910,30 @@ class MangaBuffAutomation(
                     val contextUrl = ctx?.actualChapterUrl.orEmpty()
                         .substringBefore('?').substringBefore('#').trimEnd('/')
                     val contextChapterId = ctx?.chapterId.orEmpty()
+                    val callbackTokensMatch = ctx != null &&
+                        callbackRunId == ctx.runId &&
+                        callbackTaskRunId == ctx.taskRunId &&
+                        callbackChapterRunId == ctx.chapterRunId &&
+                        callbackDocumentId == ctx.documentId
                     val sameChapterId = contextChapterId.isNotBlank() &&
                         chapterId.isNotBlank() && contextChapterId == chapterId
                     val sameChapterUrl = contextUrl.isNotBlank() && callbackUrl.isNotBlank() &&
                         contextUrl == callbackUrl
-                    if (ctx == null || ctx.accountId != account.id || (!sameChapterId && !sameChapterUrl)) {
+                    if (
+                        ctx == null ||
+                        ctx.accountId != account.id ||
+                        !callbackTokensMatch ||
+                        (!sameChapterId && !sameChapterUrl)
+                    ) {
                         log(
                             account.username,
                             "READER: STALE_CHAPTER_CALLBACK_IGNORED callbackChapterId=$chapterId " +
                                 "contextChapterId=${ctx?.chapterId.orEmpty()} callbackUrl=$callbackUrl " +
-                                "contextUrl=$contextUrl",
+                                "contextUrl=$contextUrl " +
+                                "tokensMatch=$callbackTokensMatch callbackRunId=${callbackRunId.take(8)} " +
+                                "contextRunId=${ctx?.runId?.take(8).orEmpty()} " +
+                                "callbackDocumentId=${callbackDocumentId.take(8)} " +
+                                "contextDocumentId=${ctx?.documentId?.take(8).orEmpty()}",
                             true
                         )
                         return
@@ -9017,6 +9064,20 @@ class MangaBuffAutomation(
                     super.onPageStarted(view, url, favicon)
                     pageLoadGeneration += 1
                     val generation = pageLoadGeneration
+                    if (!runtimeClosed && !url.isNullOrBlank()) {
+                        val previousContext = activeChapterContext
+                        if (previousContext?.accountId == account.id) {
+                            val nextDocumentId = UUID.randomUUID().toString()
+                            activeChapterContext = previousContext.copy(documentId = nextDocumentId)
+                            log(
+                                account.username,
+                                "READER: DOCUMENT_CONTEXT_ROTATED accountId=${account.id} " +
+                                    "chapterRunId=${previousContext.chapterRunId.take(8)} " +
+                                    "oldDocumentId=${previousContext.documentId.take(8)} " +
+                                    "newDocumentId=${nextDocumentId.take(8)} url=$url"
+                            )
+                        }
+                    }
                     log(account.username, "PAGE: PAGE_STARTED url=$url generation=$generation")
 
                     // Do not wait forever for image/analytics requests. If the main document
@@ -9108,8 +9169,8 @@ class MangaBuffAutomation(
 
                         activeChapterContext = ChapterContext(
                             accountId = account.id,
-                            runId = UUID.randomUUID().toString(),
-                            taskRunId = UUID.randomUUID().toString(),
+                            runId = engineRunId,
+                            taskRunId = activeReaderTaskRunId,
                             chapterRunId = UUID.randomUUID().toString(),
                             documentId = UUID.randomUUID().toString(),
                             chapterNumber = chapterNum,
@@ -9132,6 +9193,11 @@ class MangaBuffAutomation(
                         log(account.username, "[READQUEST_DIAG] CHAPTER_STATE chapterId=$chId known=$known")
                         log(account.username, "[READQUEST_DIAG] NEXT_CHAPTER chapterId=$chId currentQuest=$lastKnownReadQuest")
 
+                        val readerCallbackContext = activeChapterContext?.takeIf { it.accountId == account.id }
+                        val callbackRunId = readerCallbackContext?.runId.orEmpty()
+                        val callbackTaskRunId = readerCallbackContext?.taskRunId.orEmpty()
+                        val callbackChapterRunId = readerCallbackContext?.chapterRunId.orEmpty()
+                        val callbackDocumentId = readerCallbackContext?.documentId.orEmpty()
                         val script = """
                             (function() {
                                 try {
@@ -10505,6 +10571,10 @@ class MangaBuffAutomation(
                                         logPreNextChapterState();
 
                                         AndroidReaderBridge.onChapterFinishedWithElapsed(
+                                            '$callbackRunId',
+                                            '$callbackTaskRunId',
+                                            '$callbackChapterRunId',
+                                            '$callbackDocumentId',
                                             window.location.href,
                                             '$chapterNum',
                                             chapterId,
@@ -10528,6 +10598,10 @@ class MangaBuffAutomation(
                                         logPreNextChapterState();
 
                                         AndroidReaderBridge.onChapterFinishedWithElapsed(
+                                            '$callbackRunId',
+                                            '$callbackTaskRunId',
+                                            '$callbackChapterRunId',
+                                            '$callbackDocumentId',
                                             window.location.href,
                                             '$chapterNum',
                                             chapterId,
@@ -11803,6 +11877,11 @@ class MangaBuffAutomation(
 
                     if (isMangaInfoUrl(currentUrl)) {
                         if (pendingMangaMarkAsRead) {
+                            val markReadContext = activeChapterContext?.takeIf { it.accountId == account.id }
+                            val markReadRunId = markReadContext?.runId.orEmpty()
+                            val markReadTaskRunId = markReadContext?.taskRunId.orEmpty()
+                            val markReadChapterRunId = markReadContext?.chapterRunId.orEmpty()
+                            val markReadDocumentId = markReadContext?.documentId.orEmpty()
                             val script = """
                                 (function() {
                                     try {
@@ -11872,7 +11951,14 @@ class MangaBuffAutomation(
 
                                         if (!btn || !visible(btn)) {
                                             AndroidReaderBridge.onLogStep('READER: READ_ACTION_NOT_FOUND selectors=reader-menu__item--bookmark,manga__bookmark-btn');
-                                            AndroidReaderBridge.onMangaMarkedRead(titleText, false);
+                                            AndroidReaderBridge.onMangaMarkedRead(
+                                                '$markReadRunId',
+                                                '$markReadTaskRunId',
+                                                '$markReadChapterRunId',
+                                                '$markReadDocumentId',
+                                                titleText,
+                                                false
+                                            );
                                             return;
                                         }
 
@@ -11884,7 +11970,14 @@ class MangaBuffAutomation(
 
                                         if (isMarkedRead()) {
                                             AndroidReaderBridge.onLogStep('READER: READ_ACTION_CONFIRMED folder-id=3 (Прочитано)');
-                                            AndroidReaderBridge.onMangaMarkedRead(titleText, true);
+                                            AndroidReaderBridge.onMangaMarkedRead(
+                                                '$markReadRunId',
+                                                '$markReadTaskRunId',
+                                                '$markReadChapterRunId',
+                                                '$markReadDocumentId',
+                                                titleText,
+                                                true
+                                            );
                                             return;
                                         }
 
@@ -11896,7 +11989,14 @@ class MangaBuffAutomation(
 
                                             if (!item) {
                                                 AndroidReaderBridge.onLogStep('READER: READ_ACTION_NOT_CONFIRMED reason=READ_ITEM_NOT_FOUND');
-                                                AndroidReaderBridge.onMangaMarkedRead(titleText, false);
+                                                AndroidReaderBridge.onMangaMarkedRead(
+                                                '$markReadRunId',
+                                                '$markReadTaskRunId',
+                                                '$markReadChapterRunId',
+                                                '$markReadDocumentId',
+                                                titleText,
+                                                false
+                                            );
                                                 return;
                                             }
 
@@ -11912,15 +12012,36 @@ class MangaBuffAutomation(
                                             setTimeout(function() {
                                                 if (isMarkedRead()) {
                                                     AndroidReaderBridge.onLogStep('READER: READ_ACTION_CONFIRMED folder-id=3 (Прочитано)');
-                                                    AndroidReaderBridge.onMangaMarkedRead(titleText, true);
+                                                    AndroidReaderBridge.onMangaMarkedRead(
+                                                '$markReadRunId',
+                                                '$markReadTaskRunId',
+                                                '$markReadChapterRunId',
+                                                '$markReadDocumentId',
+                                                titleText,
+                                                true
+                                            );
                                                 } else {
                                                     AndroidReaderBridge.onLogStep('READER: READ_ACTION_NOT_CONFIRMED reason=BUTTON_STATE_NOT_READ');
-                                                    AndroidReaderBridge.onMangaMarkedRead(titleText, false);
+                                                    AndroidReaderBridge.onMangaMarkedRead(
+                                                '$markReadRunId',
+                                                '$markReadTaskRunId',
+                                                '$markReadChapterRunId',
+                                                '$markReadDocumentId',
+                                                titleText,
+                                                false
+                                            );
                                                 }
                                             }, 1200);
                                         }, 500);
                                     } catch(e) {
-                                        AndroidReaderBridge.onMangaMarkedRead(document.title, false);
+                                        AndroidReaderBridge.onMangaMarkedRead(
+                                                '$markReadRunId',
+                                                '$markReadTaskRunId',
+                                                '$markReadChapterRunId',
+                                                '$markReadDocumentId',
+                                                document.title,
+                                                false
+                                            );
                                     }
                                 })();
                             """.trimIndent()
