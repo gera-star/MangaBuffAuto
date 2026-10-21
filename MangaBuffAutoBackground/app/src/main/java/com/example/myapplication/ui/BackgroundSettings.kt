@@ -570,13 +570,18 @@ private fun AccountProxySettingsDialog(
                 if (accounts.isEmpty()) {
                     Text("Сначала добавь аккаунт.")
                 } else {
+                    val canEditProxy = accounts.none { it.isRunning }
                     Text(
-                        "Прокси включается отдельно для каждого аккаунта. Перед запуском задач приложение назначает WebView прокси активного аккаунта; задачи аккаунтов выполняются по очереди.",
+                        if (canEditProxy) {
+                            "Прокси включается отдельно для каждого аккаунта. Режим «Одновременно» доступен только для совместимых маршрутов. Во время выполнения задач прокси заблокирован, чтобы не менять общий маршрут WebView на лету."
+                        } else {
+                            "Настройки прокси временно заблокированы: сначала останови все задачи аккаунтов. Это предотвращает изменение общего маршрута WebView во время параллельной работы."
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline
+                        color = if (canEditProxy) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.error
                     )
                     accounts.forEach { account ->
-                        AccountProxySettingsCard(account = account)
+                        AccountProxySettingsCard(account = account, canEditProxy = canEditProxy)
                         if (account != accounts.last()) HorizontalDivider()
                     }
                 }
@@ -589,7 +594,10 @@ private fun AccountProxySettingsDialog(
 }
 
 @Composable
-private fun AccountProxySettingsCard(account: MangaBuffAccount) {
+private fun AccountProxySettingsCard(
+    account: MangaBuffAccount,
+    canEditProxy: Boolean
+) {
     val context = LocalContext.current
     val savedConfig = remember(account.id) { AppProxySettings.read(context, account.id) }
     var enabled by remember(account.id) { mutableStateOf(savedConfig.enabled) }
@@ -617,7 +625,11 @@ private fun AccountProxySettingsCard(account: MangaBuffAccount) {
                     color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                 )
             }
-            Switch(checked = enabled, onCheckedChange = { enabled = it; status = "" })
+            Switch(
+                checked = enabled,
+                onCheckedChange = { enabled = it; status = "" },
+                enabled = canEditProxy
+            )
         }
 
         OutlinedTextField(
@@ -627,7 +639,7 @@ private fun AccountProxySettingsCard(account: MangaBuffAccount) {
             label = { Text("Адрес прокси") },
             placeholder = { Text("IP или имя хоста") },
             singleLine = true,
-            enabled = enabled
+            enabled = enabled && canEditProxy
         )
         OutlinedTextField(
             value = port,
@@ -636,7 +648,7 @@ private fun AccountProxySettingsCard(account: MangaBuffAccount) {
             label = { Text("Порт") },
             placeholder = { Text("8080") },
             singleLine = true,
-            enabled = enabled
+            enabled = enabled && canEditProxy
         )
         OutlinedTextField(
             value = username,
@@ -644,7 +656,7 @@ private fun AccountProxySettingsCard(account: MangaBuffAccount) {
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Логин (необязательно)") },
             singleLine = true,
-            enabled = enabled
+            enabled = enabled && canEditProxy
         )
         OutlinedTextField(
             value = password,
@@ -652,10 +664,11 @@ private fun AccountProxySettingsCard(account: MangaBuffAccount) {
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Пароль (необязательно)") },
             singleLine = true,
-            enabled = enabled,
+            enabled = enabled && canEditProxy,
             visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
         )
         OutlinedButton(
+            enabled = canEditProxy,
             onClick = {
                 val portNumber = port.toIntOrNull()
                 val config = AppProxyConfig(
