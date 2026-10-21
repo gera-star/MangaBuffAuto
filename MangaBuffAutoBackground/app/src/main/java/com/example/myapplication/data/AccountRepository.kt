@@ -164,6 +164,15 @@ class AccountRepository(context: Context) {
                 shouldSave = true
             }
 
+            // Older Gson payloads can leave new enum properties null because constructors are bypassed.
+            val safeNetworkResetMode = runCatching {
+                NetworkResetMode.valueOf(migrated.networkResetMode.name)
+            }.getOrDefault(NetworkResetMode.NONE)
+            if (safeNetworkResetMode != migrated.networkResetMode) {
+                migrated = migrated.copy(networkResetMode = safeNetworkResetMode)
+                shouldSave = true
+            }
+
             if (!prefs.getBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, false)) {
                 migrated = migrated.copy(mineAutoExchange = false)
                 editor.putBoolean(KEY_MINE_AUTO_EXCHANGE_MIGRATED, true)

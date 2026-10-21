@@ -143,6 +143,11 @@ object ReaderEngineModes {
     }
 }
 
+enum class NetworkResetMode {
+    NONE,
+    AIRPLANE_MODE
+}
+
 data class GlobalSettings(
     val quizMaxClicks: Int = 15,
     // Kept for compatibility with previously saved settings; runtime enforces 3 ads/day.
@@ -166,7 +171,10 @@ data class GlobalSettings(
     /** Collect event candy/pumpkin drops through the existing reader session. */
     val eventsEnabled: Boolean = true,
     /** 0 = current hybrid, 1 = Kotlin-driven scroll ticks, 2 = site autoscroll with native end checks. */
-    val readerEngineMode: Int = ReaderEngineModes.HYBRID
+    val readerEngineMode: Int = ReaderEngineModes.HYBRID,
+    /** Optional privileged Airplane Mode reset between completed sequential accounts. */
+    val networkResetEnabled: Boolean = false,
+    val networkResetMode: NetworkResetMode = NetworkResetMode.NONE
 ) {
     companion object {
         const val MAX_READER_CHAPTERS = 100
