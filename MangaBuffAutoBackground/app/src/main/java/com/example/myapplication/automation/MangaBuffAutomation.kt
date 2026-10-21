@@ -4398,17 +4398,25 @@ class MangaBuffAutomation(
         val battleRunId = UUID.randomUUID().toString()
         var resumed = false
 
+        fun cleanupBattleBridge(stopLoading: Boolean) {
+            mainHandler.post {
+                try {
+                    if (stopLoading) webView.stopLoading()
+                } catch (_: Exception) {}
+                try { webView.removeJavascriptInterface("AndroidBattleBridge") } catch (_: Exception) {}
+            }
+        }
+
         fun safeResume(result: TaskResult) {
             if (!resumed && continuation.isActive) {
                 resumed = true
+                cleanupBattleBridge(stopLoading = false)
                 continuation.resume(result)
             }
         }
 
         continuation.invokeOnCancellation {
-            mainHandler.post {
-                try { webView.stopLoading() } catch (_: Exception) {}
-            }
+            cleanupBattleBridge(stopLoading = true)
         }
 
         mainHandler.post {
@@ -7242,11 +7250,25 @@ class MangaBuffAutomation(
     ): Boolean = suspendCancellableCoroutine { continuation ->
         var resumed = false
 
+        fun cleanupMineBridge(stopLoading: Boolean) {
+            mainHandler.post {
+                try {
+                    if (stopLoading) webView.stopLoading()
+                } catch (_: Exception) {}
+                try { webView.removeJavascriptInterface("AndroidMine") } catch (_: Exception) {}
+            }
+        }
+
         fun safeResume(result: Boolean) {
             if (!resumed && continuation.isActive) {
                 resumed = true
+                cleanupMineBridge(stopLoading = false)
                 continuation.resume(result)
             }
+        }
+
+        continuation.invokeOnCancellation {
+            cleanupMineBridge(stopLoading = true)
         }
 
         mainHandler.post {
