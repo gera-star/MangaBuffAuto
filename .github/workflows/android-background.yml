@@ -47,3 +47,11 @@ jobs:
       - name: Run unit tests and assemble debug APK
         working-directory: MangaBuffAutoBackground
         run: bash ./gradlew --no-daemon -Pandroid.builder.sdkDownload=true testDebugUnitTest assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2R2R-background-debug
+          path: MangaBuffAutoBackground/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
