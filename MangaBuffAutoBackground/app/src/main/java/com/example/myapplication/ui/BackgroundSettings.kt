@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
@@ -41,6 +43,7 @@ import androidx.compose.material3.TextButton
 import com.example.myapplication.network.AppProxyConfig
 import com.example.myapplication.network.AppProxySettings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -146,6 +149,31 @@ fun BackgroundSettingsDialog(
 ) {
     val context = LocalContext.current
     var refreshKey by remember { mutableStateOf(0) }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val shizukuPermissionResultListener = remember(mainHandler) {
+        Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+            if (requestCode == NETWORK_RESET_SHIZUKU_PERMISSION_CODE) {
+                mainHandler.post {
+                    refreshKey++
+                    Toast.makeText(
+                        context,
+                        if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                            "Разрешение Shizuku получено."
+                        } else {
+                            "Разрешение Shizuku не выдано."
+                        },
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+    DisposableEffect(shizukuPermissionResultListener) {
+        Shizuku.addRequestPermissionResultListener(shizukuPermissionResultListener)
+        onDispose {
+            Shizuku.removeRequestPermissionResultListener(shizukuPermissionResultListener)
+        }
+    }
     var showProxyPasswordDialog by remember { mutableStateOf(false) }
     var showProxySettingsDialog by remember { mutableStateOf(false) }
     var proxyPasswordEntry by remember { mutableStateOf("") }
