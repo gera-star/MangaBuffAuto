@@ -64,7 +64,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
     // Networking, HTML Parsing & JSON Serialization
-    implementation("com.squareup.okhttp3:okhttp:5.3.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("org.jsoup:jsoup:1.23.2")
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("androidx.webkit:webkit:1.17.1")
