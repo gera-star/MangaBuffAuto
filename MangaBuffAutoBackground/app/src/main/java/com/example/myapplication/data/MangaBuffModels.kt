@@ -165,6 +165,8 @@ data class GlobalSettings(
     val towerUpgradeMentorship: Boolean = true,
     val towerUpgradeSupply: Boolean = true,
     val keepScreenOn: Boolean = false,
+    /** false = accounts run one after another (default); true = accounts run at the same time. */
+    val parallelAccounts: Boolean = false,
     val readerSiteAutoscroll: Boolean = false,
     /** Halve the app-controlled reader scroll speed when enabled. */
     val readerSiteAutoscrollHalfSpeed: Boolean = false,
