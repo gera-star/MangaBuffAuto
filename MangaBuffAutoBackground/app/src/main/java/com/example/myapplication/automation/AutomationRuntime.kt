@@ -9,6 +9,7 @@ import androidx.webkit.WebViewFeature
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.currentStatsDay
 import com.example.myapplication.data.TaskType
@@ -259,8 +260,47 @@ class AutomationRuntime(
             )
         }
 
-        val webViewUa = runtime.webView.settings.userAgentString
-        val storedHttpUa = account.getSafeUserAgent()
+        val webViewUa = runtime.webView.settings.userAgentString.orEmpty()
+        val legacyDefaultUa = MangaBuffAccount().getSafeUserAgent()
+        var engineAccount = account
+        if (
+            UserAgentConsistencyPolicy.shouldAdoptWebViewUserAgent(
+                storedUserAgent = account.userAgent,
+                legacyDefaultUserAgent = legacyDefaultUa,
+                webViewUserAgent = webViewUa
+            )
+        ) {
+            // New accounts save the actual UA from the login WebView. For legacy accounts
+            // that still contain only the old hard-coded fallback, use this device's real
+            // WebView UA for native requests instead of retaining a stale placeholder.
+            val savedAccount = AccountRepository(context.applicationContext).updateAccount(account.id) { current ->
+                if (current.userAgent.isNullOrBlank() || current.userAgent == legacyDefaultUa) {
+                    current.copy(userAgent = webViewUa)
+                } else {
+                    current
+                }
+            }
+            val resolvedUserAgent = savedAccount?.getSafeUserAgent() ?: webViewUa
+            engineAccount = account.copy(userAgent = resolvedUserAgent)
+            if (resolvedUserAgent == webViewUa) {
+                onLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "NETWORK",
+                        message = "USER_AGENT_DEFAULT_MIGRATED accountId=${account.id} source=WEBVIEW_DEFAULT uaLength=${webViewUa.length}"
+                    )
+                )
+            } else {
+                onLog(
+                    LogEntry(
+                        username = account.username,
+                        component = "NETWORK",
+                        message = "USER_AGENT_MIGRATION_SKIPPED accountId=${account.id} reason=EXPLICIT_STORED_VALUE_PRESERVED"
+                    )
+                )
+            }
+        }
+        val storedHttpUa = engineAccount.getSafeUserAgent()
         onLog(
             LogEntry(
                 username = account.username,
@@ -269,7 +309,7 @@ class AutomationRuntime(
             )
         )
 
-        val engine = getOrCreateEngine(account)
+        val engine = getOrCreateEngine(engineAccount)
         onLog(LogEntry(username = account.username, component = "ENGINE", message = "USE engineId=${engine.hashCode()}"))
 
         val engineHeartbeatJob = CoroutineScope(coroutineContext + Dispatchers.IO).launch {
@@ -342,7 +382,7 @@ class AutomationRuntime(
 
         try {
             engine.runAccountTasks(
-                account = account,
+                account = engineAccount,
                 settings = settings,
                 taskType = taskType,
                 webView = runtime.webView,
