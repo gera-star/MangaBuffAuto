@@ -43,6 +43,9 @@ internal class AccountExecutionQueue {
     fun isWaitingForLocalPermit(accountId: String, job: Job): Boolean =
         localQueueWaiters[accountId] === job
 
+    fun hasQueuedOtherAccount(accountId: String): Boolean =
+        queuedJobs.keys.any { it != accountId }
+
     suspend fun acquire() {
         permit.acquire()
     }

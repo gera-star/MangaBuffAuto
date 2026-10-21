@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
+import rikka.shizuku.Shizuku
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,6 +52,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.data.GlobalSettings
+import com.example.myapplication.data.NetworkResetMode
+
+private const val NETWORK_RESET_SHIZUKU_PERMISSION_CODE = 7301
 
 private data class BackgroundCheck(
     val title: String,
@@ -134,7 +140,9 @@ private fun hasNotifications(context: Context): Boolean =
 fun BackgroundSettingsDialog(
     onDismiss: () -> Unit,
     onOpenAbout: () -> Unit = {},
-    accounts: List<MangaBuffAccount> = emptyList()
+    accounts: List<MangaBuffAccount> = emptyList(),
+    settings: GlobalSettings = GlobalSettings(),
+    onSaveSettings: (GlobalSettings) -> Unit = {}
 ) {
     val context = LocalContext.current
     var refreshKey by remember { mutableStateOf(0) }
@@ -146,6 +154,15 @@ fun BackgroundSettingsDialog(
     val batteryOk = remember(refreshKey) { isIgnoringBatteryOptimizations(context) }
     val notificationsOk = remember(refreshKey) { hasNotifications(context) }
     val exactAlarmsOk = remember(refreshKey) { canScheduleExactAlarms(context) }
+    val shizukuAvailable = remember(refreshKey) {
+        runCatching { Shizuku.pingBinder() && !Shizuku.isPreV11() }.getOrDefault(false)
+    }
+    val shizukuPermissionGranted = remember(refreshKey) {
+        shizukuAvailable &&
+            runCatching {
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            }.getOrDefault(false)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -269,6 +286,89 @@ fun BackgroundSettingsDialog(
                     "Автовосстановление",
                     "После потери renderer аккаунт может быть запущен заново без запуска всех аккаунтов."
                 )
+
+                HorizontalDivider()
+                Text(
+                    "Сетевой reset между аккаунтами",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Airplane Mode после завершения аккаунта и до запуска следующего.")
+                        Text(
+                            "По умолчанию выключено. Нужен Shizuku с разрешением или root. Смена публичного IP не гарантируется.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                    Switch(
+                        checked = settings.networkResetEnabled,
+                        onCheckedChange = { enabled ->
+                            onSaveSettings(
+                                settings.copy(
+                                    networkResetEnabled = enabled,
+                                    networkResetMode = if (enabled) {
+                                        NetworkResetMode.AIRPLANE_MODE
+                                    } else {
+                                        NetworkResetMode.NONE
+                                    }
+                                )
+                            )
+                        }
+                    )
+                }
+                if (settings.networkResetEnabled) {
+                    Text(
+                        when {
+                            shizukuPermissionGranted -> "Shizuku подключён, разрешение выдано."
+                            shizukuAvailable -> "Shizuku запущен, но разрешение ещё не выдано."
+                            else -> "Shizuku не подключён. Сервис также проверит root; без привилегий reset будет пропущен."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            when {
+                                !shizukuAvailable -> Toast.makeText(
+                                    context,
+                                    "Запусти Shizuku и вернись сюда. При наличии root приложение попробует root автоматически.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                shizukuPermissionGranted -> Toast.makeText(
+                                    context,
+                                    "Разрешение Shizuku уже выдано.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                else -> runCatching {
+                                    Shizuku.requestPermission(NETWORK_RESET_SHIZUKU_PERMISSION_CODE)
+                                }.onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        "Не удалось запросить Shizuku: ${it.message ?: "ошибка"}",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (shizukuPermissionGranted) "Разрешение Shizuku получено"
+                            else "Запросить разрешение Shizuku"
+                        )
+                    }
+                    Text(
+                        "После ответа Shizuku нажми «Проверить снова». Если нет разрешения или root, reset пропустится, а очередь дождётся подтверждённого интернета.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
 
                 Spacer(Modifier.height(2.dp))
 

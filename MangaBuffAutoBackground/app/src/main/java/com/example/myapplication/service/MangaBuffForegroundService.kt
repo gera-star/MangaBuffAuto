@@ -28,7 +28,9 @@ import com.example.myapplication.R
 import com.example.myapplication.automation.BackgroundExecutionState
 import com.example.myapplication.automation.AccountExecutionGate
 import com.example.myapplication.automation.MultiAccountAutomationRunner
+import com.example.myapplication.automation.NetworkResetManager
 import com.example.myapplication.automation.IncompleteTaskSequenceException
+import com.example.myapplication.service.NetworkResetPolicy
 import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.network.AppProxySettings
@@ -37,6 +39,7 @@ import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
 import com.example.myapplication.data.MangaBuffAccount
+import com.example.myapplication.data.NetworkResetMode
 import com.example.myapplication.data.TaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -889,6 +892,14 @@ class MangaBuffForegroundService : Service() {
                             accountRecoveryRestartJobs[accountId] = restartJob
                             restartJob.start()
                         } else {
+                            if (runCompleted) {
+                                resetNetworkBetweenAccountsIfNeeded(
+                                    accountId = accountId,
+                                    username = account.username,
+                                    taskLabel = taskType.title,
+                                    runCompleted = runCompleted
+                                )
+                            }
                             when {
                                 recoveryExhausted -> transitionAccountTaskState(accountId, AccountTaskEvent.FAILED, "recovery_budget_exhausted")
                                 runFailureReason != null && (runCancelled && runFailureReason.contains("NO_PROGRESS", ignoreCase = true)) ->
@@ -1106,6 +1117,91 @@ class MangaBuffForegroundService : Service() {
         transitionAccountTaskState(accountId, AccountTaskEvent.NETWORK_RESTORED, "validated_internet_available")
         publishLog(LogEntry(username = username, component = "NETWORK", message = "NETWORK_WAIT_FINISHED accountId=$accountId"))
         publishStatus(accountId, "Подготовка...", true, taskLabel, 0f)
+    }
+
+    private suspend fun resetNetworkBetweenAccountsIfNeeded(
+        accountId: String,
+        username: String,
+        taskLabel: String,
+        runCompleted: Boolean
+    ) {
+        val settings = repository.getSettings()
+        val hasNextAccount = accountExecutionQueue.hasQueuedOtherAccount(accountId)
+        val shouldReset = NetworkResetPolicy.shouldResetBetweenAccounts(
+            enabled = settings.networkResetEnabled,
+            mode = settings.networkResetMode,
+            runCompleted = runCompleted,
+            hasNextAccount = hasNextAccount,
+            stoppingExplicitly = stoppingExplicitly,
+            accountOffline = isAccountOffline(accountId)
+        )
+        if (!shouldReset) return
+
+        publishLog(
+            LogEntry(
+                username = username,
+                component = "NETWORK",
+                message = "NETWORK_RESET_BETWEEN_ACCOUNTS_START accountId=$accountId " +
+                    "mode=${settings.networkResetMode} nextAccountWaiting=true publicIpChangeGuaranteed=false"
+            )
+        )
+
+        val resetReady = try {
+            NetworkResetManager(applicationContext) { detail ->
+                publishLog(
+                    LogEntry(
+                        username = username,
+                        component = "NETWORK",
+                        message = "accountId=$accountId $detail",
+                        isError = detail.contains("ERROR", ignoreCase = true) ||
+                            detail.contains("UNAVAILABLE", ignoreCase = true)
+                    )
+                )
+            }.reset(settings.networkResetMode)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            publishLog(
+                LogEntry(
+                    username = username,
+                    component = "NETWORK",
+                    message = "NETWORK_RESET_ERROR accountId=$accountId reason=${e.message ?: e.javaClass.simpleName}",
+                    isError = true
+                )
+            )
+            false
+        }
+
+        if (resetReady) {
+            publishLog(
+                LogEntry(
+                    username = username,
+                    component = "NETWORK",
+                    message = "NETWORK_READY accountId=$accountId source=NETWORK_RESET " +
+                        "validated=true publicIpChangeGuaranteed=false"
+                )
+            )
+        } else {
+            publishLog(
+                LogEntry(
+                    username = username,
+                    component = "NETWORK",
+                    message = "NETWORK_RESET_FALLBACK accountId=$accountId " +
+                        "reason=RESET_UNAVAILABLE_OR_NOT_READY waitingForValidatedInternet=true"
+                )
+            )
+            // If the privileged reset is unavailable or fails, allow continuation only when
+            // the ordinary network again reports validated Internet.
+            awaitValidatedNetwork(accountId, username, taskLabel)
+            publishLog(
+                LogEntry(
+                    username = username,
+                    component = "NETWORK",
+                    message = "NETWORK_READY accountId=$accountId source=VALIDATED_CONNECTION " +
+                        "validated=true publicIpChangeGuaranteed=false"
+                )
+            )
+        }
     }
 
     private fun startWatchdog() {

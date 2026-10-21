@@ -302,7 +302,9 @@ fun MangaBuffAppUI(
         BackgroundSettingsDialog(
             onDismiss = { showBackgroundSettings = false },
             onOpenAbout = { showAboutDialog = true },
-            accounts = accounts
+            accounts = accounts,
+            settings = settings,
+            onSaveSettings = { newSettings -> viewModel.saveSettings(newSettings) }
         )
     }
 
