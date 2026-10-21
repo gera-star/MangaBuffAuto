@@ -30,7 +30,6 @@ import com.example.myapplication.automation.AccountExecutionGate
 import com.example.myapplication.automation.MultiAccountAutomationRunner
 import com.example.myapplication.automation.NetworkResetManager
 import com.example.myapplication.automation.IncompleteTaskSequenceException
-import com.example.myapplication.service.NetworkResetPolicy
 import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.network.AppProxySettings
@@ -893,6 +892,16 @@ class MangaBuffForegroundService : Service() {
                             restartJob.start()
                         } else {
                             if (runCompleted) {
+                                // The completed task must not be replayed if the process dies
+                                // while the optional network reset is in progress.
+                                removePersistedRun(accountId)
+                                publishLog(
+                                    LogEntry(
+                                        username = account.username,
+                                        component = "ACCOUNT",
+                                        message = "PERSISTED_RUN_REMOVED_ON_COMPLETION accountId=$accountId taskType=${taskType.title}"
+                                    )
+                                )
                                 resetNetworkBetweenAccountsIfNeeded(
                                     accountId = accountId,
                                     username = account.username,
@@ -1193,6 +1202,9 @@ class MangaBuffForegroundService : Service() {
             // If the privileged reset is unavailable or fails, allow continuation only when
             // the ordinary network again reports validated Internet.
             awaitValidatedNetwork(accountId, username, taskLabel)
+            // awaitValidatedNetwork publishes an in-progress status; this run is already
+            // terminal, so do not retain a progress tracker for an account no longer in accountJobs.
+            accountProgressTrackers.remove(accountId)
             publishLog(
                 LogEntry(
                     username = username,
