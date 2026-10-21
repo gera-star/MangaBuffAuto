@@ -14,8 +14,11 @@ import java.util.concurrent.TimeUnit
 class NetworkResetUserService : INetworkResetUserService.Stub() {
 
     override fun execute(command: String): String {
+        val arguments = NetworkResetCommandPolicy.argumentsFor(command)
+            ?: return "exit=126 error=command not allowed"
+
         return try {
-            val process = ProcessBuilder("sh", "-c", command)
+            val process = ProcessBuilder(arguments)
                 .redirectErrorStream(true)
                 .start()
 
