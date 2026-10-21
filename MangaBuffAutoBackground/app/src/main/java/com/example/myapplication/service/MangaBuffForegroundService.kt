@@ -980,6 +980,8 @@ class MangaBuffForegroundService : Service() {
                                 runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
                             }
                             val terminalStatus = when {
+                                runFailureReason == "AUTH_REQUIRED" ->
+                                    "Требуется повторный вход в MangaBuff"
                                 recoveryExhausted && incompleteSequenceFailure ->
                                     "Остановлено: этап боёв не завершён после повторных попыток"
                                 recoveryExhausted -> "Остановлено: слишком много сбоев WebView"

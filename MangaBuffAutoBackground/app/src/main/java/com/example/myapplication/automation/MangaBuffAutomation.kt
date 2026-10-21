@@ -73,6 +73,10 @@ sealed class TaskResult {
 
 private enum class AdWatchResult { Rewarded, DailyLimit, Failed }
 
+/** Stops a run cleanly when the site explicitly reports that this account is logged out. */
+class MangaBuffAuthenticationRequiredException :
+    IllegalStateException("AUTH_REQUIRED")
+
 sealed interface ReaderResult {
     data class ChapterRead(
         val gifts: Int,
@@ -2287,7 +2291,7 @@ class MangaBuffAutomation(
                     if (resumed) return
                     log(account.username, "AUTH: EXPIRED_OR_LOGGED_OUT ($msg)", true)
                     updateStatus(account, "Требуется повторный вход", false, "", 0f)
-                    safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13  🍬 —")
+                    safeResume("Требуется повторный вход")
                 }
 
                 @JavascriptInterface
@@ -2328,7 +2332,7 @@ class MangaBuffAutomation(
                     if (currentUrl.contains("/login")) {
                         log(account.username, "AUTH: EXPIRED_OR_LOGGED_OUT (Redirected to /login)", true)
                         updateStatus(account, "Требуется повторный вход", false, "", 0f)
-                        safeResume("💎 0  🃏 0/10  📖 0/75  💬 0/13  🍬 —")
+                        safeResume("Требуется повторный вход")
                         return
                     }
 
@@ -2949,7 +2953,7 @@ class MangaBuffAutomation(
                 account.getSafeStatusMessage().contains("Требуется повторный вход")
             ) {
                 log(account.username, "AUTH: ABORTING_TASKS due to expired session")
-                return
+                throw MangaBuffAuthenticationRequiredException()
             }
         }
 
