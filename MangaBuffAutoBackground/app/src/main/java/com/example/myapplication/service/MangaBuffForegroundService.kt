@@ -741,6 +741,15 @@ class MangaBuffForegroundService : Service() {
                 )
                 publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
                 transitionAccountTaskState(accountId, AccountTaskEvent.STARTED, "queue_and_gate_acquired task=${taskType.title}")
+                // Start the stage deadline before navigation/JavaScript callbacks begin, so a
+                // WebView that hangs before its first meaningful log is still cancellable.
+                val initialStage = ProgressStage.fromText(taskType.title)
+                accountProgressTrackers.computeIfAbsent(accountId) { AccountProgressTracker() }
+                    .mark(
+                        initialStage,
+                        "TASK_STARTED:${taskType.title}:attempt=$attemptNumber:" +
+                            SystemClock.elapsedRealtime()
+                    )
 
                 applyProxyForAccount(account)
                 acquireWakeLockIfNeeded()
