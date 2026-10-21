@@ -289,6 +289,42 @@ fun BackgroundSettingsDialog(
 
                 HorizontalDivider()
                 Text(
+                    "Режим аккаунтов: ПО ОЧЕРЕДИ",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                Text(
+                    "Следующий аккаунт запускается только после завершения задач и очистки ресурсов предыдущего.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Не выключать экран во время автоматизации",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            "Действует, пока окно приложения видно. В фоне для выполнения задач используется отдельный механизм WakeLock.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                    Switch(
+                        checked = settings.keepScreenOn,
+                        onCheckedChange = { enabled ->
+                            onSaveSettings(settings.copy(keepScreenOn = enabled))
+                        }
+                    )
+                }
+
+                HorizontalDivider()
+                Text(
                     "Сетевой reset между аккаунтами",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
