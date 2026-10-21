@@ -1824,6 +1824,7 @@ fun TasksTab(
                         }
 
                         FilledTonalButton(
+                            enabled = !isRunning,
                             onClick = {
                                 val requestedParallel = !settings.parallelAccounts
                                 if (requestedParallel && !parallelProxyRoutesCompatible) {
