@@ -67,8 +67,18 @@ class TowerCycleAlarmReceiver : BroadcastReceiver() {
     ) {
         val nextAttempt = TowerDeliveryRetryPolicy.nextAttempt(attempt)
         if (nextAttempt != null) {
-            val retryAt = TowerDeliveryRetryPolicy.retryAt(System.currentTimeMillis(), attempt)
-                ?: System.currentTimeMillis() + TowerDeliveryRetryPolicy.RETRY_DELAY_MS
+            val now = System.currentTimeMillis()
+            val retryDelayMs = TowerDeliveryRetryPolicy.retryDelayMs(attempt)
+            val retryAt = TowerDeliveryRetryPolicy.retryAt(now, attempt)
+                ?: return showDeliveryNotification(
+                    context,
+                    accountId,
+                    "Не удалось запланировать повтор запуска башни. Откройте 2R2R и проверьте фоновую работу.",
+                    notificationId(accountId)
+                )
+            val retryMinutes = ((retryDelayMs ?: TowerDeliveryRetryPolicy.FIRST_RETRY_DELAY_MS) / 60_000L)
+                .toInt()
+                .coerceAtLeast(1)
             try {
                 val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
                 alarmManager.setAndAllowWhileIdle(
@@ -76,7 +86,7 @@ class TowerCycleAlarmReceiver : BroadcastReceiver() {
                     retryAt,
                     pendingIntent(context, accountId, endsAtMillis, nextAttempt)
                 )
-                val message = "Не удалось запустить задачу башни: $reason. Повтор через 1 минуту ($nextAttempt/${TowerDeliveryRetryPolicy.MAX_RETRIES})."
+                val message = "Не удалось запустить задачу башни: $reason. Повтор через ${retryMinutes} мин. ($nextAttempt/${TowerDeliveryRetryPolicy.MAX_RETRIES})."
                 Log.w(TAG, "Scheduled Tower delivery retry accountId=$accountId retryAt=$retryAt attempt=$nextAttempt reason=$reason")
                 showDeliveryNotification(context, accountId, message, notificationId(accountId))
                 return
