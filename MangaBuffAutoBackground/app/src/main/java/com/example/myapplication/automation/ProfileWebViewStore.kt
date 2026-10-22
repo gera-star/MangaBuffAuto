@@ -117,17 +117,22 @@ class ProfileWebViewStore(
             throw IllegalStateException("PROFILE: SET_PROFILE_FAIL accountId=$accountId profile=$profileName error=${e.message}")
         }
 
-        webView.apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            setBackgroundColor(Color.TRANSPARENT)
+        val profileCookieManager = ProfileStore.getInstance()
+            .getProfile(profileName)?.cookieManager
+            ?: throw IllegalStateException("PROFILE: COOKIE_PROFILE_FAIL accountId=$accountId error=Profile_not_found")
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                setRendererPriorityPolicy(
-                    WebView.RENDERER_PRIORITY_IMPORTANT,
-                    false
-                )
-            }
+        WebViewContainerPrivacy.apply(
+            context = context,
+            webView = webView,
+            profileCookieManager = profileCookieManager
+        )
+        webView.setBackgroundColor(Color.TRANSPARENT)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            webView.setRendererPriorityPolicy(
+                WebView.RENDERER_PRIORITY_IMPORTANT,
+                false
+            )
         }
 
         ensureHeadlessViewport(accountId, webView, "INITIALIZE")
