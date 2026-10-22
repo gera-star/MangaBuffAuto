@@ -208,55 +208,7 @@ fun MangaBuffAppUI(
                         },
                         enabled = webViewAccountIds.isNotEmpty(),
                         icon = {
-                            Box {
-                                Icon(Icons.Default.Language, contentDescription = "Открыть WEB")
-                                DropdownMenu(
-                                    expanded = showWebViewAccountMenu,
-                                    onDismissRequest = { showWebViewAccountMenu = false }
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        webViewAccountIds.forEach { accountId ->
-                                            val accountName = accounts.firstOrNull {
-                                                it.id == accountId
-                                            }?.username.orEmpty()
-                                            val initials = accountName
-                                                .trim()
-                                                .replace(Regex("\\s+"), "")
-                                                .take(2)
-                                                .uppercase()
-                                                .ifEmpty { "?" }
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(42.dp)
-                                                    .clip(CircleShape)
-                                                    .background(
-                                                        if (accountId == selectedWebViewAccountId) {
-                                                            Color(0xFF4CAF50)
-                                                        } else {
-                                                            MaterialTheme.colorScheme.surfaceVariant
-                                                        }
-                                                    )
-                                                    .clickable {
-                                                        onSelectWebViewAccount(accountId)
-                                                        showWebViewAccountMenu = false
-                                                    },
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    initials,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color.White
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            Icon(Icons.Default.Language, contentDescription = "Открыть WEB")
                         },
                         label = null,
                         alwaysShowLabel = false,
@@ -344,6 +296,118 @@ fun MangaBuffAppUI(
                     logs = logs,
                     onClearLogs = { viewModel.clearLogs() }
                 )
+            }
+        }
+    }
+
+    // Use a dialog instead of DropdownMenu: popup coordinates can overlap the status bar/notch
+    // on edge-to-edge phones, especially when the bottom navigation is inset.
+    if (showWebViewAccountMenu) {
+        Dialog(
+            onDismissRequest = { showWebViewAccountMenu = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .widthIn(max = 420.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = Color(0xFF171A24),
+                tonalElevation = 8.dp,
+                shadowElevation = 12.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Выберите аккаунт для WEB",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        IconButton(onClick = { showWebViewAccountMenu = false }) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Закрыть",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(webViewAccountIds) { accountId ->
+                            val accountName = accounts.firstOrNull { it.id == accountId }
+                                ?.username?.ifBlank { accountId } ?: accountId
+                            val initials = accountName
+                                .trim()
+                                .replace(Regex("\\s+"), "")
+                                .take(2)
+                                .uppercase()
+                                .ifEmpty { "?" }
+                            val isSelected = accountId == selectedWebViewAccountId
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onSelectWebViewAccount(accountId)
+                                        showWebViewAccountMenu = false
+                                    },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isSelected) Color(0xFF214D3C) else Color(0xFF252A38)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isSelected) Color(0xFF4CAF50)
+                                                else MaterialTheme.colorScheme.surfaceVariant
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = initials,
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = accountName,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = if (isSelected) "Выбран" else "Открыть аккаунт",
+                                            color = Color(0xFFB8C0D5),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.Default.ChevronRight,
+                                        contentDescription = null,
+                                        tint = Color(0xFFB8C0D5)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
