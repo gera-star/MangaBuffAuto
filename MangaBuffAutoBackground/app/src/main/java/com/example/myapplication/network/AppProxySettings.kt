@@ -153,7 +153,9 @@ object AppProxySettings {
                         )
                     )
                 } catch (_: Exception) {
-                    listOf(Proxy.NO_PROXY)
+                    // Fail-closed: прокси включён, но адрес не разрешился — НЕ ходим напрямую,
+                    // иначе утечёт реальный IP. Неразрешённый адрес даёт ошибку соединения.
+                    listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress.createUnresolved(current.host, current.port)))
                 }
             }
 

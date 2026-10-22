@@ -109,3 +109,17 @@ fun applyProcessProxy(
 - [ProcessGlobalConfig.setDataDirectorySuffix](https://developer.android.com/reference/androidx/webkit/ProcessGlobalConfig#setDataDirectorySuffix(android.content.Context,java.lang.String))
 - [ProxyController](https://developer.android.com/reference/androidx/webkit/ProxyController)
 - [ProxyConfig.Builder.addProxyRule](https://developer.android.com/reference/androidx/webkit/ProxyConfig.Builder#addProxyRule(java.lang.String))
+
+## Слоты-вкладки: свой прокси на вкладку одновременно
+
+Прокси WebView задаётся на процесс, поэтому каждая вкладка работает в своём процессе:
+`Slot0Activity` (`:slot0`), `Slot1Activity` (`:slot1`), `Slot2Activity` (`:slot2`).
+
+- `ContainerApp` выставляет `setDataDirectorySuffix("slotN")` до первого обращения к WebView.
+- `SlotLauncher.launch(context, slot, tabId, url, SlotRoute(...))` открывает слот. Маршрут фиксируется на всё время жизни процесса.
+- Типы маршрута: `NONE` (напрямую), `HTTP`, `SOCKS5`. SOCKS5 идёт через локальный мост `Socks5ConnectBridge` (loopback, одноразовый токен), потому что Chromium не умеет SOCKS5 с логином и паролем.
+- Fail-closed: пока `setProxyOverride` не подтверждён, страница не загружается; при ошибке прокси прямого соединения нет.
+- Хранилище вкладки: профиль `tab_<tabId>` (cookies, storage, кэш).
+
+Пример: слот 0 — HTTP-прокси A, слот 1 — SOCKS5-прокси B, слот 2 — `SlotRoute()` (без прокси).
+Проверка утечек выполняется только на устройстве: откройте в каждом слоте страницу с IP и WebRTC-тестом.
