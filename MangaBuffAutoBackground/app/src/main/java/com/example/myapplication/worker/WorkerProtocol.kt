@@ -24,6 +24,7 @@ internal object WorkerProtocol {
     const val EV_RECOVERY = 108
     const val EV_RESULT = 109
     const val EV_STOPPED = 110
+    const val EV_STATE = 111
 
     const val K_REQ = "req"
     const val K_RUN_ID = "runId"
@@ -32,6 +33,7 @@ internal object WorkerProtocol {
     const val K_ROUTE_ID = "routeId"
     const val K_STOP_CONFIRMED = "stopConfirmed"
     const val K_STOP_REASON = "stopReason"
+    const val K_STATE = "workerState"
     const val K_ACCOUNT_ID = "accountId"
     const val K_ACCOUNT_JSON = "accountJson"
     const val K_SETTINGS_JSON = "settingsJson"

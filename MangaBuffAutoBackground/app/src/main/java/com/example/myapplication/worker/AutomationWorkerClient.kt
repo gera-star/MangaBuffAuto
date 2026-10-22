@@ -80,6 +80,7 @@ internal class AutomationWorkerClient(
         val profileId: String,
         val containerId: String,
         val routeId: String,
+        val lease: WorkerSlotPool.Lease,
         val result: CompletableDeferred<Bundle>,
         val stopped: CompletableDeferred<Bundle>
     )
@@ -184,6 +185,7 @@ internal class AutomationWorkerClient(
             profileId = lease.profileId,
             containerId = lease.containerId,
             routeId = lease.route,
+            lease = lease,
             result = CompletableDeferred(),
             stopped = CompletableDeferred()
         )
@@ -341,6 +343,25 @@ internal class AutomationWorkerClient(
                 val eventRunId = d.getString(WorkerProtocol.K_RUN_ID).orEmpty()
                 if (eventRunId.isNotBlank() && pending.values.none { it.runId == eventRunId }) return
                 gson.fromJson(d.getString(WorkerProtocol.K_JSON), LogEntry::class.java)?.let(onLog)
+            }
+            WorkerProtocol.EV_STATE -> {
+                val entry = pending[d.getString(WorkerProtocol.K_REQ).orEmpty()]
+                val next = runCatching {
+                    WorkerSlotState.valueOf(d.getString(WorkerProtocol.K_STATE).orEmpty())
+                }.getOrNull()
+                if (entry == null || !identityMatches(entry, d) || next == null) {
+                    onLog(LogEntry(username = id, component = "SECURITY", message = "STALE_OR_INVALID_EV_STATE_IGNORED", isError = true))
+                } else {
+                    try {
+                        if (next == WorkerSlotState.VERIFIED_CLOSED) entry.lease.markVerifiedClosed()
+                        else if (next != WorkerSlotState.FREE && next != WorkerSlotState.QUARANTINED) {
+                            entry.lease.transition(next)
+                        }
+                    } catch (_: Exception) {
+                        entry.lease.quarantine("INVALID_WORKER_STATE_TRANSITION")
+                        onLog(LogEntry(username = id, component = "SECURITY", message = "INVALID_WORKER_STATE_TRANSITION state=${next.name}", isError = true))
+                    }
+                }
             }
             WorkerProtocol.EV_STOPPED -> {
                 val entry = pending[d.getString(WorkerProtocol.K_REQ).orEmpty()]

@@ -4,60 +4,43 @@ import kotlinx.coroutines.CompletableDeferred
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Exclusive leases for worker processes. A worker becomes reusable only after the caller
- * confirms that its run's WebView/runtime was closed. Any unverified release quarantines it.
- */
+internal enum class WorkerSlotState {
+    FREE, RESERVED, PROXY_READY, RUNNING, STOPPING, VERIFIED_CLOSED, QUARANTINED
+}
+
+/** A worker is reusable only after confirmation that the run's runtime and WebView have been closed. */
 internal class WorkerSlotPool(private val size: Int) {
     private val lock = Any()
+    private val states = Array(size) { WorkerSlotState.FREE }
     private val activeRunIds = arrayOfNulls<String>(size)
     private val lastRoute = arrayOfNulls<String>(size)
-    private val leaseCounts = IntArray(size)
-    private val quarantined = BooleanArray(size)
     private val quarantineReasons = arrayOfNulls<String>(size)
     private var changed = CompletableDeferred<Unit>()
 
-    init {
-        require(size > 0)
-    }
+    init { require(size > 0) }
 
-    /** Legacy/test convenience. Production callers should supply the complete run identity. */
+    /** Test/legacy convenience. Production should supply full run identity. */
     suspend fun acquire(route: String): Lease =
-        acquire(accountId = "", profileId = "", route = route, runId = UUID.randomUUID().toString())
+        acquire("", "", route, UUID.randomUUID().toString())
 
-    suspend fun acquire(
-        accountId: String,
-        profileId: String,
-        route: String,
-        runId: String
-    ): Lease {
+    suspend fun acquire(accountId: String, profileId: String, route: String, runId: String): Lease {
         require(route.isNotBlank()) { "routeId is required" }
         require(runId.isNotBlank()) { "runId is required" }
-
         while (true) {
             val signal: CompletableDeferred<Unit>
             synchronized(lock) {
-                if (quarantined.all { it }) {
+                if (states.all { it == WorkerSlotState.QUARANTINED }) {
                     throw WorkerPoolUnavailableException("All worker slots are quarantined")
                 }
-                val free = (0 until size).filter { leaseCounts[it] == 0 && !quarantined[it] }
-                // Prefer an idle process already configured for this route, but never share a
-                // live worker between two reservations.
+                val free = states.indices.filter { states[it] == WorkerSlotState.FREE }
                 val index = free.firstOrNull { lastRoute[it] == route } ?: free.firstOrNull()
                 if (index != null) {
-                    leaseCounts[index] = 1
+                    states[index] = WorkerSlotState.RESERVED
                     activeRunIds[index] = runId
                     lastRoute[index] = route
-                    return Lease(
-                        index = index,
-                        accountId = accountId,
-                        profileId = profileId,
-                        containerId = "w$index",
-                        route = route,
-                        runId = runId
-                    ) { verifiedClosed, failureReason ->
-                        release(index, runId, verifiedClosed, failureReason)
-                    }
+                    return Lease(index, accountId, profileId, "w$index", route, runId,
+                        { next -> transition(index, runId, next) },
+                        { verified, reason -> release(index, runId, verified, reason) })
                 }
                 signal = changed
             }
@@ -65,31 +48,51 @@ internal class WorkerSlotPool(private val size: Int) {
         }
     }
 
-    private fun release(index: Int, runId: String, verifiedClosed: Boolean, failureReason: String?) {
+    private fun transition(index: Int, runId: String, next: WorkerSlotState) {
+        synchronized(lock) {
+            check(index in states.indices && activeRunIds[index] == runId) {
+                "Worker state transition has stale runId"
+            }
+            val current = states[index]
+            if (current == next) return
+            val allowed = when (current) {
+                WorkerSlotState.RESERVED -> setOf(WorkerSlotState.PROXY_READY, WorkerSlotState.STOPPING)
+                WorkerSlotState.PROXY_READY -> setOf(WorkerSlotState.RUNNING, WorkerSlotState.STOPPING)
+                WorkerSlotState.RUNNING -> setOf(WorkerSlotState.STOPPING)
+                WorkerSlotState.STOPPING -> setOf(WorkerSlotState.VERIFIED_CLOSED)
+                WorkerSlotState.VERIFIED_CLOSED, WorkerSlotState.FREE, WorkerSlotState.QUARANTINED -> emptySet()
+            }
+            check(next in allowed) { "Invalid worker transition $current -> $next" }
+            states[index] = next
+        }
+    }
+
+    private fun release(index: Int, runId: String, verifiedClosed: Boolean, reason: String?) {
         val signal = synchronized(lock) {
-            check(leaseCounts[index] == 1 && activeRunIds[index] == runId) {
+            check(index in states.indices && activeRunIds[index] == runId) {
                 "Worker lease identity changed before release"
             }
-            leaseCounts[index] = 0
-            activeRunIds[index] = null
-            if (!verifiedClosed || failureReason != null) {
-                quarantined[index] = true
-                quarantineReasons[index] = failureReason ?: "STOP_NOT_CONFIRMED"
+            if (verifiedClosed && reason == null && states[index] == WorkerSlotState.VERIFIED_CLOSED) {
+                states[index] = WorkerSlotState.FREE
+            } else {
+                states[index] = WorkerSlotState.QUARANTINED
+                quarantineReasons[index] = reason ?: "STOP_NOT_CONFIRMED"
             }
-            val previous = changed
+            activeRunIds[index] = null
+            val oldSignal = changed
             changed = CompletableDeferred()
-            previous
+            oldSignal
         }
         signal.complete(Unit)
     }
 
-    internal fun isQuarantined(index: Int): Boolean = synchronized(lock) {
-        require(index in 0 until size)
-        quarantined[index]
+    internal fun state(index: Int): WorkerSlotState = synchronized(lock) {
+        require(index in states.indices)
+        states[index]
     }
 
     internal fun quarantineReason(index: Int): String? = synchronized(lock) {
-        require(index in 0 until size)
+        require(index in states.indices)
         quarantineReasons[index]
     }
 
@@ -100,23 +103,34 @@ internal class WorkerSlotPool(private val size: Int) {
         val containerId: String,
         val route: String,
         val runId: String,
-        private val releaseAction: (verifiedClosed: Boolean, failureReason: String?) -> Unit
+        private val transitionAction: (WorkerSlotState) -> Unit,
+        private val releaseAction: (verifiedClosed: Boolean, reason: String?) -> Unit
     ) {
         private val released = AtomicBoolean(false)
         private val verifiedClosed = AtomicBoolean(false)
         @Volatile private var failureReason: String? = null
 
-        /** Call only after EV_STOPPED for this exact account/profile/container/route/run. */
+        fun transition(next: WorkerSlotState) {
+            check(!released.get()) { "Cannot change a released worker lease" }
+            transitionAction(next)
+        }
+
         fun markVerifiedClosed() {
             check(!released.get()) { "Cannot verify a released worker lease" }
-            verifiedClosed.set(true)
+            if (verifiedClosed.compareAndSet(false, true)) {
+                try {
+                    transitionAction(WorkerSlotState.VERIFIED_CLOSED)
+                } catch (e: Exception) {
+                    verifiedClosed.set(false)
+                    throw e
+                }
+            }
         }
 
         fun quarantine(reason: String) {
             if (reason.isNotBlank() && !released.get()) failureReason = reason
         }
 
-        /** Without a matching stop acknowledgement, release quarantines rather than frees the process. */
         fun release() {
             if (released.compareAndSet(false, true)) {
                 releaseAction(verifiedClosed.get() && failureReason == null, failureReason)

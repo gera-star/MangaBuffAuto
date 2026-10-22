@@ -64,6 +64,7 @@ open class AutomationWorkerService : Service() {
     @Volatile private var activeRunner: MultiAccountAutomationRunner? = null
     @Volatile private var poisoned = false
     @Volatile private var routeStateUncertain = false
+    @Volatile private var lifecycleState = WorkerSlotState.FREE
     private var isolationReady = false
     private var screenRegistered = false
 
@@ -171,6 +172,24 @@ open class AutomationWorkerService : Service() {
             // The main process remains the single owner of the account database.
             persistUserAgentMigration = false
         )
+
+    private fun transitionState(run: ActiveRun, next: WorkerSlotState) {
+        val current = lifecycleState
+        if (current == next) return
+        val allowed = when (current) {
+            WorkerSlotState.FREE -> setOf(WorkerSlotState.RESERVED)
+            WorkerSlotState.RESERVED -> setOf(WorkerSlotState.PROXY_READY, WorkerSlotState.STOPPING)
+            WorkerSlotState.PROXY_READY -> setOf(WorkerSlotState.RUNNING, WorkerSlotState.STOPPING)
+            WorkerSlotState.RUNNING -> setOf(WorkerSlotState.STOPPING)
+            WorkerSlotState.STOPPING -> setOf(WorkerSlotState.VERIFIED_CLOSED)
+            WorkerSlotState.VERIFIED_CLOSED, WorkerSlotState.QUARANTINED -> emptySet()
+        }
+        check(next in allowed) { "Invalid worker transition $current -> $next" }
+        lifecycleState = next
+        emitRunEvent(run, WorkerProtocol.EV_STATE, run.accountId) {
+            putString(WorkerProtocol.K_STATE, next.name)
+        }
+    }
 
     private fun emitStopped(run: ActiveRun, reason: String) {
         emitRunEvent(run, WorkerProtocol.EV_STOPPED, run.accountId) {
@@ -331,13 +350,14 @@ open class AutomationWorkerService : Service() {
             return
         }
         val current = activeRun
-        if (current != null) {
+        if (current != null || lifecycleState != WorkerSlotState.FREE) {
             if (current.requestId == reqId && current.runId == runId) return // duplicate RUN is idempotent
             emitResult(incoming, false, "WORKER_BUSY", "Worker already owns another active run.")
             return
         }
 
         activeRun = incoming
+        transitionState(incoming, WorkerSlotState.RESERVED)
         val promo = d.getString(WorkerProtocol.K_PROMO).orEmpty()
         val resume = d.getBoolean(WorkerProtocol.K_RESUME)
         lateinit var job: Job
@@ -352,7 +372,9 @@ open class AutomationWorkerService : Service() {
                 proxy.validateForRouting()
                 AppProxySettings.setProcessOverride(account.id, proxy)
                 ensureRoute(proxy)
+                transitionState(incoming, WorkerSlotState.PROXY_READY)
                 DeckCommentToggleRegistry.initializeIfAbsent(account.id, account.deckCommentEnabled)
+                transitionState(incoming, WorkerSlotState.RUNNING)
                 runRunner.runForAccount(account, settings, taskType, promo, resume)
                 ok = true
             } catch (e: CancellationException) {
@@ -363,6 +385,10 @@ open class AutomationWorkerService : Service() {
                 errClass = e.javaClass.simpleName
                 errMsg = e.message.orEmpty()
             } finally {
+                if (lifecycleState != WorkerSlotState.STOPPING && lifecycleState != WorkerSlotState.QUARANTINED) {
+                    runCatching { transitionState(incoming, WorkerSlotState.STOPPING) }
+                        .onFailure { poisoned = true }
+                }
                 try {
                     withContext(NonCancellable) {
                         runRunner.stopAccount(account.id)
@@ -375,6 +401,7 @@ open class AutomationWorkerService : Service() {
                     errMsg = e.javaClass.simpleName
                 }
                 if (cleanupConfirmed) {
+                    transitionState(incoming, WorkerSlotState.VERIFIED_CLOSED)
                     emitStopped(incoming, if (ok) "RUN_FINISHED_AND_WEBVIEW_DESTROYED" else "RUN_FAILED_AND_WEBVIEW_DESTROYED")
                 } else {
                     poisoned = true
@@ -388,6 +415,7 @@ open class AutomationWorkerService : Service() {
                 }
                 emitResult(incoming, ok && cleanupConfirmed, errClass, errMsg)
                 if (activeRunner === runRunner) activeRunner = null
+                if (cleanupConfirmed) lifecycleState = WorkerSlotState.FREE
                 if (activeRun?.runId == runId && activeRun?.requestId == reqId) activeRun = null
                 runJobs.remove(account.id, job)
             }
