@@ -15,6 +15,7 @@ import android.os.RemoteException
 import androidx.webkit.WebViewFeature
 import com.example.myapplication.automation.DeckCommentToggleRegistry
 import com.example.myapplication.automation.IncompleteTaskSequenceException
+import com.example.myapplication.automation.latestProfileCookieHeader
 import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.LogEntry
@@ -156,6 +157,19 @@ internal class AutomationWorkerClient(
     ) {
         val index = lease.index
         val messenger = messengerOf(index)
+        // Worker WebView storage is separate; ship the newest cookies from the main-process profile.
+        val dispatchAccount = account.copy(
+            cookiesJson = latestProfileCookieHeader(account.id, account.getSafeCookiesJson())
+        )
+        if (dispatchAccount.getSafeCookiesJson() != account.getSafeCookiesJson()) {
+            onLog(
+                LogEntry(
+                    username = account.username,
+                    component = "PROFILE",
+                    message = "WORKER_COOKIE_SNAPSHOT_REFRESHED accountId=${account.id} source=MAIN_PROFILE"
+                )
+            )
+        }
         val reqId = UUID.randomUUID().toString()
         val entry = Pending(account.id, index, CompletableDeferred())
         pending[reqId] = entry
@@ -182,7 +196,7 @@ internal class AutomationWorkerClient(
             message.replyTo = reply
             message.data = Bundle().apply {
                 putString(WorkerProtocol.K_REQ, reqId)
-                putString(WorkerProtocol.K_ACCOUNT_JSON, gson.toJson(account))
+                putString(WorkerProtocol.K_ACCOUNT_JSON, gson.toJson(dispatchAccount))
                 putString(WorkerProtocol.K_SETTINGS_JSON, gson.toJson(settings))
                 putString(WorkerProtocol.K_PROXY_JSON, gson.toJson(proxy))
                 putString(WorkerProtocol.K_TASK, taskType.name)
