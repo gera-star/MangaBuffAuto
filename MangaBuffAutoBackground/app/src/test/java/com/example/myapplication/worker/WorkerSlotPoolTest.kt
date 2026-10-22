@@ -85,6 +85,7 @@ class WorkerSlotPoolTest {
         val pool = WorkerSlotPool(1)
         val lease = pool.acquire("proxy:a:1")
         lease.quarantine("STOP_ACK_TIMEOUT")
+        lease.transition(WorkerSlotState.STOPPING)
         lease.markVerifiedClosed()
         lease.release()
         assertEquals(WorkerSlotState.QUARANTINED, pool.state(lease.index))
