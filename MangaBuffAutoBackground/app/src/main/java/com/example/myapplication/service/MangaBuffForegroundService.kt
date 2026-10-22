@@ -306,6 +306,8 @@ class MangaBuffForegroundService : Service() {
 
     // One account at a time; queue state is isolated in a small class with unit tests.
     private val accountExecutionQueue = AccountExecutionQueue()
+    // Guards ProxyController changes while any account WebView is using its current route.
+    private val proxyRouteExecutionGate = ProxyRouteExecutionGate()
 
     // Tower cycles are scheduled independently from the account task queue.
     // The delay never occupies the account WebView or blocks other tasks.
@@ -369,14 +371,17 @@ class MangaBuffForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private suspend fun applyProxyForAccount(account: MangaBuffAccount) {
+    private suspend fun applyProxyForAccount(
+        account: MangaBuffAccount,
+        proxyConfig: com.example.myapplication.network.AppProxyConfig
+    ) {
         suspendCancellableCoroutine<Unit> { continuation ->
-            AppProxySettings.applyWebViewProxy(applicationContext, account.id) { success, message ->
+            AppProxySettings.applyWebViewProxy(applicationContext, proxyConfig) { success, message ->
                 publishLog(
                     LogEntry(
                         username = account.username,
                         component = "PROXY",
-                        message = "ACCOUNT_PROXY_APPLY accountId=${account.id} enabled=${AppProxySettings.read(applicationContext, account.id).enabled} success=$success detail=$message",
+                        message = "ACCOUNT_PROXY_APPLY accountId=${account.id} enabled=${proxyConfig.enabled} success=$success detail=$message",
                         isError = !success
                     )
                 )
@@ -703,6 +708,7 @@ class MangaBuffForegroundService : Service() {
             val currentJob = coroutineContext[Job]
             var hasExecutionPermit = false
             var exclusiveExecutionPermit: AccountExecutionGate.Permit? = null
+            var proxyRoutePermit: ProxyRouteExecutionGate.Permit? = null
             var runCompleted = false
             var runCancelled = false
             var runFailureReason: String? = null
@@ -784,8 +790,17 @@ class MangaBuffForegroundService : Service() {
                     )
                 )
                 }
+                // Snapshot the route once so the gate key and the actual WebView override cannot diverge
+                // if the user edits proxy settings while this task is waiting.
+                val proxyConfigForRun = AppProxySettings.read(applicationContext, accountId)
+                val proxyRouteKey = AccountExecutionModePolicy.proxyRouteKey(proxyConfigForRun)
+                if (currentJob != null) accountExecutionQueue.markWaitingForSharedGate(accountId, currentJob)
+                publishStatus(accountId, "Ожидание безопасного маршрута прокси...", true, taskType.title, 0f)
+                proxyRoutePermit = proxyRouteExecutionGate.acquire(proxyRouteKey)
+                if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
+
                 publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
-                transitionAccountTaskState(accountId, AccountTaskEvent.STARTED, "queue_and_gate_acquired task=${taskType.title}")
+                transitionAccountTaskState(accountId, AccountTaskEvent.STARTED, "queue_and_proxy_route_acquired task=${taskType.title}")
                 // Start the stage deadline before navigation/JavaScript callbacks begin, so a
                 // WebView that hangs before its first meaningful log is still cancellable.
                 val initialStage = ProgressStage.fromText(taskType.title)
@@ -796,7 +811,7 @@ class MangaBuffForegroundService : Service() {
                             SystemClock.elapsedRealtime()
                     )
 
-                applyProxyForAccount(account)
+                applyProxyForAccount(account, proxyConfigForRun)
                 acquireWakeLockIfNeeded()
                 automationRunner.runForAccount(
                     account = account,
@@ -1007,6 +1022,9 @@ class MangaBuffForegroundService : Service() {
                     }
                     // Release the shared gate before waking the next local-queue waiter, so a
                     // newly admitted account cannot jump ahead of trades already waiting on Gate.
+                    // Release the route before waking queued accounts; the next task must not
+                    // apply a different process-wide proxy while this WebView is still alive.
+                    proxyRoutePermit?.release()
                     exclusiveExecutionPermit?.release()
                     if (hasExecutionPermit) accountExecutionQueue.release()
                 }
