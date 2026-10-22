@@ -16,7 +16,7 @@ internal object AccountExecutionModePolicy {
         configs: List<AppProxyConfig>
     ): Boolean = requestedParallel && areProxyRoutesCompatible(configs)
 
-    private fun proxyRouteKey(config: AppProxyConfig): String {
+    internal fun proxyRouteKey(config: AppProxyConfig): String {
         if (!config.enabled) return "system"
         return "proxy:${config.host.trim().lowercase(Locale.ROOT)}:${config.port}"
     }
