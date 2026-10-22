@@ -79,6 +79,16 @@
             android:label="Вкладка 3"
             android:theme="@style/Theme.MyApplication" />
 
+        <activity
+            android:name=".web.AccountWebViewerActivity"
+            android:process=":webviewer"
+            android:taskAffinity=".webviewer"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:label="WEB — аккаунт"
+            android:theme="@style/Theme.MyApplication" />
+
         <receiver
             android:name=".service.TowerCycleAlarmReceiver"
             android:exported="false" />
