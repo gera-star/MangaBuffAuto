@@ -7718,11 +7718,10 @@ class MangaBuffAutomation(
                                     }
                                 }
 
-                                // В HTML страницы счётчик ударов изначально равен 0 и заполняется
-                                // скриптом сайта позже. Поэтому 0 в первые секунды означает
-                                // «ещё не загрузилось», а не «ударов нет».
+                                // 0 ударов — обычное состояние, когда дневной лимит ударов исчерпан.
+                                // Короткая задержка нужна лишь на случай, если счётчик отрисуется
+                                // чуть позже загрузки страницы; пробных ударов не делаем.
                                 var gameWaitStarted = Date.now();
-                                var probed = false;
                                 (function waitForGame() {
                                     var h = readHits();
                                     var btn = document.querySelector('button.main-mine__game-tap');
@@ -7735,21 +7734,11 @@ class MangaBuffAutomation(
                                         tap();
                                         return;
                                     }
-                                    if (waited < 10000) {
+                                    if (waited < 2000) {
                                         setTimeout(waitForGame, 400);
                                         return;
                                     }
-                                    if (btn && !probed) {
-                                        // Счётчик так и остался 0: пробуем один удар и смотрим, изменится ли он.
-                                        probed = true;
-                                        AndroidMine.onMineLog('GAME_PROBE_TAP hits=' + h + ' maxHit=' + maxHit);
-                                        btn.click();
-                                        clicks++;
-                                        gameWaitStarted = Date.now() - 8500;
-                                        setTimeout(waitForGame, 400);
-                                        return;
-                                    }
-                                    AndroidMine.onMineLog('NO_HITS_AVAILABLE hits=' + h + ' maxHit=' + maxHit + ' button=' + !!btn);
+                                    AndroidMine.onMineLog('DAILY_HIT_LIMIT_REACHED hits=' + h + ' maxHit=' + maxHit + ' button=' + !!btn + '; skip tapping, go to exchange');
                                     finish();
                                 })();
                             } catch(e) {
