@@ -84,9 +84,18 @@ object AppProxySettings {
         context: Context,
         accountId: String,
         onComplete: (success: Boolean, message: String) -> Unit = { _, _ -> }
+    ) = applyWebViewProxy(context, read(context.applicationContext, accountId), onComplete)
+
+    /**
+     * Apply the exact configuration snapshot used to acquire the process-local proxy-route lease.
+     * This prevents settings edits while queued from changing the route behind an active lease.
+     */
+    fun applyWebViewProxy(
+        context: Context,
+        config: AppProxyConfig,
+        onComplete: (success: Boolean, message: String) -> Unit = { _, _ -> }
     ) {
         val appContext = context.applicationContext
-        val config = read(appContext, accountId)
         val executor = ContextCompat.getMainExecutor(appContext)
         try {
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
