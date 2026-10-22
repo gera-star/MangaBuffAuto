@@ -82,6 +82,9 @@ import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.ui.TradeModeEdgeButton
 import com.example.myapplication.ui.TradeModeScreen
 import com.example.myapplication.automation.AutomationWebViewRegistry
+import com.example.myapplication.automation.latestProfileCookieHeader
+import com.example.myapplication.network.AppProxySettings
+import com.example.myapplication.web.AccountWebViewerActivity
 import com.example.myapplication.ui.MainViewModel
 import com.example.myapplication.ui.MangaBuffAppUI
 import com.example.myapplication.ui.theme.MyApplicationTheme
@@ -154,6 +157,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme(darkTheme = true, dynamicColor = false) {
                 val settings by viewModel.settings.collectAsState()
+                val accounts by viewModel.accounts.collectAsState()
                 val automationRunning by viewModel.isRunning.collectAsState()
                 val tradeAutomation = remember { TradeAutomation.getInstance(applicationContext) }
                 var tradingModeOpen by remember { mutableStateOf(false) }
@@ -179,16 +183,17 @@ class MainActivity : ComponentActivity() {
                     val webViewsByAccount by AutomationWebViewRegistry.webViewsByAccount.collectAsState()
                     val debugWebViewVisible by viewModel.debugWebViewVisible.collectAsState()
                     val webViewMountRevision by viewModel.webViewMountRevision.collectAsState()
-                    val webViewAccountIds = webViewsByAccount.keys.toList()
+                    val liveWebViewAccountIds = webViewsByAccount.keys.toList()
+                    // WEB must list all saved accounts, including those running in worker processes.
+                    val webViewAccountIds = accounts.map { it.id }
                     var selectedDebugAccountId by remember { mutableStateOf<String?>(null) }
 
-                    LaunchedEffect(webViewAccountIds) {
-                        if (selectedDebugAccountId !in webViewAccountIds) {
-                            selectedDebugAccountId = if (webViewAccountIds.size == 1) {
-                                webViewAccountIds.single()
-                            } else {
-                                null
-                            }
+                    LaunchedEffect(liveWebViewAccountIds, webViewAccountIds) {
+                        if (selectedDebugAccountId != null && selectedDebugAccountId !in webViewAccountIds) {
+                            selectedDebugAccountId = null
+                        }
+                        if (selectedDebugAccountId == null && liveWebViewAccountIds.size == 1) {
+                            selectedDebugAccountId = liveWebViewAccountIds.single()
                         }
                     }
 
@@ -227,7 +232,24 @@ class MainActivity : ComponentActivity() {
                             webViewContainer = debugWebView,
                             webViewAccountIds = webViewAccountIds,
                             selectedWebViewAccountId = selectedDebugAccountId,
-                            onSelectWebViewAccount = { selectedDebugAccountId = it }
+                            onSelectWebViewAccount = { accountId ->
+                                if (webViewsByAccount.containsKey(accountId)) {
+                                    selectedDebugAccountId = accountId
+                                    viewModel.setDebugWebViewVisible(true)
+                                } else {
+                                    val account = accounts.firstOrNull { it.id == accountId }
+                                    if (account != null) {
+                                        selectedDebugAccountId = accountId
+                                        viewModel.setDebugWebViewVisible(false)
+                                        AccountWebViewerActivity.launch(
+                                            context = this@MainActivity,
+                                            account = account,
+                                            cookies = latestProfileCookieHeader(account.id, account.getSafeCookiesJson()),
+                                            proxy = AppProxySettings.read(applicationContext, account.id)
+                                        )
+                                    }
+                                }
+                            }
                         )
 
                         debugWebView?.let { webView ->
