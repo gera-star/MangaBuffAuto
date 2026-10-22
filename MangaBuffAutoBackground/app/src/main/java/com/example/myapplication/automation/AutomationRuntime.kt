@@ -35,7 +35,9 @@ class AutomationRuntime(
     private val onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     private val onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     private val onAccountRecoveryNeeded: (accountId: String) -> Unit = {},
-    private val onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> }
+    private val onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> },
+    /** false в рабочем процессе: аккаунты на диск пишет только основной процесс. */
+    private val persistUserAgentMigration: Boolean = true
 ) {
     private val runtimes = ConcurrentHashMap<String, AccountRuntime>()
     private val automationEngines = ConcurrentHashMap<String, MangaBuffAutomation>()
@@ -277,15 +279,20 @@ class AutomationRuntime(
             // New accounts save the actual UA from the login WebView. For legacy accounts
             // that still contain only the old hard-coded fallback, use this device's real
             // WebView UA for native requests instead of retaining a stale placeholder.
-            val savedAccount = AccountRepository(context.applicationContext).updateAccount(account.id) { current ->
-                if (
-                    current.userAgent.isNullOrBlank() ||
-                    current.userAgent.trim() == legacyDefaultUa.trim()
-                ) {
-                    current.copy(userAgent = webViewUa)
-                } else {
-                    current
+            val savedAccount = if (persistUserAgentMigration) {
+                AccountRepository(context.applicationContext).updateAccount(account.id) { current ->
+                    if (
+                        current.userAgent.isNullOrBlank() ||
+                        current.userAgent.trim() == legacyDefaultUa.trim()
+                    ) {
+                        current.copy(userAgent = webViewUa)
+                    } else {
+                        current
+                    }
                 }
+            } else {
+                // Рабочий процесс: используем UA только в памяти, на диск не пишем.
+                account.copy(userAgent = webViewUa)
             }
             val resolvedUserAgent = savedAccount?.getSafeUserAgent() ?: webViewUa
             engineAccount = account.copy(userAgent = resolvedUserAgent)

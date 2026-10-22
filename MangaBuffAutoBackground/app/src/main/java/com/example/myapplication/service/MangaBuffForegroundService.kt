@@ -33,6 +33,8 @@ import com.example.myapplication.automation.IncompleteTaskSequenceException
 import com.example.myapplication.automation.TradeAutomation
 import com.example.myapplication.automation.AutomationWebViewRegistry
 import com.example.myapplication.network.AppProxySettings
+import com.example.myapplication.worker.AutomationWorkerClient
+import com.example.myapplication.worker.WorkerSlotPool
 import com.example.myapplication.data.AccountRepository
 import com.example.myapplication.data.DailyStats
 import com.example.myapplication.data.GlobalSettings
@@ -309,6 +311,16 @@ class MangaBuffForegroundService : Service() {
     // Guards ProxyController changes while any account WebView is using its current route.
     private val proxyRouteExecutionGate = ProxyRouteExecutionGate()
 
+    // Рабочие процессы WebView (:w0..:w3): позволяют одновременно держать аккаунты с РАЗНЫМИ
+    // прокси, потому что прокси-override WebView действует на весь процесс.
+    private val workersSupported by lazy { AutomationWorkerClient.isSupported(applicationContext) }
+    private lateinit var workerClient: AutomationWorkerClient
+
+    private fun stopAccountEverywhere(accountId: String) {
+        automationRunner.stopAccount(accountId)
+        if (::workerClient.isInitialized) workerClient.stopAccount(accountId)
+    }
+
     // Tower cycles are scheduled independently from the account task queue.
     // The delay never occupies the account WebView or blocks other tasks.
     private val towerCycleJobs = ConcurrentHashMap<String, Job>()
@@ -434,6 +446,18 @@ class MangaBuffForegroundService : Service() {
             onAccountRecoveryNeeded = ::requestAccountRecovery,
             onMineBalanceUpdate = ::publishMineBalance
         )
+        workerClient = AutomationWorkerClient(
+            context = applicationContext,
+            scope = serviceScope,
+            onLog = ::publishLog,
+            onStatus = ::publishStatus,
+            onManga = ::persistAndPublishManga,
+            onStats = ::publishStats,
+            onDaily = ::publishDailyStats,
+            onTower = ::publishTowerExpeditionEndsAt,
+            onMine = ::publishMineBalance,
+            onRecovery = ::requestAccountRecovery
+        )
 
         ContextCompat.registerReceiver(
             this,
@@ -543,7 +567,7 @@ class MangaBuffForegroundService : Service() {
                 if (accountId.isNotBlank()) {
                     val account = repository.getAccounts().firstOrNull { it.id == accountId }
                     if (account != null && !account.isOffline) {
-                        automationRunner.reloadAccount(account)
+                        if (!workerClient.reloadAccount(account)) automationRunner.reloadAccount(account)
                     } else {
                         publishLog(
                             LogEntry(
@@ -559,14 +583,14 @@ class MangaBuffForegroundService : Service() {
             ACTION_SKIP_MANGA -> {
                 val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
                 if (accountId.isNotBlank() && !isAccountOffline(accountId)) {
-                    automationRunner.skipCurrentManga(accountId)
+                    if (!workerClient.skipCurrentManga(accountId)) automationRunner.skipCurrentManga(accountId)
                 }
             }
 
             ACTION_MARK_READ -> {
                 val accountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
                 if (accountId.isNotBlank() && !isAccountOffline(accountId)) {
-                    automationRunner.markCurrentMangaAsRead(accountId)
+                    if (!workerClient.markCurrentMangaAsRead(accountId)) automationRunner.markCurrentMangaAsRead(accountId)
                 }
             }
 
@@ -631,7 +655,7 @@ class MangaBuffForegroundService : Service() {
             cancelTowerCycle(accountId, clearPersisted = true)
             removePersistedRun(accountId)
             accountJobs.remove(accountId)?.cancel()
-            automationRunner.stopAccount(accountId)
+            stopAccountEverywhere(accountId)
             transitionAccountTaskState(accountId, AccountTaskEvent.STOPPED, "account_offline_cleanup_complete")
             runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
             publishStatus(
@@ -688,7 +712,7 @@ class MangaBuffForegroundService : Service() {
         // Remove the old generation before cancelling it, so its finally block cannot mistake
         // itself for the current job and delete the newly persisted run.
         accountJobs.remove(accountId)?.cancel()
-        automationRunner.stopAccount(accountId)
+        stopAccountEverywhere(accountId)
         persistRun(accountId, taskType)
         accountProgressTrackers.remove(accountId)
 
@@ -709,6 +733,7 @@ class MangaBuffForegroundService : Service() {
             var hasExecutionPermit = false
             var exclusiveExecutionPermit: AccountExecutionGate.Permit? = null
             var proxyRoutePermit: ProxyRouteExecutionGate.Permit? = null
+            var workerLease: WorkerSlotPool.Lease? = null
             var runCompleted = false
             var runCancelled = false
             var runFailureReason: String? = null
@@ -733,13 +758,15 @@ class MangaBuffForegroundService : Service() {
                 val executionSettings = repository.getSettings()
                 val parallelModeRequested = executionSettings.parallelAccounts
                 val parallelMode = effectiveParallelMode(executionSettings)
+                // Разные прокси-маршруты: каждый маршрут — в своём рабочем процессе WebView.
+                val useWorkers = parallelMode && !allProxyRoutesCompatible()
                 if (parallelModeRequested && !parallelMode) {
                     publishLog(
                         LogEntry(
                             username = account.username,
                             component = "QUEUE",
                             message = "ACCOUNT_PARALLEL_BLOCKED " +
-                                "reason=INCOMPATIBLE_WEBVIEW_PROXY_ROUTES; using queue"
+                                "reason=WORKER_PROCESSES_UNSUPPORTED_ON_THIS_DEVICE; using queue"
                         )
                     )
                 }
@@ -750,7 +777,7 @@ class MangaBuffForegroundService : Service() {
                             username = account.username,
                             component = "QUEUE",
                             message = "ACCOUNT_PARALLEL_START accountId=$accountId taskType=${taskType.title} " +
-                            "queue=bypassed isolatedRuntime=true profilePerAccount=true proxyRoutesCompatible=true"
+                            "queue=bypassed isolatedRuntime=true profilePerAccount=true workers=$useWorkers"
                         )
                     )
                 } else {
@@ -794,32 +821,57 @@ class MangaBuffForegroundService : Service() {
                 // if the user edits proxy settings while this task is waiting.
                 val proxyConfigForRun = AppProxySettings.read(applicationContext, accountId)
                 val proxyRouteKey = AccountExecutionModePolicy.proxyRouteKey(proxyConfigForRun)
-                if (currentJob != null) accountExecutionQueue.markWaitingForSharedGate(accountId, currentJob)
-                publishStatus(accountId, "Ожидание безопасного маршрута прокси...", true, taskType.title, 0f)
-                proxyRoutePermit = proxyRouteExecutionGate.acquire(proxyRouteKey)
-                if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
-
-                publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
-                transitionAccountTaskState(accountId, AccountTaskEvent.STARTED, "queue_and_proxy_route_acquired task=${taskType.title}")
-                // Start the stage deadline before navigation/JavaScript callbacks begin, so a
-                // WebView that hangs before its first meaningful log is still cancellable.
-                val initialStage = ProgressStage.fromText(taskType.title)
-                accountProgressTrackers.computeIfAbsent(accountId) { AccountProgressTracker() }
-                    .mark(
-                        initialStage,
-                        "TASK_STARTED:${taskType.title}:attempt=$attemptNumber:" +
-                            SystemClock.elapsedRealtime()
+                if (useWorkers) {
+                    if (currentJob != null) accountExecutionQueue.markWaitingForSharedGate(accountId, currentJob)
+                    publishStatus(accountId, "Ожидание рабочего процесса для маршрута прокси...", true, taskType.title, 0f)
+                    val lease = workerClient.pool.acquire(proxyRouteKey)
+                    workerLease = lease
+                    if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
+                    publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
+                    transitionAccountTaskState(accountId, AccountTaskEvent.STARTED, "worker_acquired worker=${lease.index} task=${taskType.title}")
+                    accountProgressTrackers.computeIfAbsent(accountId) { AccountProgressTracker() }
+                        .mark(
+                            ProgressStage.fromText(taskType.title),
+                            "TASK_STARTED:${taskType.title}:attempt=$attemptNumber:" + SystemClock.elapsedRealtime()
+                        )
+                    acquireWakeLockIfNeeded()
+                    workerClient.runForAccount(
+                        lease = lease,
+                        account = account,
+                        settings = repository.getSettings(),
+                        taskType = taskType,
+                        promoCode = effectivePromoCode,
+                        resume = resumePersistedProgress,
+                        proxy = proxyConfigForRun
                     )
+                } else {
+                    if (currentJob != null) accountExecutionQueue.markWaitingForSharedGate(accountId, currentJob)
+                    publishStatus(accountId, "Ожидание безопасного маршрута прокси...", true, taskType.title, 0f)
+                    proxyRoutePermit = proxyRouteExecutionGate.acquire(proxyRouteKey)
+                    if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
 
-                applyProxyForAccount(account, proxyConfigForRun)
-                acquireWakeLockIfNeeded()
-                automationRunner.runForAccount(
-                    account = account,
-                    settings = repository.getSettings(),
-                    taskType = taskType,
-                    promoCode = effectivePromoCode,
-                    resumePersistedProgress = resumePersistedProgress
-                )
+                    publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
+                    transitionAccountTaskState(accountId, AccountTaskEvent.STARTED, "queue_and_proxy_route_acquired task=${taskType.title}")
+                    // Start the stage deadline before navigation/JavaScript callbacks begin, so a
+                    // WebView that hangs before its first meaningful log is still cancellable.
+                    val initialStage = ProgressStage.fromText(taskType.title)
+                    accountProgressTrackers.computeIfAbsent(accountId) { AccountProgressTracker() }
+                        .mark(
+                            initialStage,
+                            "TASK_STARTED:${taskType.title}:attempt=$attemptNumber:" +
+                                SystemClock.elapsedRealtime()
+                        )
+
+                    applyProxyForAccount(account, proxyConfigForRun)
+                    acquireWakeLockIfNeeded()
+                    automationRunner.runForAccount(
+                        account = account,
+                        settings = repository.getSettings(),
+                        taskType = taskType,
+                        promoCode = effectivePromoCode,
+                        resumePersistedProgress = resumePersistedProgress
+                    )
+                }
                 runCompleted = true
             } catch (e: CancellationException) {
                 runCancelled = true
@@ -861,7 +913,7 @@ class MangaBuffForegroundService : Service() {
                         accountProgressTrackers.remove(accountId)
                         accountCurrentTaskLabels.remove(accountId)
                         // Clean up the previous account before yielding the queue permit.
-                        automationRunner.stopAccount(accountId)
+                        stopAccountEverywhere(accountId)
 
                         networkUnvalidatedGraceJobs.remove(accountId)?.cancel()
                         val recoveryRequested = recoveryRequests.remove(accountId)
@@ -1025,6 +1077,7 @@ class MangaBuffForegroundService : Service() {
                     // Release the route before waking queued accounts; the next task must not
                     // apply a different process-wide proxy while this WebView is still alive.
                     proxyRoutePermit?.release()
+                    workerLease?.release()
                     exclusiveExecutionPermit?.release()
                     if (hasExecutionPermit) accountExecutionQueue.release()
                 }
@@ -1257,16 +1310,18 @@ class MangaBuffForegroundService : Service() {
         publishStatus(accountId, "Подготовка...", true, taskLabel, 0f)
     }
 
-    private fun effectiveParallelMode(settings: GlobalSettings): Boolean {
-        val eligibleAccounts = repository.getAccounts().filterNot { it.isOffline }
-        val proxyConfigs = eligibleAccounts.map { account ->
-            AppProxySettings.read(applicationContext, account.id)
-        }
-        return AccountExecutionModePolicy.shouldUseParallel(
-            requestedParallel = settings.parallelAccounts,
-            configs = proxyConfigs
-        )
-    }
+    private fun eligibleProxyConfigs() =
+        repository.getAccounts().filterNot { it.isOffline }.map { AppProxySettings.read(applicationContext, it.id) }
+
+    private fun allProxyRoutesCompatible(): Boolean =
+        AccountExecutionModePolicy.areProxyRoutesCompatible(eligibleProxyConfigs())
+
+    /**
+     * Одновременный запуск возможен всегда, если маршруты совпадают, а при разных маршрутах — когда
+     * устройство поддерживает рабочие процессы WebView (у каждого процесса свой прокси-override).
+     */
+    private fun effectiveParallelMode(settings: GlobalSettings): Boolean =
+        settings.parallelAccounts && (allProxyRoutesCompatible() || workersSupported)
 
     private suspend fun resetNetworkBetweenAccountsIfNeeded(
         accountId: String,
@@ -1432,7 +1487,8 @@ class MangaBuffForegroundService : Service() {
                         }
                     }
 
-                    if (webViews.containsKey(accountId)) {
+                    // WebView аккаунта из рабочего процесса не виден в реестре основного процесса.
+                    if (webViews.containsKey(accountId) || workerClient.isRunningInWorker(accountId)) {
                         missingWebViewSince.remove(accountId)
                         continue
                     }
@@ -1593,7 +1649,7 @@ class MangaBuffForegroundService : Service() {
         runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
         accountJobs.cancelFinishingAndRemove(accountId, "EXPLICIT_ACCOUNT_STOP")
         accountJobs.remove(accountId)?.cancel()
-        automationRunner.stopAccount(accountId)
+        stopAccountEverywhere(accountId)
         transitionAccountTaskState(accountId, AccountTaskEvent.STOPPED, "explicit_account_cleanup_complete")
         publishStatus(
             accountId,
@@ -1650,6 +1706,7 @@ class MangaBuffForegroundService : Service() {
         networkUnvalidatedGraceJobs.clear()
         missingWebViewSince.clear()
         automationRunner.stopAll(reason = if (explicitUserStop) "EXPLICIT_USER_STOP" else "INTERNAL_STOP")
+        workerClient.stopAll()
         ids.forEach { accountId ->
             transitionAccountTaskState(accountId, AccountTaskEvent.STOPPED, "stop_all_cleanup_complete")
         }
@@ -2308,6 +2365,7 @@ class MangaBuffForegroundService : Service() {
 
         serviceScope.cancel()
         automationRunner.stopAll(reason = "SERVICE_DESTROYED")
+        workerClient.shutdown()
 
         releaseWakeLockIfIdle(force = true)
 

@@ -19,7 +19,8 @@ class MultiAccountAutomationRunner(
     onWebViewAssigned: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     onWebViewCleared: (accountId: String, webView: WebView) -> Unit = { _, _ -> },
     onAccountRecoveryNeeded: (accountId: String) -> Unit = {},
-    onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> }
+    onMineBalanceUpdate: (accountId: String, oreBalance: Int) -> Unit = { _, _ -> },
+    persistUserAgentMigration: Boolean = true
 ) {
     private val runtime = AutomationRuntime(
         context,
@@ -32,7 +33,8 @@ class MultiAccountAutomationRunner(
         onWebViewAssigned,
         onWebViewCleared,
         onAccountRecoveryNeeded,
-        onMineBalanceUpdate
+        onMineBalanceUpdate,
+        persistUserAgentMigration
     )
     suspend fun runForAccount(
         account: MangaBuffAccount,

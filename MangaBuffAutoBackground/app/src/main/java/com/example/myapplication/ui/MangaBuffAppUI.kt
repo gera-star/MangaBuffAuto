@@ -1750,7 +1750,8 @@ fun TasksTab(
     val parallelProxyRoutesCompatible = AccountExecutionModePolicy.areProxyRoutesCompatible(
         accounts.filterNot { it.isOffline }.map { AppProxySettings.read(context, it.id) }
     )
-    val parallelModeActive = settings.parallelAccounts && parallelProxyRoutesCompatible
+    val workersSupported = remember { com.example.myapplication.worker.AutomationWorkerClient.isSupported(context) }
+    val parallelModeActive = settings.parallelAccounts && (parallelProxyRoutesCompatible || workersSupported)
 
     LazyColumn(
         modifier = Modifier
@@ -1827,12 +1828,12 @@ fun TasksTab(
                             enabled = !isRunning,
                             onClick = {
                                 val requestedParallel = !settings.parallelAccounts
-                                if (requestedParallel && !parallelProxyRoutesCompatible) {
+                                if (requestedParallel && !parallelProxyRoutesCompatible && !workersSupported) {
                                     Toast.makeText(
                                         context,
-                                        "Одновременный запуск невозможен с разными маршрутами прокси: " +
-                                            "у WebView ProxyController общий для процесса. " +
-                                            "Отключи прокси аккаунтов или задай всем одинаковые адрес и порт.",
+                                        "Разные прокси одновременно требуют Android 9+ и свежий Android System WebView " +
+                                            "(отдельные процессы WebView). На этом устройстве это недоступно: " +
+                                            "отключи прокси аккаунтов или задай всем одинаковые адрес и порт.",
                                         Toast.LENGTH_LONG
                                     ).show()
                                 } else {

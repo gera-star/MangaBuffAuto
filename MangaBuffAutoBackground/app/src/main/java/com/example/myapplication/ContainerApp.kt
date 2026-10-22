@@ -14,14 +14,19 @@ import com.example.myapplication.slot.SlotLauncher
 class ContainerApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        val slot = SlotLauncher.slotIndexOf(processNameCompat()) ?: return
+        val processName = processNameCompat()
+        // Вкладки-слоты (":slotN") и рабочие процессы автоматизации (":wN") — отдельные процессы
+        // WebView: у каждого свой каталог данных.
+        val suffix = SlotLauncher.slotIndexOf(processName)?.let { "slot$it" }
+            ?: processName?.substringAfter(":w", "")?.toIntOrNull()?.let { "w$it" }
+            ?: return
         if (WebViewFeature.isStartupFeatureSupported(
                 this,
                 WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX
             )
         ) {
             ProcessGlobalConfig.apply(
-                ProcessGlobalConfig().setDataDirectorySuffix(this, "slot$slot")
+                ProcessGlobalConfig().setDataDirectorySuffix(this, suffix)
             )
         }
         // Если функция не поддерживается, SlotActivity откажется грузить страницы (fail-closed):

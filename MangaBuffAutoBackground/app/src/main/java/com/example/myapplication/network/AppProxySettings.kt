@@ -50,7 +50,19 @@ object AppProxySettings {
 
     private fun scopedKey(key: String, accountId: String): String = "$key::$accountId"
 
+    /**
+     * Маршруты, заданные в памяти процесса. Рабочий процесс получает прокси аккаунта в сообщении
+     * основного процесса: SharedPreferences между процессами не синхронизируются и могут быть
+     * устаревшими.
+     */
+    private val processOverrides = java.util.concurrent.ConcurrentHashMap<String, AppProxyConfig>()
+
+    fun setProcessOverride(accountId: String, config: AppProxyConfig) {
+        processOverrides[accountId] = config
+    }
+
     fun read(context: Context, accountId: String): AppProxyConfig {
+        processOverrides[accountId]?.let { return it }
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return AppProxyConfig(
             enabled = prefs.getBoolean(scopedKey(KEY_ENABLED, accountId), false),

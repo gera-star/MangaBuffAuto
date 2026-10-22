@@ -94,6 +94,31 @@
             </intent-filter>
         </receiver>
 
+
+        <!-- Рабочий процесс 0: свой прокси-override и каталог данных WebView для одновременного запуска. -->
+        <service
+            android:name=".worker.AutomationWorker0"
+            android:process=":w0"
+            android:exported="false" />
+
+        <!-- Рабочий процесс 1: свой прокси-override и каталог данных WebView для одновременного запуска. -->
+        <service
+            android:name=".worker.AutomationWorker1"
+            android:process=":w1"
+            android:exported="false" />
+
+        <!-- Рабочий процесс 2: свой прокси-override и каталог данных WebView для одновременного запуска. -->
+        <service
+            android:name=".worker.AutomationWorker2"
+            android:process=":w2"
+            android:exported="false" />
+
+        <!-- Рабочий процесс 3: свой прокси-override и каталог данных WebView для одновременного запуска. -->
+        <service
+            android:name=".worker.AutomationWorker3"
+            android:process=":w3"
+            android:exported="false" />
+
         <service
             android:name=".service.MangaBuffForegroundService"
             android:foregroundServiceType="specialUse"
