@@ -209,7 +209,7 @@ class AutomationRuntime(
         onWebViewAssigned(account.id, runtime.webView)
 
         // Синхронизируем куки именно этого аккаунта
-        webViewStore.syncCookiesForAccount(account.id, runtime.profileName, account.getSafeCookiesJson())
+        webViewStore.syncCookiesForAccountAwait(account.id, runtime.profileName, account.getSafeCookiesJson())
 
         // Pre-run security checks
         val accountIdMatch = (account.id == activeAccountId)

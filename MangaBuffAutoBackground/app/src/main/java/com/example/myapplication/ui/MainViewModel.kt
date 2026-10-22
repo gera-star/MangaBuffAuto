@@ -606,7 +606,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     statusMessage = when {
                         acc.isOffline -> "OFFLINE — задачи остановлены, авторизация сохранена"
                         visibleStatus?.contains("Завершено") == true -> visibleStatus
-                        else -> "Остановка запрошена…"
+                        else -> "Останавливается…"
                     }
                 )
             }

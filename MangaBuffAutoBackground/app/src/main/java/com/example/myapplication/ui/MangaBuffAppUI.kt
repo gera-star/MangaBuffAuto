@@ -204,11 +204,7 @@ fun MangaBuffAppUI(
                     NavigationBarItem(
                         selected = debugWebViewVisible,
                         onClick = {
-                            if (webViewAccountIds.size > 1) {
-                                showWebViewAccountMenu = true
-                            } else if (webViewAccountIds.isNotEmpty()) {
-                                viewModel.setDebugWebViewVisible(true)
-                            }
+                            if (webViewAccountIds.isNotEmpty()) showWebViewAccountMenu = true
                         },
                         enabled = webViewAccountIds.isNotEmpty(),
                         icon = {
@@ -246,7 +242,6 @@ fun MangaBuffAppUI(
                                                     )
                                                     .clickable {
                                                         onSelectWebViewAccount(accountId)
-                                                        viewModel.setDebugWebViewVisible(true)
                                                         showWebViewAccountMenu = false
                                                     },
                                                 contentAlignment = Alignment.Center

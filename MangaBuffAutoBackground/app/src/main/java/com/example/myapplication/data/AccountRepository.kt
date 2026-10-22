@@ -68,7 +68,7 @@ class AccountRepository(context: Context) {
             val list: List<MangaBuffAccount>? = gson.fromJson(normalizedJson, type)
             list?.map { acc ->
                 val rawStatus = acc.getSafeStatusMessage()
-                val cleanStatus = if (acc.isRunning || rawStatus.contains("Инициализация") || rawStatus.contains("Башня") || rawStatus.contains("Реклама") || rawStatus.contains("Майнинг") || rawStatus.contains("Чтение") || rawStatus.contains("Комментарий")) {
+                val cleanStatus = if (acc.isRunning || rawStatus.contains("Остановка") || rawStatus.contains("Останавливается") || rawStatus.contains("Инициализация") || rawStatus.contains("Башня") || rawStatus.contains("Реклама") || rawStatus.contains("Майнинг") || rawStatus.contains("Чтение") || rawStatus.contains("Комментарий")) {
                     "Готов"
                 } else {
                     rawStatus
