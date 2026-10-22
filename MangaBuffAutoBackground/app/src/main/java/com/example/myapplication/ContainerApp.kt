@@ -12,25 +12,30 @@ import com.example.myapplication.slot.SlotLauncher
  * до первого обращения к android.webkit в процессе, то есть здесь.
  */
 class ContainerApp : Application() {
+    var isolatedWebViewProcessReady: Boolean = false
+        private set
+
     override fun onCreate() {
         super.onCreate()
         val processName = processNameCompat()
-        // Вкладки-слоты (":slotN") и рабочие процессы автоматизации (":wN") — отдельные процессы
-        // WebView: у каждого свой каталог данных.
+        // Slot, worker and account-viewer processes each get their own WebView data directory.
         val suffix = SlotLauncher.slotIndexOf(processName)?.let { "slot$it" }
             ?: processName?.substringAfter(":w", "")?.toIntOrNull()?.let { "w$it" }
+            ?: processName?.takeIf { it.endsWith(":webviewer") }?.let { "webviewer" }
             ?: return
-        if (WebViewFeature.isStartupFeatureSupported(
+        if (!WebViewFeature.isStartupFeatureSupported(
                 this,
                 WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX
             )
-        ) {
+        ) return
+
+        runCatching {
             ProcessGlobalConfig.apply(
                 ProcessGlobalConfig().setDataDirectorySuffix(this, suffix)
             )
+        }.onSuccess {
+            isolatedWebViewProcessReady = true
         }
-        // Если функция не поддерживается, SlotActivity откажется грузить страницы (fail-closed):
-        // общий каталог данных у разных процессов приведёт к конфликту и смешению данных.
     }
 
     private fun processNameCompat(): String? =
