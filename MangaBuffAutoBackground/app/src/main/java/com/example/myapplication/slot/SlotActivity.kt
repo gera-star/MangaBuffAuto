@@ -68,7 +68,7 @@ open class SlotActivity : ComponentActivity() {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
             return fail("WebView не поддерживает профили (MULTI_PROFILE).")
         }
-        if (!WebViewFeature.isStartupFeatureSupported(WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX, this)) {
+        if (!WebViewFeature.isStartupFeatureSupported(this, WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX)) {
             return fail("WebView не поддерживает отдельный каталог данных процесса.")
         }
         title = "Слот $slot — ${route.describe()}"

@@ -16,8 +16,8 @@ class ContainerApp : Application() {
         super.onCreate()
         val slot = SlotLauncher.slotIndexOf(processNameCompat()) ?: return
         if (WebViewFeature.isStartupFeatureSupported(
-                WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX,
-                this
+                this,
+                WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX
             )
         ) {
             ProcessGlobalConfig.apply(
