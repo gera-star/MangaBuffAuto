@@ -20,6 +20,9 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.ProfileStore
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
@@ -47,6 +50,8 @@ class AccountWebViewerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Keep the browser controls below the status bar and camera cutout on edge-to-edge devices.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         buildLayout()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -85,7 +90,20 @@ class AccountWebViewerActivity : ComponentActivity() {
         root.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         pageHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(pageHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val systemInsets = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.setPadding(
+                systemInsets.left,
+                systemInsets.top,
+                systemInsets.right,
+                systemInsets.bottom
+            )
+            insets
+        }
         setContentView(root)
+        ViewCompat.requestApplyInsets(root)
     }
 
     private fun openFromIntent(intent: Intent?) {
