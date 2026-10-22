@@ -1,10 +1,12 @@
 package com.example.myapplication.worker
 
 import android.app.Service
+import com.example.myapplication.ContainerApp
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -26,12 +28,16 @@ import com.example.myapplication.network.AppProxyConfig
 import com.example.myapplication.network.AppProxySettings
 import com.google.gson.Gson
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -54,7 +60,28 @@ open class AutomationWorkerService : Service() {
     private val runJobs = ConcurrentHashMap<String, Job>()
     private val routeMutex = Mutex()
     private var appliedRouteKey: String? = null
+    @Volatile private var activeRun: ActiveRun? = null
+    @Volatile private var activeRunner: MultiAccountAutomationRunner? = null
+    @Volatile private var poisoned = false
+    @Volatile private var routeStateUncertain = false
+    private var isolationReady = false
     private var screenRegistered = false
+
+    private data class ActiveRun(
+        val requestId: String,
+        val accountId: String,
+        val profileId: String,
+        val containerId: String,
+        val routeId: String,
+        val runId: String
+    )
+
+    private fun processContainerId(): String =
+        if (Build.VERSION.SDK_INT >= 28) {
+            android.app.Application.getProcessName().substringAfterLast(':')
+        } else {
+            "unknown"
+        }
 
     @Volatile
     private var client: Messenger? = null
@@ -68,13 +95,38 @@ open class AutomationWorkerService : Service() {
         }
     }
 
-    private val runner: MultiAccountAutomationRunner by lazy {
+    private fun emitRunEvent(
+        run: ActiveRun,
+        what: Int,
+        eventAccountId: String,
+        fill: Bundle.() -> Unit = {}
+    ) {
+        emit(what) {
+            putString(WorkerProtocol.K_REQ, run.requestId)
+            putString(WorkerProtocol.K_ACCOUNT_ID, eventAccountId)
+            putString(WorkerProtocol.K_RUN_ID, run.runId)
+            putString(WorkerProtocol.K_PROFILE_ID, run.profileId)
+            putString(WorkerProtocol.K_CONTAINER_ID, run.containerId)
+            putString(WorkerProtocol.K_ROUTE_ID, run.routeId)
+            fill()
+        }
+    }
+
+    private fun createRunner(run: ActiveRun): MultiAccountAutomationRunner =
         MultiAccountAutomationRunner(
             context = applicationContext,
-            onLog = { entry -> emit(WorkerProtocol.EV_LOG) { putString(WorkerProtocol.K_JSON, gson.toJson(trim(entry))) } },
+            onLog = { entry ->
+                emit(WorkerProtocol.EV_LOG) {
+                    putString(WorkerProtocol.K_REQ, run.requestId)
+                    putString(WorkerProtocol.K_RUN_ID, run.runId)
+                    putString(WorkerProtocol.K_PROFILE_ID, run.profileId)
+                    putString(WorkerProtocol.K_CONTAINER_ID, run.containerId)
+                    putString(WorkerProtocol.K_ROUTE_ID, run.routeId)
+                    putString(WorkerProtocol.K_JSON, gson.toJson(trim(entry)))
+                }
+            },
             onAccountStatusUpdate = { id, status, running, task, progress ->
-                emit(WorkerProtocol.EV_STATUS) {
-                    putString(WorkerProtocol.K_ACCOUNT_ID, id)
+                emitRunEvent(run, WorkerProtocol.EV_STATUS, id) {
                     putString(WorkerProtocol.K_STR1, status.take(WorkerProtocol.MAX_TEXT))
                     putBoolean(WorkerProtocol.K_BOOL, running)
                     putString(WorkerProtocol.K_STR2, task)
@@ -82,15 +134,13 @@ open class AutomationWorkerService : Service() {
                 }
             },
             onMangaActiveUrlUpdate = { id, url, title ->
-                emit(WorkerProtocol.EV_MANGA) {
-                    putString(WorkerProtocol.K_ACCOUNT_ID, id)
+                emitRunEvent(run, WorkerProtocol.EV_MANGA, id) {
                     putString(WorkerProtocol.K_STR1, url)
                     putString(WorkerProtocol.K_STR2, title)
                 }
             },
             onAccountStatsUpdate = { id, diamonds, cardDrop, chapters, comments, candies ->
-                emit(WorkerProtocol.EV_STATS) {
-                    putString(WorkerProtocol.K_ACCOUNT_ID, id)
+                emitRunEvent(run, WorkerProtocol.EV_STATS, id) {
                     putString(WorkerProtocol.K_STR1, diamonds)
                     putString(WorkerProtocol.K_STR2, cardDrop)
                     putString(WorkerProtocol.K_STR3, chapters)
@@ -99,31 +149,57 @@ open class AutomationWorkerService : Service() {
                 }
             },
             onDailyStatsUpdate = { id, stats ->
-                emit(WorkerProtocol.EV_DAILY) {
-                    putString(WorkerProtocol.K_ACCOUNT_ID, id)
+                emitRunEvent(run, WorkerProtocol.EV_DAILY, id) {
                     putString(WorkerProtocol.K_JSON, gson.toJson(stats))
                 }
             },
             onTowerExpeditionEndsAtUpdate = { id, endsAt ->
-                emit(WorkerProtocol.EV_TOWER) {
-                    putString(WorkerProtocol.K_ACCOUNT_ID, id)
+                emitRunEvent(run, WorkerProtocol.EV_TOWER, id) {
                     putLong(WorkerProtocol.K_LONG, endsAt)
                 }
             },
             onWebViewAssigned = { _, _ -> },
             onWebViewCleared = { _, _ -> },
             onAccountRecoveryNeeded = { id ->
-                emit(WorkerProtocol.EV_RECOVERY) { putString(WorkerProtocol.K_ACCOUNT_ID, id) }
+                emitRunEvent(run, WorkerProtocol.EV_RECOVERY, id)
             },
             onMineBalanceUpdate = { id, ore ->
-                emit(WorkerProtocol.EV_MINE) {
-                    putString(WorkerProtocol.K_ACCOUNT_ID, id)
+                emitRunEvent(run, WorkerProtocol.EV_MINE, id) {
                     putInt(WorkerProtocol.K_INT, ore)
                 }
             },
-            // Рабочий не пишет аккаунты на диск (см. описание класса).
+            // The main process remains the single owner of the account database.
             persistUserAgentMigration = false
         )
+
+    private fun emitStopped(run: ActiveRun, reason: String) {
+        emitRunEvent(run, WorkerProtocol.EV_STOPPED, run.accountId) {
+            putBoolean(WorkerProtocol.K_STOP_CONFIRMED, true)
+            putString(WorkerProtocol.K_STOP_REASON, reason)
+        }
+    }
+
+    private fun emitResult(run: ActiveRun, success: Boolean, errorClass: String = "", errorMessage: String = "") {
+        emitRunEvent(run, WorkerProtocol.EV_RESULT, run.accountId) {
+            putBoolean(WorkerProtocol.K_OK, success)
+            putString(WorkerProtocol.K_ERR_CLASS, errorClass)
+            putString(WorkerProtocol.K_ERR_MSG, errorMessage.take(2_000))
+        }
+    }
+
+    private fun runIdentityFromCommand(data: Bundle): ActiveRun = ActiveRun(
+        requestId = data.getString(WorkerProtocol.K_REQ).orEmpty(),
+        accountId = data.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty(),
+        profileId = data.getString(WorkerProtocol.K_PROFILE_ID).orEmpty(),
+        containerId = data.getString(WorkerProtocol.K_CONTAINER_ID).orEmpty(),
+        routeId = data.getString(WorkerProtocol.K_ROUTE_ID).orEmpty(),
+        runId = data.getString(WorkerProtocol.K_RUN_ID).orEmpty()
+    )
+
+    private fun emitStoppedForAlreadyClosedRun(data: Bundle) {
+        val requested = runIdentityFromCommand(data)
+        if (requested.requestId.isBlank() || requested.runId.isBlank() || poisoned) return
+        emitStopped(requested, "ALREADY_CLOSED")
     }
 
     private val handler = Handler(Looper.getMainLooper()) { msg ->
@@ -144,6 +220,8 @@ open class AutomationWorkerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isolationReady = (application as? ContainerApp)?.isolatedWebViewProcessReady == true
+        if (!isolationReady) poisoned = true
         val power = getSystemService(POWER_SERVICE) as PowerManager
         BackgroundExecutionState.setScreenOff(!power.isInteractive)
         ContextCompat.registerReceiver(
@@ -176,9 +254,8 @@ open class AutomationWorkerService : Service() {
     }
 
     private fun stopEverything() {
-        runJobs.values.forEach { it.cancel() }
-        runJobs.clear()
-        runCatching { runner.stopAll("WORKER_UNBOUND") }
+        runJobs.values.toList().forEach { it.cancel() }
+        runCatching { activeRunner?.stopAll("WORKER_UNBOUND") }
     }
 
     private fun handleCommand(msg: Message) {
@@ -186,45 +263,97 @@ open class AutomationWorkerService : Service() {
         when (msg.what) {
             WorkerProtocol.CMD_RUN -> startRun(d)
             WorkerProtocol.CMD_STOP_ACCOUNT -> {
-                val id = d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty()
-                runJobs.remove(id)?.cancel()
-                runner.stopAccount(id)
+                val requested = runIdentityFromCommand(d)
+                val current = activeRun
+                when {
+                    current == null && !poisoned -> emitStoppedForAlreadyClosedRun(d)
+                    current?.accountId == requested.accountId && current.runId == requested.runId -> {
+                        // The run's finally block closes its runtime before it sends EV_STOPPED.
+                        runJobs[current.accountId]?.cancel()
+                    }
+                    else -> {
+                        // A stale STOP must never stop a newer run. No ack means the requester
+                        // will quarantine its lease rather than assume this process is clean.
+                        emit(WorkerProtocol.EV_LOG) {
+                            putString(WorkerProtocol.K_JSON, gson.toJson(
+                                LogEntry(component = "WORKER", message = "STALE_STOP_IGNORED requestedRunId=${requested.runId}", isError = true)
+                            ))
+                        }
+                    }
+                }
             }
             WorkerProtocol.CMD_STOP_ALL -> stopEverything()
-            WorkerProtocol.CMD_SKIP_MANGA -> runner.skipCurrentManga(d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty())
-            WorkerProtocol.CMD_MARK_READ -> runner.markCurrentMangaAsRead(d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty())
-            WorkerProtocol.CMD_DECK_TOGGLE ->
-                DeckCommentToggleRegistry.setEnabled(
-                    d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty(),
-                    d.getBoolean(WorkerProtocol.K_BOOL)
-                )
-            WorkerProtocol.CMD_RELOAD ->
-                gson.fromJson(d.getString(WorkerProtocol.K_ACCOUNT_JSON), MangaBuffAccount::class.java)
-                    ?.let { runner.reloadAccount(it) }
+            WorkerProtocol.CMD_SKIP_MANGA -> activeRunner?.skipCurrentManga(d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty())
+            WorkerProtocol.CMD_MARK_READ -> activeRunner?.markCurrentMangaAsRead(d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty())
+            WorkerProtocol.CMD_DECK_TOGGLE -> DeckCommentToggleRegistry.setEnabled(
+                d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty(), d.getBoolean(WorkerProtocol.K_BOOL)
+            )
+            WorkerProtocol.CMD_RELOAD -> gson.fromJson(
+                d.getString(WorkerProtocol.K_ACCOUNT_JSON), MangaBuffAccount::class.java
+            )?.let { activeRunner?.reloadAccount(it) }
         }
     }
 
     private fun startRun(d: Bundle) {
         val reqId = d.getString(WorkerProtocol.K_REQ).orEmpty()
-        val account = gson.fromJson(d.getString(WorkerProtocol.K_ACCOUNT_JSON), MangaBuffAccount::class.java)
-        val settings = gson.fromJson(d.getString(WorkerProtocol.K_SETTINGS_JSON), GlobalSettings::class.java)
-        val proxy = gson.fromJson(d.getString(WorkerProtocol.K_PROXY_JSON), AppProxyConfig::class.java) ?: AppProxyConfig()
-        val taskType = TaskType.valueOf(d.getString(WorkerProtocol.K_TASK).orEmpty())
+        val runId = d.getString(WorkerProtocol.K_RUN_ID).orEmpty()
+        val account = runCatching { gson.fromJson(d.getString(WorkerProtocol.K_ACCOUNT_JSON), MangaBuffAccount::class.java) }.getOrNull()
+        val settings = runCatching { gson.fromJson(d.getString(WorkerProtocol.K_SETTINGS_JSON), GlobalSettings::class.java) }.getOrNull()
+        val proxy = runCatching { gson.fromJson(d.getString(WorkerProtocol.K_PROXY_JSON), AppProxyConfig::class.java) }.getOrNull() ?: AppProxyConfig()
+        val taskType = runCatching { TaskType.valueOf(d.getString(WorkerProtocol.K_TASK).orEmpty()) }.getOrNull()
+        if (reqId.isBlank() || runId.isBlank() || account == null || settings == null || taskType == null) {
+            emit(WorkerProtocol.EV_RESULT) {
+                putString(WorkerProtocol.K_REQ, reqId)
+                putString(WorkerProtocol.K_RUN_ID, runId)
+                putString(WorkerProtocol.K_ACCOUNT_ID, account?.id.orEmpty())
+                putBoolean(WorkerProtocol.K_OK, false)
+                putString(WorkerProtocol.K_ERR_CLASS, "INVALID_RUN_REQUEST")
+                putString(WorkerProtocol.K_ERR_MSG, "Required run fields are missing or invalid.")
+            }
+            return
+        }
+        val incoming = ActiveRun(
+            reqId, account.id,
+            d.getString(WorkerProtocol.K_PROFILE_ID).orEmpty(),
+            d.getString(WorkerProtocol.K_CONTAINER_ID).orEmpty(),
+            d.getString(WorkerProtocol.K_ROUTE_ID).orEmpty(),
+            runId
+        )
+        if (!isolationReady || poisoned || routeStateUncertain) {
+            poisoned = true
+            emitResult(incoming, false, "WORKER_QUARANTINED", "Isolation or proxy state is not safe for reuse.")
+            return
+        }
+        if (incoming.profileId != "mb_${account.id}" ||
+            incoming.containerId != processContainerId() || incoming.routeId.isBlank()
+        ) {
+            emitResult(incoming, false, "RUN_IDENTITY_MISMATCH", "Worker identity did not match the reserved lease.")
+            return
+        }
+        val current = activeRun
+        if (current != null) {
+            if (current.requestId == reqId && current.runId == runId) return // duplicate RUN is idempotent
+            emitResult(incoming, false, "WORKER_BUSY", "Worker already owns another active run.")
+            return
+        }
+
+        activeRun = incoming
         val promo = d.getString(WorkerProtocol.K_PROMO).orEmpty()
         val resume = d.getBoolean(WorkerProtocol.K_RESUME)
-
-        // SharedPreferences этого процесса могут быть устаревшими: маршрут берём из сообщения.
-        AppProxySettings.setProcessOverride(account.id, proxy)
-
-        runJobs.remove(account.id)?.cancel()
-        val job = scope.launch {
+        lateinit var job: Job
+        job = scope.launch(start = CoroutineStart.LAZY) {
+            val runRunner = createRunner(incoming)
+            activeRunner = runRunner
             var ok = false
             var errClass = ""
             var errMsg = ""
+            var cleanupConfirmed = false
             try {
+                proxy.validateForRouting()
+                AppProxySettings.setProcessOverride(account.id, proxy)
                 ensureRoute(proxy)
                 DeckCommentToggleRegistry.initializeIfAbsent(account.id, account.deckCommentEnabled)
-                runner.runForAccount(account, settings, taskType, promo, resume)
+                runRunner.runForAccount(account, settings, taskType, promo, resume)
                 ok = true
             } catch (e: CancellationException) {
                 errClass = "CancellationException"
@@ -234,17 +363,41 @@ open class AutomationWorkerService : Service() {
                 errClass = e.javaClass.simpleName
                 errMsg = e.message.orEmpty()
             } finally {
-                emit(WorkerProtocol.EV_RESULT) {
-                    putString(WorkerProtocol.K_REQ, reqId)
-                    putString(WorkerProtocol.K_ACCOUNT_ID, account.id)
-                    putBoolean(WorkerProtocol.K_OK, ok)
-                    putString(WorkerProtocol.K_ERR_CLASS, errClass)
-                    putString(WorkerProtocol.K_ERR_MSG, errMsg.take(2_000))
+                try {
+                    withContext(NonCancellable) {
+                        runRunner.stopAccount(account.id)
+                        runRunner.closeAllWebViews()
+                    }
+                    cleanupConfirmed = !poisoned && !routeStateUncertain
+                } catch (e: Exception) {
+                    poisoned = true
+                    errClass = "STOP_CLEANUP_FAILED"
+                    errMsg = e.javaClass.simpleName
                 }
+                if (cleanupConfirmed) {
+                    emitStopped(incoming, if (ok) "RUN_FINISHED_AND_WEBVIEW_DESTROYED" else "RUN_FAILED_AND_WEBVIEW_DESTROYED")
+                } else {
+                    poisoned = true
+                    emit(WorkerProtocol.EV_LOG) {
+                        putString(WorkerProtocol.K_JSON, gson.toJson(
+                            LogEntry(component = "WORKER", message = "STOP_NOT_CONFIRMED runId=$runId; worker quarantined", isError = true)
+                        ))
+                    }
+                    errClass = "WORKER_QUARANTINED"
+                    errMsg = "Runtime/WebView stop or process proxy state could not be confirmed."
+                }
+                emitResult(incoming, ok && cleanupConfirmed, errClass, errMsg)
+                if (activeRunner === runRunner) activeRunner = null
+                if (activeRun?.runId == runId && activeRun?.requestId == reqId) activeRun = null
+                runJobs.remove(account.id, job)
             }
         }
         runJobs[account.id] = job
-        job.invokeOnCompletion { runJobs.remove(account.id, job) }
+        job.invokeOnCompletion {
+            runJobs.remove(account.id, job)
+            if (activeRun?.runId == runId && activeRun?.requestId == reqId && poisoned) activeRun = null
+        }
+        job.start()
     }
 
     /**
@@ -254,18 +407,48 @@ open class AutomationWorkerService : Service() {
      * активных аккаунтов.
      */
     private suspend fun ensureRoute(proxy: AppProxyConfig) {
-        val key = if (proxy.isEnabledAndValid()) "proxy:${proxy.host.trim().lowercase()}:${proxy.port}" else "system"
+        proxy.validateForRouting()
+        AppProxySettings.requireWebViewProxyStateCertain()
+        val key = if (proxy.enabled) "proxy:${proxy.host.trim().lowercase(java.util.Locale.ROOT)}:${proxy.port}" else "system"
         routeMutex.withLock {
             if (appliedRouteKey == key) return
-            suspendCancellableCoroutine<Unit> { cont ->
-                AppProxySettings.applyWebViewProxy(applicationContext, proxy) { success, message ->
-                    if (!cont.isActive) return@applyWebViewProxy
-                    if (success) cont.resume(Unit)
-                    else cont.resumeWithException(IllegalStateException("PROXY_APPLY_FAILED: $message"))
+            try {
+                withTimeout(PROXY_APPLY_TIMEOUT_MS) {
+                    suspendCancellableCoroutine<Unit> { cont ->
+                        cont.invokeOnCancellation {
+                            routeStateUncertain = true
+                            poisoned = true
+                            AppProxySettings.markWebViewProxyStateUncertain()
+                            appliedRouteKey = null
+                        }
+                        AppProxySettings.applyWebViewProxy(applicationContext, proxy) { success, message ->
+                            if (!cont.isActive) return@applyWebViewProxy
+                            if (success) {
+                                cont.resume(Unit)
+                            } else {
+                                routeStateUncertain = true
+                                poisoned = true
+                                AppProxySettings.markWebViewProxyStateUncertain()
+                                cont.resumeWithException(IllegalStateException("PROXY_APPLY_FAILED: $message"))
+                            }
+                        }
+                    }
                 }
+            } catch (e: Exception) {
+                appliedRouteKey = null
+                if (e is CancellationException) {
+                    routeStateUncertain = true
+                    poisoned = true
+                    AppProxySettings.markWebViewProxyStateUncertain()
+                }
+                throw e
             }
             appliedRouteKey = key
         }
+    }
+
+    private companion object {
+        const val PROXY_APPLY_TIMEOUT_MS = 15_000L
     }
 
     private fun trim(entry: LogEntry): LogEntry =

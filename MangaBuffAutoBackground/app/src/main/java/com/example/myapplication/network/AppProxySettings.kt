@@ -32,6 +32,11 @@ data class AppProxyConfig(
             port in 1..65535
 
     fun isEnabledAndValid(): Boolean = enabled && isValid()
+
+    /** Reject a malformed required proxy instead of treating it as the system/direct route. */
+    fun validateForRouting() {
+        if (enabled && !isValid()) throw IllegalArgumentException("PROXY_CONFIG_INVALID")
+    }
 }
 
 /**
@@ -47,6 +52,16 @@ object AppProxySettings {
     private const val KEY_PORT = "port"
     private const val KEY_USERNAME = "username"
     private const val KEY_PASSWORD = "password"
+    private val proxyOverrideStateUncertain = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** ProxyController has no cancellation API; after a timed-out change this process must not run another account. */
+    fun markWebViewProxyStateUncertain() {
+        proxyOverrideStateUncertain.set(true)
+    }
+
+    fun requireWebViewProxyStateCertain() {
+        check(!proxyOverrideStateUncertain.get()) { "WEBVIEW_PROXY_STATE_UNCERTAIN_PROCESS_RESTART_REQUIRED" }
+    }
 
     private fun scopedKey(key: String, accountId: String): String = "$key::$accountId"
 
@@ -110,6 +125,8 @@ object AppProxySettings {
         val appContext = context.applicationContext
         val executor = ContextCompat.getMainExecutor(appContext)
         try {
+            config.validateForRouting()
+            requireWebViewProxyStateCertain()
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
                 if (config.enabled) {
                     onComplete(false, "Эта версия Android System WebView не поддерживает прокси приложения.")
@@ -152,9 +169,13 @@ object AppProxySettings {
 
         builder.proxySelector(object : ProxySelector() {
             override fun select(uri: URI?): List<Proxy> {
-                if (uri == null) return listOf(Proxy.NO_PROXY)
                 val current = read(appContext, accountId)
-                if (!current.isEnabledAndValid()) {
+                current.validateForRouting()
+                if (uri == null) {
+                    if (current.enabled) throw IllegalStateException("PROXY_URI_MISSING")
+                    return listOf(Proxy.NO_PROXY)
+                }
+                if (!current.enabled) {
                     return systemSelector?.select(uri) ?: listOf(Proxy.NO_PROXY)
                 }
                 return try {
@@ -180,9 +201,10 @@ object AppProxySettings {
 
         builder.proxyAuthenticator(Authenticator { route, response ->
             val current = read(appContext, accountId)
+            current.validateForRouting()
             val proxyRoute = route?.proxy?.type() == Proxy.Type.HTTP
             if (
-                !current.isEnabledAndValid() ||
+                !current.enabled ||
                 current.username.isBlank() ||
                 !proxyRoute ||
                 response.request.header("Proxy-Authorization") != null ||

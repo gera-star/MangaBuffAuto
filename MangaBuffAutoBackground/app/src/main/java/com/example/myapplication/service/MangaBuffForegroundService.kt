@@ -134,6 +134,7 @@ class MangaBuffForegroundService : Service() {
         private const val KEY_TOWER_CYCLE_ENDS = "tower_cycle_ends"
         private const val KEY_PENDING_PROFILE_DELETES = "pending_profile_deletes"
         private const val WATCHDOG_INTERVAL_MS = 15_000L
+        private const val PROXY_APPLY_TIMEOUT_MS = 15_000L
         private const val WATCHDOG_MISSING_WEBVIEW_GRACE_MS = 30_000L
         private const val WAKELOCK_TIMEOUT_MS = 2 * 60_000L
         private const val WAKELOCK_RENEW_INTERVAL_MS = 60_000L
@@ -387,23 +388,39 @@ class MangaBuffForegroundService : Service() {
         account: MangaBuffAccount,
         proxyConfig: com.example.myapplication.network.AppProxyConfig
     ) {
-        suspendCancellableCoroutine<Unit> { continuation ->
-            AppProxySettings.applyWebViewProxy(applicationContext, proxyConfig) { success, message ->
-                publishLog(
-                    LogEntry(
-                        username = account.username,
-                        component = "PROXY",
-                        message = "ACCOUNT_PROXY_APPLY accountId=${account.id} enabled=${proxyConfig.enabled} success=$success detail=$message",
-                        isError = !success
-                    )
-                )
-                if (!continuation.isActive) return@applyWebViewProxy
-                if (success) {
-                    continuation.resume(Unit)
-                } else {
-                    continuation.resumeWithException(IllegalStateException(message))
+        AppProxySettings.requireWebViewProxyStateCertain()
+        try {
+            withTimeout(PROXY_APPLY_TIMEOUT_MS) {
+                suspendCancellableCoroutine<Unit> { continuation ->
+                    continuation.invokeOnCancellation {
+                        // A pending ProxyController change cannot be cancelled. Block this process
+                        // from starting another account if the callback never confirms completion.
+                        AppProxySettings.markWebViewProxyStateUncertain()
+                    }
+                    AppProxySettings.applyWebViewProxy(applicationContext, proxyConfig) { success, message ->
+                        publishLog(
+                            LogEntry(
+                                username = account.username,
+                                component = "PROXY",
+                                message = "ACCOUNT_PROXY_APPLY accountId=${account.id} enabled=${proxyConfig.enabled} success=$success detail=$message",
+                                isError = !success
+                            )
+                        )
+                        if (!continuation.isActive) return@applyWebViewProxy
+                        if (success) {
+                            continuation.resume(Unit)
+                        } else {
+                            AppProxySettings.markWebViewProxyStateUncertain()
+                            continuation.resumeWithException(IllegalStateException(message))
+                        }
+                    }
                 }
             }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+                AppProxySettings.markWebViewProxyStateUncertain()
+            }
+            throw e
         }
     }
 
@@ -766,7 +783,7 @@ class MangaBuffForegroundService : Service() {
                             username = account.username,
                             component = "QUEUE",
                             message = "ACCOUNT_PARALLEL_BLOCKED " +
-                                "reason=WORKER_PROCESSES_UNSUPPORTED_ON_THIS_DEVICE; using queue"
+                                "reason=STRICT_SERIAL_MODE_ENABLED; using queue"
                         )
                     )
                 }
@@ -820,11 +837,18 @@ class MangaBuffForegroundService : Service() {
                 // Snapshot the route once so the gate key and the actual WebView override cannot diverge
                 // if the user edits proxy settings while this task is waiting.
                 val proxyConfigForRun = AppProxySettings.read(applicationContext, accountId)
+                proxyConfigForRun.validateForRouting()
                 val proxyRouteKey = AccountExecutionModePolicy.proxyRouteKey(proxyConfigForRun)
                 if (useWorkers) {
                     if (currentJob != null) accountExecutionQueue.markWaitingForSharedGate(accountId, currentJob)
                     publishStatus(accountId, "Ожидание рабочего процесса для маршрута прокси...", true, taskType.title, 0f)
-                    val lease = workerClient.pool.acquire(proxyRouteKey)
+                    val runId = java.util.UUID.randomUUID().toString()
+                    val lease = workerClient.pool.acquire(
+                        accountId = accountId,
+                        profileId = "mb_$accountId",
+                        route = proxyRouteKey,
+                        runId = runId
+                    )
                     workerLease = lease
                     if (currentJob != null) accountExecutionQueue.markAcquired(accountId, currentJob)
                     publishStatus(accountId, "Подготовка...", true, taskType.title, 0f)
@@ -1321,7 +1345,12 @@ class MangaBuffForegroundService : Service() {
      * устройство поддерживает рабочие процессы WebView (у каждого процесса свой прокси-override).
      */
     private fun effectiveParallelMode(settings: GlobalSettings): Boolean =
-        settings.parallelAccounts && (allProxyRoutesCompatible() || workersSupported)
+        if (AccountExecutionModePolicy.STRICT_SERIAL_MODE) false
+        else AccountExecutionModePolicy.shouldUseParallel(
+            requestedParallel = settings.parallelAccounts,
+            configs = eligibleProxyConfigs(),
+            workersSupported = workersSupported
+        )
 
     private suspend fun resetNetworkBetweenAccountsIfNeeded(
         accountId: String,

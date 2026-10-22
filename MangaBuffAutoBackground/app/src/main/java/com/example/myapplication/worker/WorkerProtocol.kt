@@ -23,8 +23,15 @@ internal object WorkerProtocol {
     const val EV_MINE = 107
     const val EV_RECOVERY = 108
     const val EV_RESULT = 109
+    const val EV_STOPPED = 110
 
     const val K_REQ = "req"
+    const val K_RUN_ID = "runId"
+    const val K_PROFILE_ID = "profileId"
+    const val K_CONTAINER_ID = "containerId"
+    const val K_ROUTE_ID = "routeId"
+    const val K_STOP_CONFIRMED = "stopConfirmed"
+    const val K_STOP_REASON = "stopReason"
     const val K_ACCOUNT_ID = "accountId"
     const val K_ACCOUNT_JSON = "accountJson"
     const val K_SETTINGS_JSON = "settingsJson"

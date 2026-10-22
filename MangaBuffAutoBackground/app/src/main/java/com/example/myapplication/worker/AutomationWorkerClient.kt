@@ -24,11 +24,13 @@ import com.example.myapplication.data.TaskType
 import com.example.myapplication.network.AppProxyConfig
 import com.google.gson.Gson
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -70,7 +72,17 @@ internal class AutomationWorkerClient(
                 WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)
     }
 
-    private class Pending(val accountId: String, val worker: Int, val result: CompletableDeferred<Bundle>)
+    private class Pending(
+        val requestId: String,
+        val accountId: String,
+        val worker: Int,
+        val runId: String,
+        val profileId: String,
+        val containerId: String,
+        val routeId: String,
+        val result: CompletableDeferred<Bundle>,
+        val stopped: CompletableDeferred<Bundle>
+    )
     private class Conn(val index: Int) {
         @Volatile var messenger: Messenger? = null
         var connected: CompletableDeferred<Messenger>? = null
@@ -83,6 +95,8 @@ internal class AutomationWorkerClient(
     private val conns = List(WorkerProtocol.WORKER_COUNT) { Conn(it) }
     private val pending = ConcurrentHashMap<String, Pending>()
     private val activeWorkerByAccount = ConcurrentHashMap<String, Int>()
+    private val activePendingByAccount = ConcurrentHashMap<String, Pending>()
+    private val stopAckTimeoutMs = 10_000L
     private val replyHandler = Handler(Looper.getMainLooper()) { msg ->
         handleEvent(msg)
         true
@@ -117,6 +131,7 @@ internal class AutomationWorkerClient(
             onLog(LogEntry(username = p.accountId, component = "WORKER", message = reason, isError = true))
             onRecovery(p.accountId)
             p.result.completeExceptionally(WorkerDiedException(reason))
+            p.stopped.completeExceptionally(WorkerDiedException(reason))
         }
     }
 
@@ -145,7 +160,7 @@ internal class AutomationWorkerClient(
         }
     }
 
-    /** Выполняет задачу аккаунта в рабочем процессе [lease]. Завершается, когда задача окончена. */
+    /** Run succeeds or fails only after a matching worker stop acknowledgement is received. */
     suspend fun runForAccount(
         lease: WorkerSlotPool.Lease,
         account: MangaBuffAccount,
@@ -157,25 +172,28 @@ internal class AutomationWorkerClient(
     ) {
         val index = lease.index
         val messenger = messengerOf(index)
-        // Worker WebView storage is separate; ship the newest cookies from the main-process profile.
         val dispatchAccount = account.copy(
             cookiesJson = latestProfileCookieHeader(account.id, account.getSafeCookiesJson())
         )
-        if (dispatchAccount.getSafeCookiesJson() != account.getSafeCookiesJson()) {
-            onLog(
-                LogEntry(
-                    username = account.username,
-                    component = "PROFILE",
-                    message = "WORKER_COOKIE_SNAPSHOT_REFRESHED accountId=${account.id} source=MAIN_PROFILE"
-                )
-            )
-        }
         val reqId = UUID.randomUUID().toString()
-        val entry = Pending(account.id, index, CompletableDeferred())
+        val entry = Pending(
+            requestId = reqId,
+            accountId = account.id,
+            worker = index,
+            runId = lease.runId,
+            profileId = lease.profileId,
+            containerId = lease.containerId,
+            routeId = lease.route,
+            result = CompletableDeferred(),
+            stopped = CompletableDeferred()
+        )
+        if (activePendingByAccount.putIfAbsent(account.id, entry) != null) {
+            lease.quarantine("ACCOUNT_ALREADY_ACTIVE_IN_WORKER_CLIENT")
+            throw WorkerDiedException("ACCOUNT_ALREADY_ACTIVE_IN_WORKER_CLIENT")
+        }
         pending[reqId] = entry
         activeWorkerByAccount[account.id] = index
 
-        // Переключатель комментариев колод меняется в UI основного процесса — пересылаем в рабочий.
         val deckJob: Job = scope.launch {
             DeckCommentToggleRegistry.stateFor(account.id, account.deckCommentEnabled).collect { snapshot ->
                 send(index, WorkerProtocol.CMD_DECK_TOGGLE) {
@@ -188,14 +206,15 @@ internal class AutomationWorkerClient(
             LogEntry(
                 username = account.username,
                 component = "WORKER",
-                message = "RUN_DISPATCHED accountId=${account.id} worker=$index route=${lease.route} task=${taskType.title}"
+                message = "RUN_DISPATCHED accountId=${account.id} worker=$index route=${lease.route} runId=${lease.runId} task=${taskType.title}"
             )
         )
-        val result: Bundle = try {
+
+        try {
             val message = Message.obtain(null, WorkerProtocol.CMD_RUN)
             message.replyTo = reply
             message.data = Bundle().apply {
-                putString(WorkerProtocol.K_REQ, reqId)
+                putRunIdentity(entry)
                 putString(WorkerProtocol.K_ACCOUNT_JSON, gson.toJson(dispatchAccount))
                 putString(WorkerProtocol.K_SETTINGS_JSON, gson.toJson(settings))
                 putString(WorkerProtocol.K_PROXY_JSON, gson.toJson(proxy))
@@ -205,35 +224,67 @@ internal class AutomationWorkerClient(
             }
             try {
                 messenger.send(message)
-            } catch (e: RemoteException) {
-                throw WorkerDiedException("WORKER_SEND_FAILED worker=$index: ${e.message}")
+            } catch (_: RemoteException) {
+                lease.quarantine("WORKER_SEND_FAILED")
+                throw WorkerDiedException("WORKER_SEND_FAILED worker=$index")
             }
-            entry.result.await()
+
+            val result = entry.result.await()
+            val errorClass = result.getString(WorkerProtocol.K_ERR_CLASS).orEmpty()
+            if (errorClass in setOf("WORKER_BUSY", "WORKER_QUARANTINED", "RUN_IDENTITY_MISMATCH")) {
+                lease.quarantine(errorClass)
+                throw WorkerDiedException("$errorClass worker=$index")
+            }
+            val stopped = withTimeout(stopAckTimeoutMs) { entry.stopped.await() }
+            if (!stopped.getBoolean(WorkerProtocol.K_STOP_CONFIRMED)) {
+                lease.quarantine("STOP_NOT_CONFIRMED")
+                throw WorkerDiedException("STOP_NOT_CONFIRMED worker=$index")
+            }
+            lease.markVerifiedClosed()
+
+            if (!result.getBoolean(WorkerProtocol.K_OK)) {
+                val msg = result.getString(WorkerProtocol.K_ERR_MSG).orEmpty()
+                when (errorClass) {
+                    "CancellationException" -> throw CancellationException(msg)
+                    "IncompleteTaskSequenceException" -> throw IncompleteTaskSequenceException(msg)
+                    else -> throw IllegalStateException(msg.ifBlank { errorClass })
+                }
+            }
         } catch (e: CancellationException) {
-            send(index, WorkerProtocol.CMD_STOP_ACCOUNT) { putString(WorkerProtocol.K_ACCOUNT_ID, account.id) }
+            var stopFailure: String? = null
+            withContext(NonCancellable) {
+                val sent = send(index, WorkerProtocol.CMD_STOP_ACCOUNT) { putRunIdentity(entry) }
+                if (!sent) {
+                    stopFailure = "STOP_COMMAND_FAILED"
+                } else {
+                    try {
+                        val stopped = withTimeout(stopAckTimeoutMs) { entry.stopped.await() }
+                        if (!stopped.getBoolean(WorkerProtocol.K_STOP_CONFIRMED)) {
+                            stopFailure = "STOP_NOT_CONFIRMED"
+                        } else {
+                            lease.markVerifiedClosed()
+                        }
+                    } catch (_: Exception) {
+                        stopFailure = "STOP_ACK_TIMEOUT_OR_IPC_LOST"
+                    }
+                }
+                if (stopFailure != null) lease.quarantine(stopFailure!!)
+            }
+            if (stopFailure != null) throw WorkerDiedException("${stopFailure!!} worker=$index; slot quarantined")
             throw e
         } finally {
             deckJob.cancel()
-            pending.remove(reqId)
+            pending.remove(reqId, entry)
+            activePendingByAccount.remove(account.id, entry)
             activeWorkerByAccount.remove(account.id, index)
-        }
-
-        if (!result.getBoolean(WorkerProtocol.K_OK)) {
-            val cls = result.getString(WorkerProtocol.K_ERR_CLASS).orEmpty()
-            val msg = result.getString(WorkerProtocol.K_ERR_MSG).orEmpty()
-            when (cls) {
-                "CancellationException" -> throw CancellationException(msg)
-                "IncompleteTaskSequenceException" -> throw IncompleteTaskSequenceException(msg)
-                else -> throw IllegalStateException(msg.ifBlank { cls })
-            }
         }
     }
 
     fun isRunningInWorker(accountId: String): Boolean = activeWorkerByAccount.containsKey(accountId)
 
     fun stopAccount(accountId: String) {
-        val index = activeWorkerByAccount[accountId] ?: return
-        send(index, WorkerProtocol.CMD_STOP_ACCOUNT) { putString(WorkerProtocol.K_ACCOUNT_ID, accountId) }
+        val entry = activePendingByAccount[accountId] ?: return
+        send(entry.worker, WorkerProtocol.CMD_STOP_ACCOUNT) { putRunIdentity(entry) }
     }
 
     fun skipCurrentManga(accountId: String): Boolean {
@@ -265,38 +316,76 @@ internal class AutomationWorkerClient(
         }
     }
 
+    private fun Bundle.putRunIdentity(entry: Pending) {
+        putString(WorkerProtocol.K_REQ, entry.requestId)
+        putString(WorkerProtocol.K_ACCOUNT_ID, entry.accountId)
+        putString(WorkerProtocol.K_RUN_ID, entry.runId)
+        putString(WorkerProtocol.K_PROFILE_ID, entry.profileId)
+        putString(WorkerProtocol.K_CONTAINER_ID, entry.containerId)
+        putString(WorkerProtocol.K_ROUTE_ID, entry.routeId)
+    }
+
+    private fun identityMatches(entry: Pending, data: Bundle): Boolean =
+        data.getString(WorkerProtocol.K_REQ) == entry.requestId &&
+            data.getString(WorkerProtocol.K_ACCOUNT_ID) == entry.accountId &&
+            data.getString(WorkerProtocol.K_RUN_ID) == entry.runId &&
+            data.getString(WorkerProtocol.K_PROFILE_ID) == entry.profileId &&
+            data.getString(WorkerProtocol.K_CONTAINER_ID) == entry.containerId &&
+            data.getString(WorkerProtocol.K_ROUTE_ID) == entry.routeId
+
     private fun handleEvent(msg: Message) {
         val d = msg.data
         val id = d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty()
         when (msg.what) {
-            WorkerProtocol.EV_LOG ->
+            WorkerProtocol.EV_LOG -> {
+                val eventRunId = d.getString(WorkerProtocol.K_RUN_ID).orEmpty()
+                if (eventRunId.isNotBlank() && pending.values.none { it.runId == eventRunId }) return
                 gson.fromJson(d.getString(WorkerProtocol.K_JSON), LogEntry::class.java)?.let(onLog)
-            WorkerProtocol.EV_STATUS -> onStatus(
-                id,
-                d.getString(WorkerProtocol.K_STR1).orEmpty(),
-                d.getBoolean(WorkerProtocol.K_BOOL),
-                d.getString(WorkerProtocol.K_STR2).orEmpty(),
-                d.getFloat(WorkerProtocol.K_FLOAT)
-            )
-            WorkerProtocol.EV_MANGA -> onManga(
-                id,
-                d.getString(WorkerProtocol.K_STR1).orEmpty(),
-                d.getString(WorkerProtocol.K_STR2).orEmpty()
-            )
-            WorkerProtocol.EV_STATS -> onStats(
-                id,
-                d.getString(WorkerProtocol.K_STR1).orEmpty(),
-                d.getString(WorkerProtocol.K_STR2).orEmpty(),
-                d.getString(WorkerProtocol.K_STR3).orEmpty(),
-                d.getString(WorkerProtocol.K_STR4).orEmpty(),
-                d.getString(WorkerProtocol.K_STR5).orEmpty()
-            )
-            WorkerProtocol.EV_DAILY ->
-                gson.fromJson(d.getString(WorkerProtocol.K_JSON), DailyStats::class.java)?.let { onDaily(id, it) }
-            WorkerProtocol.EV_TOWER -> onTower(id, d.getLong(WorkerProtocol.K_LONG))
-            WorkerProtocol.EV_MINE -> onMine(id, d.getInt(WorkerProtocol.K_INT))
-            WorkerProtocol.EV_RECOVERY -> onRecovery(id)
-            WorkerProtocol.EV_RESULT -> pending[d.getString(WorkerProtocol.K_REQ).orEmpty()]?.result?.complete(d)
+            }
+            WorkerProtocol.EV_STOPPED -> {
+                val entry = pending[d.getString(WorkerProtocol.K_REQ).orEmpty()]
+                if (entry == null || !identityMatches(entry, d) ||
+                    !d.getBoolean(WorkerProtocol.K_STOP_CONFIRMED)
+                ) {
+                    onLog(LogEntry(username = id, component = "SECURITY", message = "STALE_OR_INVALID_EV_STOPPED_IGNORED", isError = true))
+                } else {
+                    entry.stopped.complete(d)
+                }
+            }
+            WorkerProtocol.EV_RESULT -> {
+                val entry = pending[d.getString(WorkerProtocol.K_REQ).orEmpty()]
+                if (entry == null || !identityMatches(entry, d)) {
+                    onLog(LogEntry(username = id, component = "SECURITY", message = "STALE_EV_RESULT_IGNORED", isError = true))
+                } else {
+                    entry.result.complete(d)
+                }
+            }
+            else -> {
+                val entry = activePendingByAccount[id]
+                if (entry == null || !identityMatches(entry, d)) {
+                    onLog(LogEntry(username = id, component = "SECURITY", message = "STALE_WORKER_EVENT_IGNORED event=${msg.what}", isError = true))
+                    return
+                }
+                when (msg.what) {
+                    WorkerProtocol.EV_STATUS -> onStatus(
+                        id, d.getString(WorkerProtocol.K_STR1).orEmpty(), d.getBoolean(WorkerProtocol.K_BOOL),
+                        d.getString(WorkerProtocol.K_STR2).orEmpty(), d.getFloat(WorkerProtocol.K_FLOAT)
+                    )
+                    WorkerProtocol.EV_MANGA -> onManga(
+                        id, d.getString(WorkerProtocol.K_STR1).orEmpty(), d.getString(WorkerProtocol.K_STR2).orEmpty()
+                    )
+                    WorkerProtocol.EV_STATS -> onStats(
+                        id, d.getString(WorkerProtocol.K_STR1).orEmpty(), d.getString(WorkerProtocol.K_STR2).orEmpty(),
+                        d.getString(WorkerProtocol.K_STR3).orEmpty(), d.getString(WorkerProtocol.K_STR4).orEmpty(),
+                        d.getString(WorkerProtocol.K_STR5).orEmpty()
+                    )
+                    WorkerProtocol.EV_DAILY ->
+                        gson.fromJson(d.getString(WorkerProtocol.K_JSON), DailyStats::class.java)?.let { onDaily(id, it) }
+                    WorkerProtocol.EV_TOWER -> onTower(id, d.getLong(WorkerProtocol.K_LONG))
+                    WorkerProtocol.EV_MINE -> onMine(id, d.getInt(WorkerProtocol.K_INT))
+                    WorkerProtocol.EV_RECOVERY -> onRecovery(id)
+                }
+            }
         }
     }
 }

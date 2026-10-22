@@ -2,7 +2,6 @@ package com.example.myapplication.service
 
 import com.example.myapplication.network.AppProxyConfig
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AccountExecutionModePolicyTest {
@@ -17,18 +16,16 @@ class AccountExecutionModePolicyTest {
     }
 
     @Test
-    fun parallelModeSupportsAccountsWithoutCustomProxies() {
-        assertTrue(
-            AccountExecutionModePolicy.shouldUseParallel(
-                requestedParallel = true,
-                configs = listOf(AppProxyConfig(), AppProxyConfig())
-            )
-        )
+    fun strictModeBlocksParallelEvenWithoutCustomProxies() {
+        assertFalse(AccountExecutionModePolicy.shouldUseParallel(
+            requestedParallel = true,
+            configs = listOf(AppProxyConfig(), AppProxyConfig())
+        ))
     }
 
     @Test
-    fun parallelModeSupportsTheSameProxyRouteWithPerAccountCredentials() {
-        assertTrue(
+    fun strictModeBlocksParallelForTheSameCustomProxyRouteToo() {
+        assertFalse(
             AccountExecutionModePolicy.shouldUseParallel(
                 requestedParallel = true,
                 configs = listOf(
