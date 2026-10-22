@@ -7718,29 +7718,39 @@ class MangaBuffAutomation(
                                     }
                                 }
 
-                                // Игра может отрисоваться уже после onPageFinished: не решаем,
-                                // что ударов нет, пока не дождёмся счётчика и кнопки.
+                                // В HTML страницы счётчик ударов изначально равен 0 и заполняется
+                                // скриптом сайта позже. Поэтому 0 в первые секунды означает
+                                // «ещё не загрузилось», а не «ударов нет».
                                 var gameWaitStarted = Date.now();
+                                var probed = false;
                                 (function waitForGame() {
                                     var h = readHits();
                                     var btn = document.querySelector('button.main-mine__game-tap');
+                                    var panel = document.querySelector('.main-mine__game-panel');
+                                    var maxHit = panel ? panel.getAttribute('data-max-hit') : null;
+                                    var waited = Date.now() - gameWaitStarted;
                                     if (h > 0 && btn) {
                                         initialHits = h;
-                                        AndroidMine.onMineLog('GAME_READY hits=' + h + ' waitedMs=' + (Date.now() - gameWaitStarted));
+                                        AndroidMine.onMineLog('GAME_READY hits=' + h + ' maxHit=' + maxHit + ' waitedMs=' + waited);
                                         tap();
                                         return;
                                     }
-                                    if (h === 0) {
-                                        AndroidMine.onMineLog('NO_HITS_LEFT');
-                                        finish();
+                                    if (waited < 10000) {
+                                        setTimeout(waitForGame, 400);
                                         return;
                                     }
-                                    if (Date.now() - gameWaitStarted >= 12000) {
-                                        AndroidMine.onMineLog('GAME_NOT_READY hits=' + h + ' button=' + !!btn);
-                                        finish();
+                                    if (btn && !probed) {
+                                        // Счётчик так и остался 0: пробуем один удар и смотрим, изменится ли он.
+                                        probed = true;
+                                        AndroidMine.onMineLog('GAME_PROBE_TAP hits=' + h + ' maxHit=' + maxHit);
+                                        btn.click();
+                                        clicks++;
+                                        gameWaitStarted = Date.now() - 8500;
+                                        setTimeout(waitForGame, 400);
                                         return;
                                     }
-                                    setTimeout(waitForGame, 400);
+                                    AndroidMine.onMineLog('NO_HITS_AVAILABLE hits=' + h + ' maxHit=' + maxHit + ' button=' + !!btn);
+                                    finish();
                                 })();
                             } catch(e) {
                                 AndroidMine.onMineLog('SCRIPT_ERROR ' + (e && e.message ? e.message : e));
