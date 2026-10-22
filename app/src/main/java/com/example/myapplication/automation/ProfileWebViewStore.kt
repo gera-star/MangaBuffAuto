@@ -27,6 +27,79 @@ class ProfileWebViewStore(
     private val attachDeferreds = mutableMapOf<String, CompletableDeferred<Unit>>()
     private val webViewRunIds = mutableMapOf<String, String>()
 
+    /**
+     * Make MangaBuff's page scripts see a visible, focused document even when this
+     * automation WebView is running without UI focus in a worker/background context.
+     * This must be registered before the first navigation so site scripts see the
+     * overridden values during their initial execution.
+     */
+    private fun installPageVisibilityOverride(accountId: String, webView: WebView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "WEBVIEW",
+                    message = "PAGE_VISIBILITY_OVERRIDE_UNAVAILABLE reason=DOCUMENT_START_SCRIPT_UNSUPPORTED"
+                )
+            )
+            return
+        }
+
+        val script = """
+            (function() {
+                try {
+                    Object.defineProperty(document, 'visibilityState', {
+                        configurable: true,
+                        get: function() { return 'visible'; }
+                    });
+                } catch (e) {}
+
+                try {
+                    Object.defineProperty(document, 'hidden', {
+                        configurable: true,
+                        get: function() { return false; }
+                    });
+                } catch (e) {}
+
+                try {
+                    Object.defineProperty(document, 'hasFocus', {
+                        configurable: true,
+                        writable: true,
+                        value: function() { return true; }
+                    });
+                } catch (e) {}
+
+                try {
+                    window.hasFocus = function() { return true; };
+                } catch (e) {}
+            })();
+        """.trimIndent()
+
+        try {
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                script,
+                setOf("https://mangabuff.ru", "https://www.mangabuff.ru")
+            )
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "WEBVIEW",
+                    message = "PAGE_VISIBILITY_OVERRIDE_INSTALLED timing=DOCUMENT_START origins=mangabuff.ru"
+                )
+            )
+        } catch (e: Exception) {
+            onLog(
+                LogEntry(
+                    username = accountId,
+                    component = "WEBVIEW",
+                    message = "PAGE_VISIBILITY_OVERRIDE_FAILED error=${e.message}",
+                    isError = true
+                )
+            )
+        }
+    }
+
     @Synchronized
     fun getOrCreateWebView(accountId: String, cookiesJson: String = ""): Pair<String, WebView> {
         val profileName = "mb_$accountId"
@@ -58,6 +131,7 @@ class ProfileWebViewStore(
         try {
             WebViewCompat.setProfile(webView, profileName)
             onLog(LogEntry(username = accountId, component = "PROFILE", message = "PROFILE BOUND profile=$profileName"))
+            installPageVisibilityOverride(accountId, webView)
         } catch (e: Exception) {
             onLog(LogEntry(username = accountId, component = "PROFILE", message = "SET_PROFILE_FAIL error=${e.message}", isError = true))
             throw IllegalStateException("PROFILE: SET_PROFILE_FAIL accountId=$accountId profile=$profileName error=${e.message}")
