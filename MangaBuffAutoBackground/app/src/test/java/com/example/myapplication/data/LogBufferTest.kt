@@ -5,16 +5,19 @@ import org.junit.Test
 
 class LogBufferTest {
     @Test
-    fun keepsNewestEntriesAndCapsHistoryAt2000() {
+    fun clearsWholeHistoryWhenLimitOf2000IsReached() {
         var logs: List<LogEntry> = emptyList()
 
-        for (index in 0..2100) {
+        for (index in 0 until 2000) {
             logs = appendLogEntry(logs, LogEntry(message = index.toString()))
         }
-
         assertEquals(2000, logs.size)
-        assertEquals("2100", logs.first().message)
-        assertEquals("101", logs.last().message)
+        assertEquals("1999", logs.first().message)
+
+        logs = appendLogEntry(logs, LogEntry(message = "after-clear"))
+
+        assertEquals(1, logs.size)
+        assertEquals("after-clear", logs.first().message)
     }
 
     @Test

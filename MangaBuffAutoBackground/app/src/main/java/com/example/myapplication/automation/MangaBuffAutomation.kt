@@ -247,6 +247,7 @@ class MangaBuffAutomation(
         private const val ADS_DAILY_LIMIT = 3
         private const val ADS_DAILY_LIMIT_MESSAGE = "Нельзя смотреть рекламу больше 3 раз в сутки"
         private const val MINE_COMPLETION_DELAY_MS = 2000L
+        private const val MAX_CALENDAR_FAILED_ATTEMPTS = 2
         private const val TERMINAL_MARK_READ_MAX_ATTEMPTS = 3
         private const val TERMINAL_MARK_READ_RETRY_DELAY_MS = 1_000L
         private const val MARK_READ_WATCHDOG_MS = 15_000L
@@ -1604,6 +1605,28 @@ class MangaBuffAutomation(
         return true to "RUN day=$calendarDay ads=$adsToday/$ADS_DAILY_LIMIT trigger=ALLOWED_BALANCE_REFRESH"
     }
 
+    /**
+     * Календарь проверяется раз в сутки (по московскому дню). Итог любой завершённой проверки
+     * сохраняется, чтобы следующие обновления статистики не открывали его снова. Сбои
+     * (таймаут, нет кнопки, ошибка скрипта) повторяются не более MAX_CALENDAR_FAILED_ATTEMPTS
+     * раз за сутки, после чего проверка считается выполненной на сегодня.
+     */
+    private fun noteFailedCalendarAttempt(account: MangaBuffAccount, reason: String) {
+        val day = dailyCalendarDate()
+        val countKey = "failed_count_${account.id}_$day"
+        val failed = dailyCalendarPrefs.getInt(countKey, 0) + 1
+        val editor = dailyCalendarPrefs.edit().putInt(countKey, failed)
+        if (failed >= MAX_CALENDAR_FAILED_ATTEMPTS) {
+            editor.putString("claimed_day_${account.id}", day)
+        }
+        editor.apply()
+        log(
+            account.username,
+            "DAILY_REWARD: DAILY_GUARD failed_attempt=$failed/$MAX_CALENDAR_FAILED_ATTEMPTS " +
+                "reason=$reason lockedForDay=${failed >= MAX_CALENDAR_FAILED_ATTEMPTS}"
+        )
+    }
+
     private fun completeDailyCalendarAttempt(account: MangaBuffAccount, result: String) {
         if (!dailyCalendarAttemptsInFlight.remove(account.id)) return
 
@@ -1613,6 +1636,8 @@ class MangaBuffAutomation(
             dailyCalendarPrefs.edit()
                 .putString("claimed_day_${account.id}", dailyCalendarDate())
                 .apply()
+        } else {
+            noteFailedCalendarAttempt(account, result)
         }
         log(
             account.username,
@@ -1623,6 +1648,8 @@ class MangaBuffAutomation(
     private fun releaseDailyCalendarAttempt(account: MangaBuffAccount, reason: String) {
         if (dailyCalendarAttemptsInFlight.remove(account.id)) {
             log(account.username, "DAILY_REWARD: DAILY_GUARD released reason=$reason")
+            // Таймаут страницы баланса тоже считается неудачной попыткой; отмена — нет.
+            if (reason == "BALANCE_TIMEOUT") noteFailedCalendarAttempt(account, reason)
         }
     }
 
@@ -7315,6 +7342,7 @@ class MangaBuffAutomation(
         webView: WebView
     ): Boolean = suspendCancellableCoroutine { continuation ->
         var resumed = false
+        var mineScriptStarted = false
 
         fun cleanupMineBridge(stopLoading: Boolean) {
             mainHandler.post {
@@ -7389,6 +7417,11 @@ class MangaBuffAutomation(
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url?.contains("/mine") != true) return
                     if (view == null) { safeResume(false); return }
+                    if (mineScriptStarted) {
+                        log(account.username, "MINE: PAGE_READY_DUPLICATE_IGNORED url=$url")
+                        return
+                    }
+                    mineScriptStarted = true
                     log(account.username, "MINE: PAGE_READY url=$url")
 
                     view.evaluateJavascript("typeof AndroidMine") { bridgeType ->
@@ -7625,6 +7658,28 @@ class MangaBuffAutomation(
                                     exchange();
                                 }
 
+                                function readHits() {
+                                    var el = document.querySelector('.main-mine__game-hits-left');
+                                    if (!el) return -1;
+                                    var digits = String(el.innerText || el.textContent || '').replace(/[^\d]/g, '');
+                                    var n = digits ? parseInt(digits, 10) : NaN;
+                                    return isFinite(n) ? n : -1;
+                                }
+
+                                function press(el) {
+                                    // Запасной вариант, если простой click() не уменьшает счётчик ударов.
+                                    try {
+                                        ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(function(t) {
+                                            el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+                                        });
+                                    } catch (e) {}
+                                    el.click();
+                                }
+
+                                var missingButton = 0;
+                                var lastLeft = -2;
+                                var noEffect = 0;
+
                                 function tap() {
                                     if (Date.now() - startedAt > maxRuntime) {
                                         AndroidMine.onMineLog('TIMEOUT');
@@ -7632,25 +7687,61 @@ class MangaBuffAutomation(
                                         return;
                                     }
 
-                                    var current = document.querySelector('.main-mine__game-hits-left');
-                                    var left = current ? parseInt((current.innerText || '').trim(), 10) || 0
-                                        : Math.max(0, initialHits - clicks);
+                                    var read = readHits();
+                                    var left = read >= 0 ? read : Math.max(0, initialHits - clicks);
                                     var button = document.querySelector('button.main-mine__game-tap');
 
+                                    if (!button && left > 0 && missingButton < 10) {
+                                        // Кнопка могла временно пропасть (анимация, перерисовка).
+                                        missingButton++;
+                                        setTimeout(tap, 500);
+                                        return;
+                                    }
+
                                     if (button && left > 0) {
-                                        button.click();
+                                        missingButton = 0;
+                                        if (left === lastLeft) noEffect++; else noEffect = 0;
+                                        lastLeft = left;
+                                        if (noEffect === 3) {
+                                            AndroidMine.onMineLog('TAP_NO_EFFECT left=' + left + ' disabled=' + !!button.disabled + '; fallback to pointer events');
+                                        }
+                                        if (noEffect >= 3) press(button); else button.click();
                                         clicks++;
                                         if (clicks % 5 === 0 || left <= 1) {
                                             AndroidMine.onMineProgress(clicks, initialHits, currentOre());
                                         }
                                         setTimeout(tap, 1000 + Math.floor(Math.random() * 500));
                                     } else {
+                                        AndroidMine.onMineLog('TAP_DONE clicks=' + clicks + ' left=' + left + ' button=' + !!button);
                                         AndroidMine.onMineProgress(clicks, initialHits, currentOre());
                                         finish();
                                     }
                                 }
 
-                                if (initialHits <= 0) finish(); else tap();
+                                // Игра может отрисоваться уже после onPageFinished: не решаем,
+                                // что ударов нет, пока не дождёмся счётчика и кнопки.
+                                var gameWaitStarted = Date.now();
+                                (function waitForGame() {
+                                    var h = readHits();
+                                    var btn = document.querySelector('button.main-mine__game-tap');
+                                    if (h > 0 && btn) {
+                                        initialHits = h;
+                                        AndroidMine.onMineLog('GAME_READY hits=' + h + ' waitedMs=' + (Date.now() - gameWaitStarted));
+                                        tap();
+                                        return;
+                                    }
+                                    if (h === 0) {
+                                        AndroidMine.onMineLog('NO_HITS_LEFT');
+                                        finish();
+                                        return;
+                                    }
+                                    if (Date.now() - gameWaitStarted >= 12000) {
+                                        AndroidMine.onMineLog('GAME_NOT_READY hits=' + h + ' button=' + !!btn);
+                                        finish();
+                                        return;
+                                    }
+                                    setTimeout(waitForGame, 400);
+                                })();
                             } catch(e) {
                                 AndroidMine.onMineLog('SCRIPT_ERROR ' + (e && e.message ? e.message : e));
                                 AndroidMine.onMineComplete();
