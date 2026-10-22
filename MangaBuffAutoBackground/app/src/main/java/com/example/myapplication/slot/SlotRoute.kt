@@ -75,7 +75,8 @@ fun normalizeSlotUrl(raw: String): String? {
         if (schemePrefix != null) {
             val candidate = schemePrefix.groupValues[1].lowercase()
             val portText = text.substring(schemePrefix.range.last + 1).substringBefore('/')
-            val looksLikeHostPort = portText.toIntOrNull() in 1..65535 &&
+            val parsedPort = portText.toIntOrNull()
+            val looksLikeHostPort = parsedPort != null && parsedPort in 1..65535 &&
                 candidate !in setOf("javascript", "data", "file", "content", "intent", "about", "blob", "ftp", "mailto", "tel")
             if (!looksLikeHostPort) return null
         }
