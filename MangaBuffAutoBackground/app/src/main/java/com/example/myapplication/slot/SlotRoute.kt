@@ -63,11 +63,37 @@ data class SlotRoute(
  */
 fun normalizeSlotUrl(raw: String): String? {
     val text = raw.trim()
-    if (text.isEmpty()) return null
-    val withScheme = if (text.contains("://")) text else "https://$text"
-    val scheme = withScheme.substringBefore("://").lowercase()
+    if (text.isEmpty() || text.any { it.isWhitespace() }) return null
+
+    val explicitUrlScheme = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://").find(text)
+    if (explicitUrlScheme != null) {
+        val scheme = explicitUrlScheme.groupValues[1].lowercase()
+        if (scheme != "https" && scheme != "http") return null
+    } else {
+        // Do not turn javascript:, file:, data: or intent: into a misleading HTTPS host.
+        val schemePrefix = Regex("^([A-Za-z][A-Za-z0-9+.-]*):").find(text)
+        if (schemePrefix != null) {
+            val candidate = schemePrefix.groupValues[1].lowercase()
+            val portText = text.substring(schemePrefix.range.last + 1).substringBefore('/')
+            val looksLikeHostPort = portText.toIntOrNull() in 1..65535 &&
+                candidate !in setOf("javascript", "data", "file", "content", "intent", "about", "blob", "ftp", "mailto", "tel")
+            if (!looksLikeHostPort) return null
+        }
+    }
+
+    val withScheme = if (
+        text.startsWith("https://", ignoreCase = true) ||
+        text.startsWith("http://", ignoreCase = true)
+    ) text else "https://$text"
+
+    val uri = try {
+        java.net.URI(withScheme)
+    } catch (_: Exception) {
+        return null
+    }
+    val scheme = uri.scheme?.lowercase()
     if (scheme != "https" && scheme != "http") return null
-    val rest = withScheme.substringAfter("://")
-    if (rest.isBlank() || rest.any { it.isWhitespace() }) return null
+    if (uri.rawAuthority.isNullOrBlank() || uri.rawAuthority.contains('@')) return null
+    if (uri.port == 0 || uri.port > 65535) return null
     return withScheme
 }
