@@ -44,10 +44,13 @@ class SlotRouteTest {
         assertEquals("https://example.org", normalizeSlotUrl("example.org"))
         assertEquals("http://example.org/a", normalizeSlotUrl("http://example.org/a"))
         assertNull(normalizeSlotUrl("javascript:alert(1)"))
+        assertNull(normalizeSlotUrl("data:text/html,<script>alert(1)</script>"))
         assertNull(normalizeSlotUrl("file:///etc/passwd"))
         assertNull(normalizeSlotUrl("intent://x#Intent;end"))
+        assertNull(normalizeSlotUrl("ftp://example.org"))
         assertNull(normalizeSlotUrl("   "))
         assertNull(normalizeSlotUrl("https://"))
+        assertEquals("https://example.org:8080", normalizeSlotUrl("example.org:8080"))
     }
 
     @Test
