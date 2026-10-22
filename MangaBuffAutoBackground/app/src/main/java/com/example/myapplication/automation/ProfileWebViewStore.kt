@@ -19,8 +19,23 @@ import androidx.webkit.WebViewFeature
 import com.google.gson.JsonParser
 import com.example.myapplication.data.LogEntry
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
+import kotlin.coroutines.resume
+
+/**
+ * Prefer the newest cookie header from this process's persistent account profile. Fall back to
+ * the saved snapshot when the profile has not been opened in this process.
+ */
+internal fun latestProfileCookieHeader(accountId: String, fallback: String): String =
+    runCatching {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) null
+        else ProfileStore.getInstance().getProfile("mb_$accountId")?.cookieManager
+            ?.getCookie("https://mangabuff.ru")
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: fallback
 
 @SuppressLint("RestrictedApi")
 class ProfileWebViewStore(
@@ -287,6 +302,58 @@ class ProfileWebViewStore(
         } catch (e: Exception) {
             onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIE_PROFILE_FAIL error=${e.message}", isError = true))
             throw e
+        }
+    }
+
+    /**
+     * Wait for CookieManager callbacks before a task navigates. Worker processes have an isolated
+     * WebView data directory, so they cannot rely on a pre-existing authenticated profile.
+     */
+    suspend fun syncCookiesForAccountAwait(
+        accountId: String,
+        profileName: String,
+        cookiesJson: String
+    ) = withContext(Dispatchers.Main.immediate) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            throw IllegalStateException("PROFILE: COOKIE_PROFILE_FAIL MULTI_PROFILE_UNSUPPORTED")
+        }
+        val profile = ProfileStore.getInstance().getProfile(profileName)
+            ?: throw IllegalStateException("PROFILE: COOKIE_PROFILE_FAIL Profile_not_found")
+        val cookieManager = profile.cookieManager
+        cookieManager.setAcceptCookie(true)
+        val cookies = parseCookieHeader(cookiesJson).map { it.trim() }.filter { it.indexOf('=') > 0 }
+        if (cookies.isEmpty()) {
+            onLog(LogEntry(username = accountId, component = "PROFILE", message = "COOKIES_SYNC_SKIPPED_EMPTY profile=$profileName"))
+            return@withContext
+        }
+
+        var accepted = 0
+        var rejected = 0
+        withTimeout(15_000L) {
+            for (cookie in cookies) {
+                val result = suspendCancellableCoroutine<Boolean> { continuation ->
+                    try {
+                        cookieManager.setCookie("https://mangabuff.ru", cookie) { success ->
+                            if (continuation.isActive) continuation.resume(success)
+                        }
+                    } catch (_: Exception) {
+                        if (continuation.isActive) continuation.resume(false)
+                    }
+                }
+                if (result) accepted++ else rejected++
+            }
+        }
+        cookieManager.flush()
+        val visibleCookieCount = parseCookieHeader(cookieManager.getCookie("https://mangabuff.ru").orEmpty()).size
+        onLog(
+            LogEntry(
+                username = accountId,
+                component = "PROFILE",
+                message = "COOKIES_SYNC_AWAITED profile=$profileName requested=${cookies.size} accepted=$accepted rejected=$rejected visible=$visibleCookieCount"
+            )
+        )
+        if (accepted == 0) {
+            throw IllegalStateException("PROFILE: COOKIE_SYNC_FAILED accepted=0 profile=$profileName")
         }
     }
 
