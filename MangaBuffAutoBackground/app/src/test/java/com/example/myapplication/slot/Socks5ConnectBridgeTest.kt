@@ -208,8 +208,8 @@ class Socks5ConnectBridgeTest {
                 Socket("127.0.0.1", bridge.port).use { client ->
                     client.soTimeout = 3_000
                     client.getOutputStream().write(
-                        ("CONNECT example.org:443 HTTP/1.1\\r\\n" +
-                            "Proxy-Authorization: ${basic(bridge.accessToken)}\\r\\n\\r\\n").toByteArray()
+                        ("CONNECT example.org:443 HTTP/1.1\r\n" +
+                            "Proxy-Authorization: ${basic(bridge.accessToken)}\r\n\r\n").toByteArray()
                     )
                     assertTrue(readStatusLine(client).contains("200"))
                     client.getOutputStream().write("ping".toByteArray())
