@@ -16,6 +16,16 @@ class AccountExecutionModePolicyTest {
     }
 
     @Test
+    fun strictSerialModeKeepsParallelModeUnavailableEvenWhenWorkerProcessesAreSupported() {
+        assertFalse(
+            AccountExecutionModePolicy.isParallelExecutionAvailable(
+                configs = listOf(AppProxyConfig(), AppProxyConfig()),
+                workersSupported = true
+            )
+        )
+    }
+
+    @Test
     fun strictModeBlocksParallelEvenWithoutCustomProxies() {
         assertFalse(AccountExecutionModePolicy.shouldUseParallel(
             requestedParallel = true,

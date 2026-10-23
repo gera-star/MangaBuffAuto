@@ -1806,11 +1806,20 @@ fun TasksTab(
 
     val actionEnabled = !isRunning && accounts.isNotEmpty()
     val context = LocalContext.current
-    val parallelProxyRoutesCompatible = AccountExecutionModePolicy.areProxyRoutesCompatible(
-        accounts.filterNot { it.isOffline }.map { AppProxySettings.read(context, it.id) }
-    )
+    val parallelProxyConfigs = accounts.filterNot { it.isOffline }
+        .map { AppProxySettings.read(context, it.id) }
+    val parallelProxyRoutesCompatible = AccountExecutionModePolicy.areProxyRoutesCompatible(parallelProxyConfigs)
     val workersSupported = remember { com.example.myapplication.worker.AutomationWorkerClient.isSupported(context) }
-    val parallelModeActive = settings.parallelAccounts && (parallelProxyRoutesCompatible || workersSupported)
+    val parallelModeAvailable = AccountExecutionModePolicy.isParallelExecutionAvailable(
+        configs = parallelProxyConfigs,
+        workersSupported = workersSupported
+    )
+    // Display the mode the service will really use, not only the persisted preference.
+    val parallelModeActive = AccountExecutionModePolicy.shouldUseParallel(
+        requestedParallel = settings.parallelAccounts,
+        configs = parallelProxyConfigs,
+        workersSupported = workersSupported
+    )
 
     LazyColumn(
         modifier = Modifier
@@ -1886,17 +1895,17 @@ fun TasksTab(
                         FilledTonalButton(
                             enabled = !isRunning,
                             onClick = {
-                                val requestedParallel = !settings.parallelAccounts
-                                if (requestedParallel && !parallelProxyRoutesCompatible && !workersSupported) {
+                                if (settings.parallelAccounts && !parallelModeAvailable) {
+                                    // Clear a stale persisted preference without ever claiming it is active.
+                                    onSaveSettings(settings.copy(parallelAccounts = false))
+                                } else if (!parallelModeAvailable) {
                                     Toast.makeText(
                                         context,
-                                        "Разные прокси одновременно требуют Android 9+ и свежий Android System WebView " +
-                                            "(отдельные процессы WebView). На этом устройстве это недоступно: " +
-                                            "отключи прокси аккаунтов или задай всем одинаковые адрес и порт.",
+                                        "Одновременный запуск временно отключён до завершения проверок безопасности. Сейчас задачи идут по очереди.",
                                         Toast.LENGTH_LONG
                                     ).show()
                                 } else {
-                                    onSaveSettings(settings.copy(parallelAccounts = requestedParallel))
+                                    onSaveSettings(settings.copy(parallelAccounts = !settings.parallelAccounts))
                                 }
                             },
                             contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
@@ -1936,6 +1945,15 @@ fun TasksTab(
                                 Text("Стоп", fontWeight = FontWeight.Bold)
                             }
                         }
+                    }
+
+                    if (!parallelModeAvailable) {
+                        Text(
+                            "Защищённый режим: задачи выполняются по очереди. Параллельный запуск временно заблокирован.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+                        )
                     }
 
                     Spacer(Modifier.height(2.dp))

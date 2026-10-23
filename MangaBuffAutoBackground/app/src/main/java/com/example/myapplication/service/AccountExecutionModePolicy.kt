@@ -14,6 +14,13 @@ internal object AccountExecutionModePolicy {
     fun areProxyRoutesCompatible(configs: List<AppProxyConfig>): Boolean =
         configs.map(::proxyRouteKey).distinct().size <= 1
 
+    /** Whether the UI may offer parallel execution at all. Keep false while safety review is open. */
+    fun isParallelExecutionAvailable(
+        configs: List<AppProxyConfig>,
+        workersSupported: Boolean
+    ): Boolean = !STRICT_SERIAL_MODE &&
+        (workersSupported || areProxyRoutesCompatible(configs))
+
     /**
      * Одновременный запуск разрешён, если маршруты совпадают либо устройство умеет запускать
      * WebView в отдельных процессах (тогда у каждого маршрута свой процесс и свой прокси).
