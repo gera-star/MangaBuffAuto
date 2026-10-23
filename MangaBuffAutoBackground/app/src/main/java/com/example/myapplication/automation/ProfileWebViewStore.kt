@@ -207,17 +207,31 @@ class ProfileWebViewStore(
                     )
                 )
 
-                synchronized(this@ProfileWebViewStore) {
-                    if (view != null && activeWebViews[accountId] === view) {
-                        activeWebViews.remove(accountId)
-                        attachDeferreds.remove(accountId)
-                        webViewRunIds.remove(accountId)
-                    }
-                }
-
+                var destroySucceeded = false
                 try {
                     view?.destroy()
-                } catch (_: Exception) {
+                    destroySucceeded = view != null
+                } catch (e: Exception) {
+                    // Keep the failed WebView registered so the awaited stop path can retry
+                    // destruction. Removing it here would let cleanup falsely confirm a stop.
+                    onLog(
+                        LogEntry(
+                            username = accountId,
+                            component = "WEBVIEW",
+                            message = "RENDERER_GONE_DESTROY_FAILED reason=${e.javaClass.simpleName}",
+                            isError = true
+                        )
+                    )
+                }
+
+                if (destroySucceeded && view != null) {
+                    synchronized(this@ProfileWebViewStore) {
+                        if (activeWebViews[accountId] === view) {
+                            activeWebViews.remove(accountId)
+                            attachDeferreds.remove(accountId)
+                            webViewRunIds.remove(accountId)
+                        }
+                    }
                 }
 
                 onLog(
