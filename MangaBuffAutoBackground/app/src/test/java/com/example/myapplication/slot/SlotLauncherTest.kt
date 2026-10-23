@@ -23,6 +23,12 @@ class SlotLauncherTest {
         assertFalse(SlotLauncher.isValidSlot(3))
     }
 
+    @Test fun launchUsesSingleTaskReuseWithoutMultipleTaskFlag() {
+        val flags = SlotLauncher.activityLaunchFlags()
+        assertTrue((flags and android.content.Intent.FLAG_ACTIVITY_NEW_TASK) != 0)
+        assertFalse((flags and android.content.Intent.FLAG_ACTIVITY_MULTIPLE_TASK) != 0)
+    }
+
     @Test fun tabIdAndProfileName() {
         assertTrue(SlotLauncher.isValidTabId("3f2a-9B_x"))
         assertFalse(SlotLauncher.isValidTabId("../evil"))

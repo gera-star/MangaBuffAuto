@@ -36,6 +36,48 @@ class WorkerStopConfirmationTest {
     }
 
     @Test
+    fun everyIdentityFieldMustMatchForStopAndRelease() {
+        val staleVariants = listOf(
+            activeRun.copy(requestId = "older-request"),
+            activeRun.copy(accountId = "other-account"),
+            activeRun.copy(runId = "older-run"),
+            activeRun.copy(profileId = "other-profile"),
+            activeRun.copy(containerId = "w1"),
+            activeRun.copy(routeId = "proxy:other:8080")
+        )
+        staleVariants.forEach { stale ->
+            assertFalse(WorkerStopConfirmation.matchesIdentity(activeRun, stale))
+            assertFalse(WorkerStopConfirmation.accepts(activeRun, stale, stopConfirmed = true))
+            assertFalse(WorkerStopConfirmation.acceptsRelease(activeRun, stale, state = "FREE"))
+        }
+        assertTrue(WorkerStopConfirmation.matchesIdentity(activeRun, activeRun))
+    }
+
+    @Test
+    fun failedCleanupUncertainRouteOrPoisonedWorkerCannotConfirmStop() {
+        assertFalse(WorkerStopConfirmation.shouldEmitStopped(
+            runtimeCleanupSucceeded = false,
+            routeStateCertain = true,
+            poisoned = false
+        ))
+        assertFalse(WorkerStopConfirmation.shouldEmitStopped(
+            runtimeCleanupSucceeded = true,
+            routeStateCertain = false,
+            poisoned = false
+        ))
+        assertFalse(WorkerStopConfirmation.shouldEmitStopped(
+            runtimeCleanupSucceeded = true,
+            routeStateCertain = true,
+            poisoned = true
+        ))
+        assertTrue(WorkerStopConfirmation.shouldEmitStopped(
+            runtimeCleanupSucceeded = true,
+            routeStateCertain = true,
+            poisoned = false
+        ))
+    }
+
+    @Test
     fun exactRunIdentityAndPositiveAckAreRequired() {
         assertTrue(WorkerStopConfirmation.accepts(activeRun, activeRun, stopConfirmed = true))
         assertFalse(WorkerStopConfirmation.accepts(activeRun, activeRun, stopConfirmed = false))

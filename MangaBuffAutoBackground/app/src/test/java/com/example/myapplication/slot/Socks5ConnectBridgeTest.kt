@@ -231,9 +231,60 @@ class Socks5ConnectBridgeTest {
                     Thread.sleep(10)
                 }
                 assertEquals(0, bridge.activeSocketCountForTest())
+                assertTrue("close() waits for controlled relay tasks", bridge.executorTerminatedForTest())
             } finally {
                 bridge.close()
             }
+        }
+    }
+
+    @Test
+    fun concurrentAcceptAndCloseTerminatesTrackedTasks() {
+        FakeSocks(requireAuth = false).use { socks ->
+            val bridge = Socks5ConnectBridge(
+                "127.0.0.1", socks.server.localPort, "", "", connectTimeoutMs = 2_000
+            ).start()
+            val gate = CountDownLatch(1)
+            val clientsConnected = CountDownLatch(8)
+            repeat(8) {
+                Thread {
+                    try {
+                        gate.await(2, TimeUnit.SECONDS)
+                        Socket("127.0.0.1", bridge.port).use { client ->
+                            clientsConnected.countDown()
+                            client.soTimeout = 2_000
+                            // Leave a partial header open so shutdown has to unblock the handler.
+                            client.getOutputStream().write(
+                                "CONNECT example.org:443 HTTP/1.1\r\n".toByteArray()
+                            )
+                            runCatching { client.getInputStream().read() }
+                        }
+                    } catch (_: Exception) {
+                        clientsConnected.countDown()
+                    }
+                }.apply { isDaemon = true; start() }
+            }
+
+            val closeError = AtomicReference<Throwable?>()
+            val closed = CountDownLatch(1)
+            Thread {
+                try {
+                    gate.await(2, TimeUnit.SECONDS)
+                    clientsConnected.await(1, TimeUnit.SECONDS)
+                    bridge.close()
+                } catch (error: Throwable) {
+                    closeError.set(error)
+                } finally {
+                    closed.countDown()
+                }
+            }.apply { isDaemon = true; start() }
+
+            gate.countDown()
+            assertTrue("close must terminate within a finite deadline", closed.await(7, TimeUnit.SECONDS))
+            assertNull("close must not return cleanly while tasks are running", closeError.get())
+            assertTrue(bridge.executorTerminatedForTest())
+            assertEquals(0, bridge.activeSocketCountForTest())
+            bridge.close()
         }
     }
 

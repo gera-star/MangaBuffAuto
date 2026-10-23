@@ -63,18 +63,19 @@ data class SlotRoute(
  */
 fun normalizeSlotUrl(raw: String): String? {
     val text = raw.trim()
-    if (text.isEmpty() || text.any { it.isWhitespace() }) return null
+    if (text.isEmpty() || text.any { it.isWhitespace() || it.isISOControl() }) return null
 
     val explicitUrlScheme = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://").find(text)
     if (explicitUrlScheme != null) {
-        val scheme = explicitUrlScheme.groupValues[1].lowercase()
+        val scheme = explicitUrlScheme.groupValues[1].lowercase(java.util.Locale.ROOT)
         if (scheme != "https" && scheme != "http") return null
     } else {
-        // Do not turn javascript:, file:, data: or intent: into a misleading HTTPS host.
+        // Do not reinterpret opaque/unsupported schemes as hostnames.
         val schemePrefix = Regex("^([A-Za-z][A-Za-z0-9+.-]*):").find(text)
         if (schemePrefix != null) {
-            val candidate = schemePrefix.groupValues[1].lowercase()
-            val portText = text.substring(schemePrefix.range.last + 1).substringBefore('/')
+            val candidate = schemePrefix.groupValues[1].lowercase(java.util.Locale.ROOT)
+            val portText = text.substring(schemePrefix.range.last + 1)
+                .substringBefore('/').substringBefore('?').substringBefore('#')
             val parsedPort = portText.toIntOrNull()
             val looksLikeHostPort = parsedPort != null && parsedPort in 1..65535 &&
                 candidate !in setOf("javascript", "data", "file", "content", "intent", "about", "blob", "ftp", "mailto", "tel")
@@ -92,12 +93,60 @@ fun normalizeSlotUrl(raw: String): String? {
     } catch (_: Exception) {
         return null
     }
-    val scheme = uri.scheme?.lowercase()
+    val scheme = uri.scheme?.lowercase(java.util.Locale.ROOT) ?: return null
     if (scheme != "https" && scheme != "http") return null
-    if (uri.rawAuthority.isNullOrBlank() || uri.rawAuthority.contains('@')) return null
-    if (uri.port == 0 || uri.port > 65535) return null
+
+    val authority = uri.rawAuthority ?: return null
+    if (authority.isBlank() || '@' in authority || uri.rawUserInfo != null ||
+        authority.any { it.isWhitespace() || it.isISOControl() || it == '\\' }
+    ) return null
+
+    // URI.port is -1 for both an absent port and some malformed ports. Parse the raw
+    // authority as well, so "host:", "host:abc" and out-of-range values cannot slip through.
+    val host = uri.host ?: return null
+    if (host.isBlank()) return null
+
+    val explicitPort = if (authority.startsWith("[")) {
+        val closingBracket = authority.indexOf(']')
+        if (closingBracket < 0) return null
+        val suffix = authority.substring(closingBracket + 1)
+        when {
+            suffix.isEmpty() -> null
+            suffix.startsWith(":") -> suffix.substring(1).also {
+                if (it.isEmpty() || it.any { ch -> ch !in '0'..'9' }) return null
+            }
+            else -> return null
+        }
+    } else {
+        val colon = authority.lastIndexOf(':')
+        if (colon < 0) {
+            null
+        } else {
+            if (authority.indexOf(':') != colon) return null
+            authority.substring(colon + 1).also {
+                if (it.isEmpty() || it.any { ch -> ch !in '0'..'9' }) return null
+            }
+        }
+    }
+
+    if (explicitPort != null) {
+        val port = explicitPort.toIntOrNull() ?: return null
+        if (port !in 1..65535 || uri.port != port) return null
+    } else if (uri.port != -1) {
+        return null
+    }
+
     return withScheme
 }
+
+/** Human-readable explanation shared by the slot launcher and the slot Activity. */
+fun slotUrlValidationMessage(raw: String): String =
+    if (raw.trim().startsWith("http://", ignoreCase = true)) {
+        "HTTP без TLS отключён политикой безопасности. Открой HTTPS-адрес."
+    } else {
+        "Некорректный URL. Проверь HTTPS-схему, имя хоста и порт (1–65535). " +
+            "Адреса с логином/паролем и схемы file:, javascript: и intent: не поддерживаются."
+    }
 
 
 /**

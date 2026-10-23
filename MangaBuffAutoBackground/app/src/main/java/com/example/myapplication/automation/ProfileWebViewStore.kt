@@ -26,6 +26,20 @@ import kotlinx.coroutines.withTimeout
 import java.util.UUID
 import kotlin.coroutines.resume
 
+/** Registers a WebView before running initialization that can throw. On failure the caller's
+ * cleanup snapshot still contains the object and can attempt stopLoading()/destroy().
+ */
+internal fun <T : Any, R> initializeTrackedWebView(
+    activeWebViews: MutableMap<String, T>,
+    accountId: String,
+    webView: T,
+    initialize: (T) -> R
+): R {
+    activeWebViews[accountId] = webView
+    return initialize(webView)
+}
+
+
 /**
  * Prefer the newest cookie header from this process's persistent account profile. Fall back to
  * the saved snapshot when the profile has not been opened in this process.
@@ -126,18 +140,19 @@ class ProfileWebViewStore(
         onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "CREATED profile=$profileName"))
 
         val webView = WebView(context)
-        
-        try {
-            WebViewCompat.setProfile(webView, profileName)
-            onLog(LogEntry(username = accountId, component = "PROFILE", message = "PROFILE BOUND profile=$profileName"))
-        } catch (e: Exception) {
-            onLog(LogEntry(username = accountId, component = "PROFILE", message = "SET_PROFILE_FAIL error=${e.message}", isError = true))
-            throw IllegalStateException("PROFILE: SET_PROFILE_FAIL accountId=$accountId profile=$profileName error=${e.message}")
-        }
+        val profileCookieManager = initializeTrackedWebView(activeWebViews, accountId, webView) { trackedView ->
+            try {
+                WebViewCompat.setProfile(trackedView, profileName)
+                onLog(LogEntry(username = accountId, component = "PROFILE", message = "PROFILE BOUND profile=$profileName"))
+            } catch (e: Exception) {
+                onLog(LogEntry(username = accountId, component = "PROFILE", message = "SET_PROFILE_FAIL error=${e.javaClass.simpleName}", isError = true))
+                throw IllegalStateException("PROFILE: SET_PROFILE_FAIL accountId=$accountId", e)
+            }
 
-        val profileCookieManager = ProfileStore.getInstance()
-            .getProfile(profileName)?.cookieManager
-            ?: throw IllegalStateException("PROFILE: COOKIE_PROFILE_FAIL accountId=$accountId error=Profile_not_found")
+            ProfileStore.getInstance()
+                .getProfile(profileName)?.cookieManager
+                ?: throw IllegalStateException("PROFILE: COOKIE_PROFILE_FAIL accountId=$accountId error=Profile_not_found")
+        }
 
         WebViewContainerPrivacy.apply(
             context = context,
@@ -271,7 +286,6 @@ class ProfileWebViewStore(
             }
         })
 
-        activeWebViews[accountId] = webView
         onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "CREATE instance=${webView.hashCode()} runId=$runId"))
 
         return Pair(profileName, webView)

@@ -47,7 +47,10 @@ class Socks5ConnectBridge(
     }
     private val lifecycleLock = Any()
     private val activeSockets = ConcurrentHashMap.newKeySet<Socket>()
+    private val closeCompleted = CountDownLatch(1)
 
+    @Volatile
+    private var closeFailure: IOException? = null
     @Volatile
     private var closed = false
     private var started = false
@@ -72,15 +75,50 @@ class Socks5ConnectBridge(
 
     override fun close() {
         val sockets = synchronized(lifecycleLock) {
-            if (closed) return
-            closed = true
-            activeSockets.toList()
+            if (closed) null else {
+                closed = true
+                activeSockets.toList()
+            }
         }
-        closeQuietly(server)
-        // Interruption alone does not reliably interrupt blocking Socket.read() on Android.
-        // Closing each owned socket unblocks both directions of every managed tunnel.
-        sockets.forEach(::closeQuietly)
-        pool.shutdownNow()
+        if (sockets == null) {
+            val finished = try {
+                closeCompleted.await(CLOSE_AWAIT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (error: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw IOException("Interrupted while waiting for SOCKS5 bridge shutdown", error)
+            }
+            if (!finished) throw IOException("SOCKS5 bridge shutdown is still in progress")
+            closeFailure?.let { throw IOException("SOCKS5 bridge did not shut down cleanly", it) }
+            return
+        }
+
+        var failure: IOException? = null
+        try {
+            closeQuietly(server)
+            // Interrupting a thread alone does not reliably unblock Socket.read() on Android.
+            // Closing every owned client/upstream socket unblocks both controlled tunnel directions.
+            sockets.forEach(::closeQuietly)
+            pool.shutdownNow()
+            val terminated = pool.awaitTermination(
+                CLOSE_AWAIT_TIMEOUT_MS,
+                java.util.concurrent.TimeUnit.MILLISECONDS
+            )
+            if (!terminated) {
+                failure = IOException("SOCKS5 bridge relay tasks did not terminate before timeout")
+            } else {
+                // Queued handlers may have been removed by shutdownNow() before their finally block.
+                // No task can mutate the set after executor termination, so release those closed refs.
+                synchronized(lifecycleLock) { activeSockets.clear() }
+            }
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            failure = IOException("Interrupted while stopping SOCKS5 bridge", error)
+        } finally {
+            pool.shutdownNow()
+            closeFailure = failure
+            closeCompleted.countDown()
+        }
+        failure?.let { throw it }
     }
 
     private fun registerSocket(socket: Socket): Boolean = synchronized(lifecycleLock) {
@@ -92,6 +130,8 @@ class Socks5ConnectBridge(
     }
 
     internal fun activeSocketCountForTest(): Int = activeSockets.size
+
+    internal fun executorTerminatedForTest(): Boolean = pool.isTerminated
 
     private fun acceptLoop() {
         while (!closed) {
@@ -354,6 +394,7 @@ class Socks5ConnectBridge(
         /** Имя пользователя для Proxy-Authorization между WebView и мостом. */
         const val AUTH_USER = "slot"
         private const val HEADER_TIMEOUT_MS = 15_000
+        private const val CLOSE_AWAIT_TIMEOUT_MS = 5_000L
         private const val MAX_HEAD_BYTES = 16 * 1024
 
         fun newToken(): String {

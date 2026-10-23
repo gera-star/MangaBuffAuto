@@ -63,11 +63,8 @@ open class SlotActivity : ComponentActivity() {
             return fail("Некорректные параметры слота.")
         }
         route.validate()?.let { return fail(it) }
-        val url = normalizeSlotUrlForRoute(rawUrl, route) ?: return fail(
-            if (rawUrl.trim().startsWith("http://", ignoreCase = true))
-                "HTTP без TLS отключён политикой безопасности. Открой HTTPS-адрес."
-            else "Недопустимый URL: разрешены только корректные HTTPS-адреса."
-        )
+        val url = normalizeSlotUrlForRoute(rawUrl, route)
+            ?: return fail(slotUrlValidationMessage(rawUrl))
 
         val slot = SlotLauncher.slotIndexOf(currentProcessName())
             ?: return fail("Слот запущен вне своего процесса — изоляция невозможна.")
@@ -104,24 +101,41 @@ open class SlotActivity : ComponentActivity() {
         status.text = "Слот ${slot + 1}/${SlotLauncher.SLOT_COUNT} • ${route.describe()} • профиль ${SlotLauncher.profileName(tabId)}"
 
         val wv = WebView(this)
-        try {
+        // Hold a strong reference before profile binding or any other operation that can fail.
+        webView = wv
+        val cookies = try {
             // Profile assignment precedes all settings and navigation.
             WebViewCompat.setProfile(wv, SlotLauncher.profileName(tabId))
+            ProfileStore.getInstance().getProfile(SlotLauncher.profileName(tabId))?.cookieManager
+                ?: throw IllegalStateException("PROFILE_COOKIE_MANAGER_MISSING")
+        } catch (error: Exception) {
+            val missingCookieManager = error.message == "PROFILE_COOKIE_MANAGER_MISSING"
+            cleanupFailedInitialization(
+                view = wv,
+                binding = binding,
+                quarantineReason = if (missingCookieManager) "PROFILE_COOKIE_MANAGER_MISSING" else "PROFILE_BIND_FAILED",
+                message = if (missingCookieManager) {
+                    "Профиль вкладки не найден. Слот заблокирован до перезапуска приложения."
+                } else {
+                    "Не удалось привязать профиль WebView. Слот заблокирован до перезапуска приложения."
+                }
+            )
+            return
+        }
+
+        try {
+            WebViewContainerPrivacy.apply(this, wv, cookies)
+            wv.webViewClient = SlotClient(binding)
+            root.addView(wv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         } catch (_: Exception) {
-            wv.destroy()
-            SlotProcessRouteOwnerRegistry.owner.quarantine(binding, "PROFILE_BIND_FAILED")
-            return fail("Не удалось привязать профиль WebView. Слот заблокирован до перезапуска приложения.")
+            cleanupFailedInitialization(
+                view = wv,
+                binding = binding,
+                quarantineReason = "WEBVIEW_INITIALIZATION_FAILED",
+                message = "Не удалось подготовить WebView. Слот заблокирован до перезапуска приложения."
+            )
+            return
         }
-        val cookies = ProfileStore.getInstance().getProfile(SlotLauncher.profileName(tabId))?.cookieManager
-        if (cookies == null) {
-            wv.destroy()
-            SlotProcessRouteOwnerRegistry.owner.quarantine(binding, "PROFILE_COOKIE_MANAGER_MISSING")
-            return fail("Профиль вкладки не найден. Слот заблокирован до перезапуска приложения.")
-        }
-        WebViewContainerPrivacy.apply(this, wv, cookies)
-        wv.webViewClient = SlotClient(binding)
-        root.addView(wv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        webView = wv
 
         applyRouteThenLoad(binding, accepted.applyProxyOverride, url, wv)
     }
@@ -252,32 +266,51 @@ open class SlotActivity : ComponentActivity() {
         }
     }
 
+    private fun cleanupFailedInitialization(
+        view: WebView,
+        binding: SlotProcessRouteBinding,
+        quarantineReason: String,
+        message: String
+    ) {
+        status.text = message
+        webView = view
+        val cleaned = SlotWebViewCleanup.cleanup(
+            stopLoading = { view.stopLoading() },
+            destroy = { view.destroy() },
+            onFailure = {
+                retainFailedWebView(view)
+                SlotProcessRouteOwnerRegistry.owner.quarantine(binding, "WEBVIEW_INIT_CLEANUP_FAILED")
+            }
+        )
+        if (cleaned) {
+            webView = null
+            SlotProcessRouteOwnerRegistry.owner.quarantine(binding, quarantineReason)
+        }
+    }
+
+    private fun retainFailedWebView(view: WebView) {
+        synchronized(failedWebViews) {
+            if (!failedWebViews.contains(view)) failedWebViews.add(view)
+        }
+    }
+
     override fun onDestroy() {
         val view = webView
         if (view != null) {
-            var cleanupFailed = false
-            try {
-                view.stopLoading()
-            } catch (_: Exception) {
-                cleanupFailed = true
-            }
-            try {
-                view.destroy()
-            } catch (_: Exception) {
-                cleanupFailed = true
-            }
-            if (cleanupFailed) {
-                // A failed renderer teardown is not a clean stop. Keep the view strongly
-                // referenced and quarantine this process so it cannot host another tab.
-                failedWebViews.add(view)
-                activeBinding?.let {
-                    SlotProcessRouteOwnerRegistry.owner.quarantine(it, "WEBVIEW_DESTROY_FAILED")
+            SlotWebViewCleanup.cleanup(
+                stopLoading = { view.stopLoading() },
+                destroy = { view.destroy() },
+                onFailure = {
+                    // A failure is not a clean stop. Keep a strong reference and quarantine.
+                    retainFailedWebView(view)
+                    activeBinding?.let {
+                        SlotProcessRouteOwnerRegistry.owner.quarantine(it, "WEBVIEW_DESTROY_FAILED")
+                    }
                 }
-            }
+            )
         }
         webView = null
-        // Keep process-owned route and bridge. Activity destruction cannot prove that Chromium's
-        // sockets or requests have drained.
+        // WebView.destroy() does not prove that Chromium's external networking has drained.
         super.onDestroy()
     }
 

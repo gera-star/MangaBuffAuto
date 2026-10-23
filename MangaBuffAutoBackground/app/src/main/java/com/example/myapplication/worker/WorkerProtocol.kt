@@ -1,5 +1,11 @@
 package com.example.myapplication.worker
 
+import com.example.myapplication.network.AppProxyConfig
+import com.example.myapplication.service.AccountExecutionModePolicy
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeout
+
 /** Сообщения между основным процессом (сервис) и рабочими процессами WebView (:w0..:w3). */
 internal object WorkerProtocol {
     const val WORKER_COUNT = 4
@@ -70,13 +76,55 @@ internal data class WorkerRunIdentity(
 )
 
 internal object WorkerStopConfirmation {
+    fun matchesIdentity(expected: WorkerRunIdentity, received: WorkerRunIdentity?): Boolean =
+        received != null && expected == received
+
     fun accepts(expected: WorkerRunIdentity, received: WorkerRunIdentity?, stopConfirmed: Boolean): Boolean =
-        stopConfirmed && received != null && expected == received
+        stopConfirmed && matchesIdentity(expected, received)
 
     /** A stop event is not a released slot; require the matching run to report state FREE. */
     fun acceptsRelease(expected: WorkerRunIdentity, received: WorkerRunIdentity?, state: String?): Boolean =
-        received != null && expected == received && state == "FREE"
+        matchesIdentity(expected, received) && state == "FREE"
 
     /** EV_STOPPED handling sends CMD_ACK_STOP immediately; don't send a duplicate STOP afterwards. */
     fun shouldSendStopCommand(stopEventAlreadyAccepted: Boolean): Boolean = !stopEventAlreadyAccepted
+
+    /** EV_STOPPED may only be emitted after all controlled cleanup succeeded and route state is certain. */
+    fun shouldEmitStopped(
+        runtimeCleanupSucceeded: Boolean,
+        routeStateCertain: Boolean,
+        poisoned: Boolean
+    ): Boolean = runtimeCleanupSucceeded && routeStateCertain && !poisoned
+}
+
+/** The lease route key and the worker's supplied proxy config must describe the same route. */
+internal object WorkerRouteIdentityPolicy {
+    fun matches(routeId: String?, proxy: AppProxyConfig): Boolean {
+        if (routeId.isNullOrBlank()) return false
+        val expected = runCatching { AccountExecutionModePolicy.proxyRouteKey(proxy) }.getOrNull()
+            ?: return false
+        return routeId == expected
+    }
+}
+
+/**
+ * Wait for a result while the run is active, but start a short result deadline as soon as the
+ * worker announces it has stopped. The outer deadline also bounds a completely lost IPC sequence.
+ * The caller must quarantine the lease after a timeout.
+ */
+internal suspend fun <T> awaitWorkerResultOrStopped(
+    result: Deferred<T>,
+    stopped: Deferred<*>,
+    runTimeoutMs: Long,
+    resultAfterStopTimeoutMs: Long
+): T {
+    require(runTimeoutMs > 0L && resultAfterStopTimeoutMs > 0L)
+    return withTimeout(runTimeoutMs) {
+        select<T> {
+            result.onAwait { it }
+            stopped.onAwait {
+                withTimeout(resultAfterStopTimeoutMs) { result.await() }
+            }
+        }
+    }
 }

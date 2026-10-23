@@ -214,6 +214,15 @@ open class AutomationWorkerService : Service() {
         runId = data.getString(WorkerProtocol.K_RUN_ID).orEmpty()
     )
 
+    private fun ActiveRun.toWorkerRunIdentity() = WorkerRunIdentity(
+        requestId = requestId,
+        accountId = accountId,
+        runId = runId,
+        profileId = profileId,
+        containerId = containerId,
+        routeId = routeId
+    )
+
     private fun emitStoppedForAlreadyClosedRun(data: Bundle) {
         val requested = runIdentityFromCommand(data)
         if (requested.requestId.isBlank() || requested.runId.isBlank() || poisoned) return
@@ -301,8 +310,11 @@ open class AutomationWorkerService : Service() {
                 val current = activeRun
                 when {
                     current == null && !poisoned -> emitStoppedForAlreadyClosedRun(d)
-                    current?.accountId == requested.accountId && current.runId == requested.runId -> {
-                        // The run's finally block closes its runtime before it sends EV_STOPPED.
+                    current != null && WorkerStopConfirmation.matchesIdentity(
+                        current.toWorkerRunIdentity(),
+                        requested.toWorkerRunIdentity()
+                    ) -> {
+                        // Only a STOP for the exact active identity may cancel its run.
                         runJobs[current.accountId]?.cancel()
                     }
                     else -> {
@@ -334,9 +346,9 @@ open class AutomationWorkerService : Service() {
         val runId = d.getString(WorkerProtocol.K_RUN_ID).orEmpty()
         val account = runCatching { gson.fromJson(d.getString(WorkerProtocol.K_ACCOUNT_JSON), MangaBuffAccount::class.java) }.getOrNull()
         val settings = runCatching { gson.fromJson(d.getString(WorkerProtocol.K_SETTINGS_JSON), GlobalSettings::class.java) }.getOrNull()
-        val proxy = runCatching { gson.fromJson(d.getString(WorkerProtocol.K_PROXY_JSON), AppProxyConfig::class.java) }.getOrNull() ?: AppProxyConfig()
+        val proxy = runCatching { gson.fromJson(d.getString(WorkerProtocol.K_PROXY_JSON), AppProxyConfig::class.java) }.getOrNull()
         val taskType = runCatching { TaskType.valueOf(d.getString(WorkerProtocol.K_TASK).orEmpty()) }.getOrNull()
-        if (reqId.isBlank() || runId.isBlank() || account == null || settings == null || taskType == null) {
+        if (reqId.isBlank() || runId.isBlank() || account == null || settings == null || proxy == null || taskType == null) {
             emit(WorkerProtocol.EV_RESULT) {
                 putString(WorkerProtocol.K_REQ, reqId)
                 putString(WorkerProtocol.K_RUN_ID, runId)
@@ -360,9 +372,15 @@ open class AutomationWorkerService : Service() {
             return
         }
         if (incoming.profileId != "mb_${account.id}" ||
-            incoming.containerId != processContainerId() || incoming.routeId.isBlank()
+            incoming.containerId != processContainerId() ||
+            !WorkerRouteIdentityPolicy.matches(incoming.routeId, proxy)
         ) {
-            emitResult(incoming, false, "RUN_IDENTITY_MISMATCH", "Worker identity did not match the reserved lease.")
+            emitResult(
+                incoming,
+                false,
+                "RUN_IDENTITY_MISMATCH",
+                "Worker identity did not match the reserved lease or proxy route."
+            )
             return
         }
         val current = activeRun
@@ -409,7 +427,11 @@ open class AutomationWorkerService : Service() {
                     withContext(NonCancellable) {
                         runRunner.closeAllWebViewsAndAwait()
                     }
-                    cleanupConfirmed = !poisoned && !routeStateUncertain
+                    cleanupConfirmed = WorkerStopConfirmation.shouldEmitStopped(
+                        runtimeCleanupSucceeded = true,
+                        routeStateCertain = !routeStateUncertain,
+                        poisoned = poisoned
+                    )
                 } catch (e: Exception) {
                     poisoned = true
                     errClass = "STOP_CLEANUP_FAILED"

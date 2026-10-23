@@ -69,6 +69,34 @@ class SlotRouteTest {
     }
 
     @Test
+    fun rejectsMalformedAuthoritiesHostsAndPorts() {
+        listOf(
+            "https://host:abc",
+            "https://host:",
+            "https://:443",
+            "https://exa_mple.org",
+            "https://host:0",
+            "https://host:65536",
+            "https://host:-1",
+            "https://user:pass@example.org",
+            "https://[::1",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "ftp://example.org"
+        ).forEach { raw ->
+            assertNull("Must reject malformed URL: $raw", normalizeSlotUrl(raw))
+        }
+    }
+
+    @Test
+    fun invalidHttpsAuthorityGetsClearUiError() {
+        val message = slotUrlValidationMessage("https://host:abc")
+        assertTrue(message.contains("имя хоста"))
+        assertTrue(message.contains("порт"))
+        assertTrue(slotUrlValidationMessage("http://example.org").contains("HTTP без TLS"))
+    }
+
+    @Test
     fun ipv6AuthorityIsBracketed() {
         assertEquals("[::1]", SlotRoute(SlotProxyType.HTTP, "::1", 1).authorityHost())
         assertEquals("h", SlotRoute(SlotProxyType.HTTP, "h", 1).authorityHost())

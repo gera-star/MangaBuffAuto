@@ -36,6 +36,9 @@ object SlotLauncher {
 
     fun profileName(tabId: String): String = "tab_$tabId"
 
+    /** NEW_TASK is needed for an application-context launch; MULTIPLE_TASK bypasses singleTask reuse. */
+    internal fun activityLaunchFlags(): Int = Intent.FLAG_ACTIVITY_NEW_TASK
+
     fun launch(context: Context, slot: Int, tabId: String, url: String, route: SlotRoute): Result<Unit> {
         if (!isValidSlot(slot)) return Result.failure(IllegalArgumentException("Нет такого слота: $slot"))
         if (!isValidTabId(tabId)) return Result.failure(IllegalArgumentException("Недопустимый id вкладки"))
@@ -43,14 +46,12 @@ object SlotLauncher {
         val normalized = normalizeSlotUrlForRoute(url, route)
             ?: return Result.failure(
                 IllegalArgumentException(
-                    if (url.trim().startsWith("http://", ignoreCase = true))
-                        "Незащищённый HTTP отключён политикой безопасности. Используй HTTPS."
-                    else "Допустим только корректный HTTPS-адрес"
+                    slotUrlValidationMessage(url)
                 )
             )
 
         val intent = Intent().setClassName(context.packageName, activities[slot])
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            .addFlags(activityLaunchFlags())
             .putExtra(EXTRA_TAB_ID, tabId)
             .putExtra(EXTRA_URL, normalized)
             .putExtra(EXTRA_PROXY_TYPE, route.type.name)

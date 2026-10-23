@@ -30,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -83,7 +84,8 @@ internal class AutomationWorkerClient(
         val lease: WorkerSlotPool.Lease,
         val result: CompletableDeferred<Bundle>,
         val stopped: CompletableDeferred<Bundle>,
-        val released: CompletableDeferred<Bundle>
+        val released: CompletableDeferred<Bundle>,
+        val protocolFailure: CompletableDeferred<WorkerDiedException>
     )
     private class Conn(val index: Int) {
         @Volatile var messenger: Messenger? = null
@@ -99,6 +101,9 @@ internal class AutomationWorkerClient(
     private val activeWorkerByAccount = ConcurrentHashMap<String, Int>()
     private val activePendingByAccount = ConcurrentHashMap<String, Pending>()
     private val stopAckTimeoutMs = 10_000L
+    // A task may run for hours; this is a last-resort bound for a completely lost IPC sequence.
+    private val maxRunResultWaitMs = 24L * 60L * 60L * 1_000L
+    private val resultAfterStopTimeoutMs = 15_000L
     // Worker quarantines itself if CMD_ACK_STOP is not processed; wait longer than that deadline.
     private val releaseAckTimeoutMs = 15_000L
     private val replyHandler = Handler(Looper.getMainLooper()) { msg ->
@@ -192,7 +197,8 @@ internal class AutomationWorkerClient(
             lease = lease,
             result = CompletableDeferred(),
             stopped = CompletableDeferred(),
-            released = CompletableDeferred()
+            released = CompletableDeferred(),
+            protocolFailure = CompletableDeferred()
         )
         if (activePendingByAccount.putIfAbsent(account.id, entry) != null) {
             lease.quarantine("ACCOUNT_ALREADY_ACTIVE_IN_WORKER_CLIENT")
@@ -236,7 +242,17 @@ internal class AutomationWorkerClient(
                 throw WorkerDiedException("WORKER_SEND_FAILED worker=$index")
             }
 
-            val result = entry.result.await()
+            val result = try {
+                awaitWorkerResultOrStopped(
+                    result = entry.result,
+                    stopped = entry.stopped,
+                    runTimeoutMs = maxRunResultWaitMs,
+                    resultAfterStopTimeoutMs = resultAfterStopTimeoutMs
+                )
+            } catch (timeout: TimeoutCancellationException) {
+                lease.quarantine("WORKER_RESULT_TIMEOUT")
+                throw timeout
+            }
             val errorClass = result.getString(WorkerProtocol.K_ERR_CLASS).orEmpty()
             if (errorClass in setOf("WORKER_BUSY", "WORKER_QUARANTINED", "RUN_IDENTITY_MISMATCH")) {
                 lease.quarantine(errorClass)
@@ -263,6 +279,7 @@ internal class AutomationWorkerClient(
                 lease.quarantine("INVALID_WORKER_FREE_ACK")
                 throw WorkerDiedException("INVALID_WORKER_FREE_ACK worker=$index; slot quarantined")
             }
+            if (entry.protocolFailure.isCompleted) throw entry.protocolFailure.await()
 
             if (!result.getBoolean(WorkerProtocol.K_OK)) {
                 val msg = result.getString(WorkerProtocol.K_ERR_MSG).orEmpty()
@@ -273,6 +290,8 @@ internal class AutomationWorkerClient(
                 }
             }
         } catch (e: CancellationException) {
+            val resultWaitTimedOut = e is TimeoutCancellationException
+            if (resultWaitTimedOut) lease.quarantine("WORKER_RESULT_TIMEOUT")
             var stopFailure: String? = null
             withContext(NonCancellable) {
                 val needsStopCommand = WorkerStopConfirmation.shouldSendStopCommand(
@@ -306,6 +325,9 @@ internal class AutomationWorkerClient(
                 if (stopFailure != null) lease.quarantine(stopFailure!!)
             }
             if (stopFailure != null) throw WorkerDiedException("${stopFailure!!} worker=$index; slot quarantined")
+            if (resultWaitTimedOut) {
+                throw WorkerDiedException("WORKER_RESULT_TIMEOUT worker=$index; slot quarantined")
+            }
             throw e
         } finally {
             deckJob.cancel()
@@ -373,7 +395,8 @@ internal class AutomationWorkerClient(
         data.getString(WorkerProtocol.K_ROUTE_ID).orEmpty()
     )
 
-    private fun identityMatches(entry: Pending, data: Bundle): Boolean = runIdentity(entry) == runIdentity(data)
+    private fun identityMatches(entry: Pending, data: Bundle): Boolean =
+        WorkerStopConfirmation.matchesIdentity(runIdentity(entry), runIdentity(data))
 
     private fun handleEvent(msg: Message) {
         val d = msg.data
@@ -444,10 +467,20 @@ internal class AutomationWorkerClient(
             }
             WorkerProtocol.EV_RESULT -> {
                 val entry = pending[d.getString(WorkerProtocol.K_REQ).orEmpty()]
-                if (entry == null || !identityMatches(entry, d)) {
-                    onLog(LogEntry(username = id, component = "SECURITY", message = "STALE_EV_RESULT_IGNORED", isError = true))
-                } else {
-                    entry.result.complete(d)
+                when {
+                    entry == null -> {
+                        onLog(LogEntry(username = id, component = "SECURITY", message = "STALE_EV_RESULT_IGNORED", isError = true))
+                    }
+                    !identityMatches(entry, d) -> {
+                        val error = WorkerDiedException("WORKER_RESULT_IDENTITY_MISMATCH worker=${entry.worker}")
+                        entry.lease.quarantine("WORKER_RESULT_IDENTITY_MISMATCH")
+                        entry.protocolFailure.complete(error)
+                        entry.result.completeExceptionally(error)
+                        entry.stopped.completeExceptionally(error)
+                        entry.released.completeExceptionally(error)
+                        onLog(LogEntry(username = id, component = "SECURITY", message = "WORKER_RESULT_IDENTITY_MISMATCH_QUARANTINED", isError = true))
+                    }
+                    else -> entry.result.complete(d)
                 }
             }
             else -> {
