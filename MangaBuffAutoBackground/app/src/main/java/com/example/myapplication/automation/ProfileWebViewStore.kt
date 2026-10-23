@@ -419,43 +419,44 @@ class ProfileWebViewStore(
         }
     }
 
-    @Synchronized
-    fun releaseWebView(accountId: String) {
-        val webView = activeWebViews.remove(accountId)
-        attachDeferreds.remove(accountId)
-        webViewRunIds.remove(accountId)
-        if (webView != null) {
-            // Flush the account's own persistent WebView profile before destroying its view.
-            // This preserves current login cookies and never clears the profile.
+    suspend fun releaseWebView(accountId: String) {
+        // Keep the view referenced until destroy succeeds; errors are not a clean stop.
+        val webView = synchronized(this) {
+            attachDeferreds.remove(accountId)
+            webViewRunIds.remove(accountId)
+            activeWebViews[accountId]
+        } ?: return
+
+        withContext(Dispatchers.Main.immediate) {
             runCatching {
                 ProfileStore.getInstance().getProfile("mb_$accountId")?.cookieManager?.flush()
             }.onFailure { error ->
-                onLog(
-                    LogEntry(
-                        username = accountId,
-                        component = "PROFILE",
-                        message = "COOKIE_FLUSH_FAILED reason=${error.message}",
-                        isError = true
-                    )
-                )
+                onLog(LogEntry(
+                    username = accountId, component = "PROFILE",
+                    message = "COOKIE_FLUSH_FAILED reason=${error.javaClass.simpleName}",
+                    isError = true
+                ))
             }
-
             try {
-                onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "DESTROYED profile=mb_$accountId"))
                 webView.stopLoading()
-                webView.loadUrl("about:blank")
                 webView.destroy()
+                onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "DESTROYED profile=mb_$accountId"))
             } catch (e: Exception) {
-                // ignore
+                onLog(LogEntry(
+                    username = accountId, component = "WEBVIEW",
+                    message = "WEBVIEW_DESTROY_FAILED profile=mb_$accountId reason=${e.javaClass.simpleName}",
+                    isError = true
+                ))
+                throw IllegalStateException("WEBVIEW_DESTROY_FAILED accountId=$accountId", e)
             }
+        }
+        synchronized(this) {
+            if (activeWebViews[accountId] === webView) activeWebViews.remove(accountId)
         }
     }
 
-    @Synchronized
-    fun releaseAll() {
-        val keys = activeWebViews.keys.toList()
-        for (key in keys) {
-            releaseWebView(key)
-        }
+    suspend fun releaseAll() {
+        val keys = synchronized(this) { activeWebViews.keys.toList() }
+        for (key in keys) releaseWebView(key)
     }
 }

@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AccountExecutionGateTest {
@@ -35,5 +36,20 @@ class AccountExecutionGateTest {
 
         val second = withTimeout(1_000) { AccountExecutionGate.acquire() }
         second.release()
+    }
+
+    @Test
+    fun quarantinedGateRejectsNextAccountAfterPermitRelease() = runBlocking {
+        val gate = ExecutionGateController()
+        val first = gate.acquire()
+        first.quarantine("STOP_CLEANUP_UNCONFIRMED")
+        first.release()
+        var rejected = false
+        try {
+            withTimeout(1_000) { gate.acquire() }
+        } catch (_: ExecutionGateQuarantinedException) {
+            rejected = true
+        }
+        assertTrue("next account must not acquire a quarantined gate", rejected)
     }
 }

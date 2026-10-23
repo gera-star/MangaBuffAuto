@@ -17,9 +17,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
@@ -42,6 +47,9 @@ class AutomationRuntime(
     private val runtimes = ConcurrentHashMap<String, AccountRuntime>()
     private val automationEngines = ConcurrentHashMap<String, MangaBuffAutomation>()
     private val executionJobs = ConcurrentHashMap<String, Job>()
+    private val stopLocks = ConcurrentHashMap<String, Mutex>()
+    private val failedStops = ConcurrentHashMap.newKeySet<String>()
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val webViewStore = ProfileWebViewStore(
@@ -148,38 +156,80 @@ class AutomationRuntime(
         return automationEngines[accountId]?.markCurrentMangaAsRead() == true
     }
 
-    @Synchronized
+    /** Best-effort stop request for UI/renderer callbacks; queue owners must await cleanup. */
     fun stopAccount(accountId: String) {
-        executionJobs.remove(accountId)?.cancel()
-
-        // Remove both identities first so late callbacks from this run are treated as stale.
-        val runtime = runtimes.remove(accountId)
-        val engine = automationEngines.remove(accountId)
-
-        // Cancel this engine's IO scope, queued HTTP calls, pooled sockets and Handler work
-        // before destroying the WebView it may still reference.
-        if (engine != null) {
-            engine.closeRuntime()
-            onLog(
-                LogEntry(
-                    username = accountId,
-                    component = "ENGINE",
-                    message = "STOP / DESTROY engineId=${engine.hashCode()} accountId=$accountId"
-                )
-            )
+        executionJobs[accountId]?.let { it.cancel(); return }
+        cleanupScope.launch {
+            try { stopAccountAndAwait(accountId) }
+            catch (e: Exception) {
+                onLog(LogEntry(
+                    username = accountId, component = "SECURITY",
+                    message = "STOP_CLEANUP_UNCONFIRMED accountId=$accountId reason=${e.javaClass.simpleName}",
+                    isError = true
+                ))
+            }
         }
+    }
 
-        if (runtime != null) {
-            runtime.state = AccountState.STOPPED
-            onWebViewCleared(accountId, runtime.webView)
-            webViewStore.releaseWebView(accountId)
-            onLog(
-                LogEntry(
-                    username = accountId,
-                    component = "ACCOUNT",
-                    message = "STOPPED accountId=$accountId runId=${runtime.runId} webView=${runtime.webView.hashCode()}"
-                )
-            )
+    suspend fun stopAccountAndAwait(accountId: String) {
+        if (accountId in failedStops) throw IllegalStateException("STOP_ALREADY_QUARANTINED accountId=$accountId")
+        val callerJob = kotlinx.coroutines.currentCoroutineContext()[Job]
+        val stopLock = stopLocks.computeIfAbsent(accountId) { Mutex() }
+        try {
+            StopCleanupBarrier.execute(STOP_CLEANUP_TIMEOUT_MS) {
+                stopLock.withLock {
+                    if (accountId in failedStops) throw IllegalStateException("STOP_ALREADY_QUARANTINED accountId=$accountId")
+                    val (targetJob, targetRuntime, targetEngine) = synchronized(this@AutomationRuntime) {
+                        val job = executionJobs[accountId]
+                        val runtime = runtimes[accountId]
+                        val engine = automationEngines[accountId]
+                        if (runtime != null) runtimes.remove(accountId, runtime)
+                        if (engine != null) automationEngines.remove(accountId, engine)
+                        Triple(job, runtime, engine)
+                    }
+                    if (targetJob != null && targetJob === callerJob) {
+                        throw IllegalStateException("STOP_CANNOT_JOIN_CURRENT_RUN_JOB accountId=$accountId")
+                    }
+                    targetJob?.cancel()
+                    withContext(Dispatchers.Main.immediate) { targetEngine?.closeRuntime() }
+                    targetJob?.join()
+
+                    // A cancelled run may publish a runtime during synchronous setup; drain it too.
+                    val (lateRuntime, lateEngine) = synchronized(this@AutomationRuntime) {
+                        val runtime = runtimes.remove(accountId)
+                        val engine = automationEngines.remove(accountId)
+                        runtime to engine
+                    }
+                    if (lateEngine != null && lateEngine !== targetEngine) {
+                        withContext(Dispatchers.Main.immediate) { lateEngine.closeRuntime() }
+                    }
+                    targetEngine?.awaitRuntimeClosed()
+                    if (lateEngine != null && lateEngine !== targetEngine) lateEngine.awaitRuntimeClosed()
+
+                    val runtimeToClear = lateRuntime ?: targetRuntime
+                    if (runtimeToClear != null) {
+                        runtimeToClear.state = AccountState.STOPPED
+                        runCatching { onWebViewCleared(accountId, runtimeToClear.webView) }
+                            .onFailure { error ->
+                                onLog(LogEntry(
+                                    username = accountId, component = "WEBVIEW",
+                                    message = "WEBVIEW_CLEAR_CALLBACK_FAILED reason=${error.javaClass.simpleName}",
+                                    isError = true
+                                ))
+                            }
+                    }
+                    webViewStore.releaseWebView(accountId)
+                    onLog(LogEntry(
+                        username = accountId, component = "ACCOUNT",
+                        message = "STOPPED_CONFIRMED accountId=$accountId runId=${runtimeToClear?.runId ?: "unknown"}"
+                    ))
+                }
+            }
+        } catch (e: Exception) {
+            // A timeout/destroy exception makes runtime state unknowable. Keep the profile/WebView
+            // reference intact and refuse all future cleanup attempts that might imply a clean stop.
+            failedStops.add(accountId)
+            throw e
         }
     }
 
@@ -205,7 +255,43 @@ class AutomationRuntime(
         promoCode: String = "",
         resumePersistedProgress: Boolean = false
     ) {
+        val runJob = coroutineContext[Job]
+        if (runJob != null) synchronized(this) {
+            val previous = executionJobs[account.id]
+            if (previous != null && previous !== runJob && previous.isActive) {
+                throw IllegalStateException("ACCOUNT_RUN_ALREADY_ACTIVE accountId=${account.id}")
+            }
+            executionJobs[account.id] = runJob
+        }
+        try {
+            executeTaskInternal(
+                activeAccountId = activeAccountId,
+                account = account,
+                settings = settings,
+                taskType = taskType,
+                expectedProfileName = expectedProfileName,
+                promoCode = promoCode,
+                resumePersistedProgress = resumePersistedProgress
+            )
+        } finally {
+            if (runJob != null) synchronized(this) {
+                if (executionJobs[account.id] === runJob) executionJobs.remove(account.id)
+            }
+        }
+    }
+
+    private suspend fun executeTaskInternal(
+        activeAccountId: String,
+        account: MangaBuffAccount,
+        settings: GlobalSettings,
+        taskType: TaskType,
+        expectedProfileName: String,
+        promoCode: String = "",
+        resumePersistedProgress: Boolean = false
+    ) {
+        coroutineContext.ensureActive()
         val runtime = runtimes[account.id] ?: prepareAccount(account)
+        coroutineContext.ensureActive()
         onWebViewAssigned(account.id, runtime.webView)
 
         // Синхронизируем куки именно этого аккаунта
@@ -414,28 +500,34 @@ class AutomationRuntime(
             onLog(LogEntry(username = account.username, component = "ACCOUNT", message = "FAILED reason=${e.message}", isError = true))
             throw e
         } finally {
-            engineHeartbeatJob.cancel()
-            synchronized(this) {
-                val registered = executionJobs[account.id]
-                if (registered == currentJob) {
-                    executionJobs.remove(account.id)
-                }
+            withContext(NonCancellable) {
+                engineHeartbeatJob.cancel()
+                engineHeartbeatJob.join()
             }
         }
     }
 
-    @Synchronized
     fun stopAll() {
-        val ids = runtimes.keys.toList()
-        for (id in ids) {
-            stopAccount(id)
+        val ids = synchronized(this) {
+            (runtimes.keys + automationEngines.keys + executionJobs.keys + failedStops).toSet()
         }
-        automationEngines.clear()
-        webViewStore.releaseAll()
+        ids.forEach { stopAccount(it) }
+    }
+
+    suspend fun stopAllAndAwait() {
+        val ids = synchronized(this) {
+            (runtimes.keys + automationEngines.keys + executionJobs.keys + failedStops).toSet()
+        }
+        ids.forEach { stopAccountAndAwait(it) }
+        // Do not release untracked WebViews here: a prior timed-out run may still own network work.
     }
 
     @Synchronized
-    fun closeAllWebViews() {
-        stopAll()
+    fun closeAllWebViews() { stopAll() }
+
+    suspend fun closeAllWebViewsAndAwait() { stopAllAndAwait() }
+
+    private companion object {
+        const val STOP_CLEANUP_TIMEOUT_MS = StopCleanupBarrier.DEFAULT_TIMEOUT_MS
     }
 }

@@ -12,6 +12,7 @@ internal object WorkerProtocol {
     const val CMD_MARK_READ = 5
     const val CMD_DECK_TOGGLE = 6
     const val CMD_RELOAD = 7
+    const val CMD_ACK_STOP = 8
 
     // рабочий процесс -> клиент
     const val EV_LOG = 101
@@ -57,4 +58,18 @@ internal object WorkerProtocol {
 
     /** Binder-транзакция ограничена ~1 МБ: длинные строки логов обрезаем. */
     const val MAX_TEXT = 20_000
+}
+
+internal data class WorkerRunIdentity(
+    val requestId: String,
+    val accountId: String,
+    val runId: String,
+    val profileId: String,
+    val containerId: String,
+    val routeId: String
+)
+
+internal object WorkerStopConfirmation {
+    fun accepts(expected: WorkerRunIdentity, received: WorkerRunIdentity?, stopConfirmed: Boolean): Boolean =
+        stopConfirmed && received != null && expected == received
 }

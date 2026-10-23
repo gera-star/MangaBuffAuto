@@ -310,6 +310,16 @@ class MangaBuffAutomation(
         mainHandler.removeCallbacksAndMessages(null)
     }
 
+    /** Drain engine-owned coroutines and tracked OkHttp calls within the caller's finite timeout. */
+    suspend fun awaitRuntimeClosed() {
+        accountIoScope.coroutineContext[Job]?.join()
+        while (
+            httpClient.dispatcher.queuedCalls().isNotEmpty() ||
+            httpClient.dispatcher.runningCalls().isNotEmpty()
+        ) delay(25L)
+        httpClient.connectionPool.evictAll()
+    }
+
     /*
      * Background reader state is local to THIS MangaBuffAutomation instance.
      * AutomationRuntime creates one engine per accountId, so this state cannot

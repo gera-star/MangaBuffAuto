@@ -327,13 +327,20 @@ internal class AutomationWorkerClient(
         putString(WorkerProtocol.K_ROUTE_ID, entry.routeId)
     }
 
-    private fun identityMatches(entry: Pending, data: Bundle): Boolean =
-        data.getString(WorkerProtocol.K_REQ) == entry.requestId &&
-            data.getString(WorkerProtocol.K_ACCOUNT_ID) == entry.accountId &&
-            data.getString(WorkerProtocol.K_RUN_ID) == entry.runId &&
-            data.getString(WorkerProtocol.K_PROFILE_ID) == entry.profileId &&
-            data.getString(WorkerProtocol.K_CONTAINER_ID) == entry.containerId &&
-            data.getString(WorkerProtocol.K_ROUTE_ID) == entry.routeId
+    private fun runIdentity(entry: Pending) = WorkerRunIdentity(
+        entry.requestId, entry.accountId, entry.runId, entry.profileId, entry.containerId, entry.routeId
+    )
+
+    private fun runIdentity(data: Bundle) = WorkerRunIdentity(
+        data.getString(WorkerProtocol.K_REQ).orEmpty(),
+        data.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty(),
+        data.getString(WorkerProtocol.K_RUN_ID).orEmpty(),
+        data.getString(WorkerProtocol.K_PROFILE_ID).orEmpty(),
+        data.getString(WorkerProtocol.K_CONTAINER_ID).orEmpty(),
+        data.getString(WorkerProtocol.K_ROUTE_ID).orEmpty()
+    )
+
+    private fun identityMatches(entry: Pending, data: Bundle): Boolean = runIdentity(entry) == runIdentity(data)
 
     private fun handleEvent(msg: Message) {
         val d = msg.data
@@ -353,8 +360,11 @@ internal class AutomationWorkerClient(
                     onLog(LogEntry(username = id, component = "SECURITY", message = "STALE_OR_INVALID_EV_STATE_IGNORED", isError = true))
                 } else {
                     try {
-                        if (next == WorkerSlotState.VERIFIED_CLOSED) entry.lease.markVerifiedClosed()
-                        else if (next != WorkerSlotState.FREE && next != WorkerSlotState.QUARANTINED) {
+                        if (next == WorkerSlotState.QUARANTINED) {
+                            entry.lease.quarantine("WORKER_QUARANTINED_STATE")
+                        } else if (next == WorkerSlotState.VERIFIED_CLOSED) {
+                            entry.lease.markVerifiedClosed()
+                        } else if (next != WorkerSlotState.FREE) {
                             entry.lease.transition(next)
                         }
                     } catch (_: Exception) {
@@ -365,12 +375,23 @@ internal class AutomationWorkerClient(
             }
             WorkerProtocol.EV_STOPPED -> {
                 val entry = pending[d.getString(WorkerProtocol.K_REQ).orEmpty()]
-                if (entry == null || !identityMatches(entry, d) ||
-                    !d.getBoolean(WorkerProtocol.K_STOP_CONFIRMED)
+                if (entry == null || !WorkerStopConfirmation.accepts(
+                        runIdentity(entry), runIdentity(d), d.getBoolean(WorkerProtocol.K_STOP_CONFIRMED)
+                    )
                 ) {
                     onLog(LogEntry(username = id, component = "SECURITY", message = "STALE_OR_INVALID_EV_STOPPED_IGNORED", isError = true))
                 } else {
-                    entry.stopped.complete(d)
+                    // EV_STOPPED is only phase one: worker keeps its lease in VERIFIED_CLOSED
+                    // until this matching receipt arrives. If ACK IPC is lost, neither side reuses it.
+                    val ackSent = send(entry.worker, WorkerProtocol.CMD_ACK_STOP) { putRunIdentity(entry) }
+                    if (!ackSent) {
+                        entry.lease.quarantine("STOP_RECEIPT_ACK_SEND_FAILED")
+                        entry.stopped.completeExceptionally(
+                            WorkerDiedException("STOP_RECEIPT_ACK_SEND_FAILED worker=${entry.worker}")
+                        )
+                    } else {
+                        entry.stopped.complete(d)
+                    }
                 }
             }
             WorkerProtocol.EV_RESULT -> {

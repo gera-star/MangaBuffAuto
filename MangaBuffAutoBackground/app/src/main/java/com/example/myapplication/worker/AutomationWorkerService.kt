@@ -35,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -101,16 +102,14 @@ open class AutomationWorkerService : Service() {
         what: Int,
         eventAccountId: String,
         fill: Bundle.() -> Unit = {}
-    ) {
-        emit(what) {
-            putString(WorkerProtocol.K_REQ, run.requestId)
-            putString(WorkerProtocol.K_ACCOUNT_ID, eventAccountId)
-            putString(WorkerProtocol.K_RUN_ID, run.runId)
-            putString(WorkerProtocol.K_PROFILE_ID, run.profileId)
-            putString(WorkerProtocol.K_CONTAINER_ID, run.containerId)
-            putString(WorkerProtocol.K_ROUTE_ID, run.routeId)
-            fill()
-        }
+    ): Boolean = emit(what) {
+        putString(WorkerProtocol.K_REQ, run.requestId)
+        putString(WorkerProtocol.K_ACCOUNT_ID, eventAccountId)
+        putString(WorkerProtocol.K_RUN_ID, run.runId)
+        putString(WorkerProtocol.K_PROFILE_ID, run.profileId)
+        putString(WorkerProtocol.K_CONTAINER_ID, run.containerId)
+        putString(WorkerProtocol.K_ROUTE_ID, run.routeId)
+        fill()
     }
 
     private fun createRunner(run: ActiveRun): MultiAccountAutomationRunner =
@@ -181,8 +180,9 @@ open class AutomationWorkerService : Service() {
             WorkerSlotState.RESERVED -> setOf(WorkerSlotState.PROXY_READY, WorkerSlotState.STOPPING)
             WorkerSlotState.PROXY_READY -> setOf(WorkerSlotState.RUNNING, WorkerSlotState.STOPPING)
             WorkerSlotState.RUNNING -> setOf(WorkerSlotState.STOPPING)
-            WorkerSlotState.STOPPING -> setOf(WorkerSlotState.VERIFIED_CLOSED)
-            WorkerSlotState.VERIFIED_CLOSED, WorkerSlotState.QUARANTINED -> emptySet()
+            WorkerSlotState.STOPPING -> setOf(WorkerSlotState.VERIFIED_CLOSED, WorkerSlotState.QUARANTINED)
+            WorkerSlotState.VERIFIED_CLOSED -> setOf(WorkerSlotState.FREE)
+            WorkerSlotState.QUARANTINED -> emptySet()
         }
         check(next in allowed) { "Invalid worker transition $current -> $next" }
         lifecycleState = next
@@ -191,12 +191,11 @@ open class AutomationWorkerService : Service() {
         }
     }
 
-    private fun emitStopped(run: ActiveRun, reason: String) {
+    private fun emitStopped(run: ActiveRun, reason: String): Boolean =
         emitRunEvent(run, WorkerProtocol.EV_STOPPED, run.accountId) {
             putBoolean(WorkerProtocol.K_STOP_CONFIRMED, true)
             putString(WorkerProtocol.K_STOP_REASON, reason)
         }
-    }
 
     private fun emitResult(run: ActiveRun, success: Boolean, errorClass: String = "", errorMessage: String = "") {
         emitRunEvent(run, WorkerProtocol.EV_RESULT, run.accountId) {
@@ -272,9 +271,25 @@ open class AutomationWorkerService : Service() {
         super.onDestroy()
     }
 
+    private fun acknowledgeStoppedRun(data: Bundle) {
+        val requested = runIdentityFromCommand(data)
+        val current = activeRun
+        if (current == null || current != requested || lifecycleState != WorkerSlotState.VERIFIED_CLOSED || poisoned) {
+            emit(WorkerProtocol.EV_LOG) {
+                putString(WorkerProtocol.K_JSON, gson.toJson(
+                    LogEntry(component = "SECURITY", message = "STALE_STOP_RECEIPT_IGNORED runId=${requested.runId}", isError = true)
+                ))
+            }
+            return
+        }
+        transitionState(current, WorkerSlotState.FREE)
+        activeRun = null
+    }
+
     private fun stopEverything() {
-        runJobs.values.toList().forEach { it.cancel() }
-        runCatching { activeRunner?.stopAll("WORKER_UNBOUND") }
+        val activeJobs = runJobs.values.toList()
+        activeJobs.forEach { it.cancel() }
+        if (activeJobs.isEmpty()) runCatching { activeRunner?.stopAll("WORKER_UNBOUND") }
     }
 
     private fun handleCommand(msg: Message) {
@@ -302,6 +317,7 @@ open class AutomationWorkerService : Service() {
                 }
             }
             WorkerProtocol.CMD_STOP_ALL -> stopEverything()
+            WorkerProtocol.CMD_ACK_STOP -> acknowledgeStoppedRun(d)
             WorkerProtocol.CMD_SKIP_MANGA -> activeRunner?.skipCurrentManga(d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty())
             WorkerProtocol.CMD_MARK_READ -> activeRunner?.markCurrentMangaAsRead(d.getString(WorkerProtocol.K_ACCOUNT_ID).orEmpty())
             WorkerProtocol.CMD_DECK_TOGGLE -> DeckCommentToggleRegistry.setEnabled(
@@ -391,8 +407,7 @@ open class AutomationWorkerService : Service() {
                 }
                 try {
                     withContext(NonCancellable) {
-                        runRunner.stopAccount(account.id)
-                        runRunner.closeAllWebViews()
+                        runRunner.closeAllWebViewsAndAwait()
                     }
                     cleanupConfirmed = !poisoned && !routeStateUncertain
                 } catch (e: Exception) {
@@ -401,22 +416,56 @@ open class AutomationWorkerService : Service() {
                     errMsg = e.javaClass.simpleName
                 }
                 if (cleanupConfirmed) {
-                    transitionState(incoming, WorkerSlotState.VERIFIED_CLOSED)
-                    emitStopped(incoming, if (ok) "RUN_FINISHED_AND_WEBVIEW_DESTROYED" else "RUN_FAILED_AND_WEBVIEW_DESTROYED")
-                } else {
+                    try {
+                        transitionState(incoming, WorkerSlotState.VERIFIED_CLOSED)
+                    } catch (e: Exception) {
+                        poisoned = true
+                        cleanupConfirmed = false
+                        errClass = "WORKER_QUARANTINED"
+                        errMsg = "Verified-close transition failed: ${e.javaClass.simpleName}"
+                    }
+                }
+                if (cleanupConfirmed) {
+                    val stopEventSent = emitStopped(
+                        incoming,
+                        if (ok) "RUN_FINISHED_AND_WEBVIEW_DESTROYED" else "RUN_FAILED_AND_WEBVIEW_DESTROYED"
+                    )
+                    if (!stopEventSent) {
+                        poisoned = true
+                        cleanupConfirmed = false
+                        errClass = "WORKER_QUARANTINED"
+                        errMsg = "STOP_ACK_IPC_SEND_FAILED"
+                    } else {
+                        scope.launch {
+                            delay(STOP_RECEIPT_ACK_TIMEOUT_MS)
+                            if (activeRun == incoming && lifecycleState == WorkerSlotState.VERIFIED_CLOSED) {
+                                poisoned = true
+                                lifecycleState = WorkerSlotState.QUARANTINED
+                                emitRunEvent(incoming, WorkerProtocol.EV_STATE, incoming.accountId) {
+                                    putString(WorkerProtocol.K_STATE, WorkerSlotState.QUARANTINED.name)
+                                }
+                                activeRun = null
+                            }
+                        }
+                    }
+                }
+                if (!cleanupConfirmed) {
                     poisoned = true
+                    lifecycleState = WorkerSlotState.QUARANTINED
+                    emitRunEvent(incoming, WorkerProtocol.EV_STATE, incoming.accountId) {
+                        putString(WorkerProtocol.K_STATE, WorkerSlotState.QUARANTINED.name)
+                    }
                     emit(WorkerProtocol.EV_LOG) {
                         putString(WorkerProtocol.K_JSON, gson.toJson(
                             LogEntry(component = "WORKER", message = "STOP_NOT_CONFIRMED runId=$runId; worker quarantined", isError = true)
                         ))
                     }
                     errClass = "WORKER_QUARANTINED"
-                    errMsg = "Runtime/WebView stop or process proxy state could not be confirmed."
+                    errMsg = "Runtime, HTTP, WebView or process stop could not be confirmed."
                 }
                 emitResult(incoming, ok && cleanupConfirmed, errClass, errMsg)
                 if (activeRunner === runRunner) activeRunner = null
-                if (cleanupConfirmed) lifecycleState = WorkerSlotState.FREE
-                if (activeRun?.runId == runId && activeRun?.requestId == reqId) activeRun = null
+                if (!cleanupConfirmed && activeRun?.runId == runId && activeRun?.requestId == reqId) activeRun = null
                 runJobs.remove(account.id, job)
             }
         }
@@ -477,18 +526,21 @@ open class AutomationWorkerService : Service() {
 
     private companion object {
         const val PROXY_APPLY_TIMEOUT_MS = 15_000L
+        const val STOP_RECEIPT_ACK_TIMEOUT_MS = 12_000L
     }
 
     private fun trim(entry: LogEntry): LogEntry =
         if (entry.message.length > WorkerProtocol.MAX_TEXT) entry.copy(message = entry.message.take(WorkerProtocol.MAX_TEXT)) else entry
 
-    private fun emit(what: Int, fill: Bundle.() -> Unit) {
-        val target = client ?: return
+    private fun emit(what: Int, fill: Bundle.() -> Unit): Boolean {
+        val target = client ?: return false
         val message = Message.obtain(null, what)
         message.data = Bundle().apply(fill)
-        try {
+        return try {
             target.send(message)
+            true
         } catch (_: RemoteException) {
+            false
         }
     }
 }

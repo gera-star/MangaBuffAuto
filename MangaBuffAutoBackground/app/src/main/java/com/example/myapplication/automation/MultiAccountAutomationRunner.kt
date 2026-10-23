@@ -94,6 +94,11 @@ class MultiAccountAutomationRunner(
         runtime.stopAccount(accountId)
     }
 
+    suspend fun stopAccountAndAwait(accountId: String) {
+        onLog(LogEntry(username = accountId, component = "RUNNER", message = "STOP_AND_AWAIT accountId=$accountId"))
+        runtime.stopAccountAndAwait(accountId)
+    }
+
     fun reloadAccount(account: MangaBuffAccount) {
         runtime.reloadAccount(account)
     }
@@ -103,7 +108,12 @@ class MultiAccountAutomationRunner(
         runtime.stopAll()
     }
 
-    fun closeAllWebViews() {
-        runtime.closeAllWebViews()
+    fun closeAllWebViews() { runtime.closeAllWebViews() }
+
+    suspend fun stopAllAndAwait(reason: String = "SERVICE_DESTROYED") {
+        onLog(LogEntry(component = "RUNNER", message = "STOP_ALL_AND_AWAIT reason=$reason"))
+        runtime.stopAllAndAwait()
     }
+
+    suspend fun closeAllWebViewsAndAwait() { runtime.closeAllWebViewsAndAwait() }
 }

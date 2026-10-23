@@ -354,6 +354,7 @@ class MangaBuffForegroundService : Service() {
     private var restoredPersistedRuns = false
     private var tradeMonitorRestoreChecked = false
     private var stoppingExplicitly = false
+    @Volatile private var stopSafetyQuarantineReason: String? = null
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -754,11 +755,16 @@ class MangaBuffForegroundService : Service() {
             var workerLease: WorkerSlotPool.Lease? = null
             var runCompleted = false
             var runCancelled = false
+            var stopCleanupConfirmed = true
             var runFailureReason: String? = null
             var incompleteSequenceFailure = false
             if (currentJob != null) accountExecutionQueue.markQueued(accountId, currentJob)
 
             try {
+                stopSafetyQuarantineReason?.let { reason ->
+                    stopCleanupConfirmed = false
+                    throw IllegalStateException("STOP_SAFETY_QUARANTINE: $reason")
+                }
                 publishLog(
                     LogEntry(
                         username = account.username,
@@ -937,8 +943,23 @@ class MangaBuffForegroundService : Service() {
                         transitionAccountTaskState(accountId, AccountTaskEvent.CLEANUP_STARTED, "task_finally_cleanup")
                         accountProgressTrackers.remove(accountId)
                         accountCurrentTaskLabels.remove(accountId)
-                        // Clean up the previous account before yielding the queue permit.
-                        stopAccountEverywhere(accountId)
+                        // Await the main-process cleanup; worker mode additionally requires a matched stop ACK.
+                        try {
+                            automationRunner.stopAccountAndAwait(accountId)
+                        } catch (e: Exception) {
+                            stopCleanupConfirmed = false
+                            runFailureReason = "STOP_CLEANUP_UNCONFIRMED:${e.javaClass.simpleName}"
+                            publishLog(LogEntry(
+                                username = account.username,
+                                component = "SECURITY",
+                                message = "STOP_CLEANUP_UNCONFIRMED accountId=$accountId reason=${e.javaClass.simpleName}",
+                                isError = true
+                            ))
+                        }
+                        if (workerLease != null && !workerLease.isStopConfirmed()) {
+                            stopCleanupConfirmed = false
+                            runFailureReason = "STOP_ACK_UNCONFIRMED_OR_IPC_LOST"
+                        }
 
                         networkUnvalidatedGraceJobs.remove(accountId)?.cancel()
                         val recoveryRequested = recoveryRequests.remove(accountId)
@@ -957,10 +978,10 @@ class MangaBuffForegroundService : Service() {
                         )
                         // A temporary network pause is not a WebView crash and must not consume
                         // the bounded renderer-recovery budget.
-                        val shouldRecover = networkResumeWanted || (
+                        val shouldRecover = stopCleanupConfirmed && (networkResumeWanted || (
                             recoveryWanted &&
                                 recoveryBudget.tryConsume(accountId, SystemClock.elapsedRealtime())
-                            )
+                            ))
                         val recoveryExhausted = recoveryWanted && !shouldRecover
 
                         if (shouldRecover) {
@@ -1045,6 +1066,7 @@ class MangaBuffForegroundService : Service() {
                                 )
                             }
                             when {
+                                !stopCleanupConfirmed -> transitionAccountTaskState(accountId, AccountTaskEvent.FAILED, "STOP_CLEANUP_UNCONFIRMED")
                                 recoveryExhausted -> transitionAccountTaskState(accountId, AccountTaskEvent.FAILED, "recovery_budget_exhausted")
                                 runFailureReason != null && (runCancelled && runFailureReason.contains("NO_PROGRESS", ignoreCase = true)) ->
                                     transitionAccountTaskState(accountId, AccountTaskEvent.FAILED, runFailureReason.orEmpty())
@@ -1075,6 +1097,7 @@ class MangaBuffForegroundService : Service() {
                                 runtimePrefs.edit().remove(promoCodePreferenceKey(accountId)).apply()
                             }
                             val terminalStatus = when {
+                                !stopCleanupConfirmed -> "Остановлено: очистка не подтверждена; новые запуски заблокированы"
                                 runFailureReason == "AUTH_REQUIRED" ->
                                     "Требуется повторный вход в MangaBuff"
                                 recoveryExhausted && incompleteSequenceFailure ->
@@ -1101,6 +1124,19 @@ class MangaBuffForegroundService : Service() {
                     // newly admitted account cannot jump ahead of trades already waiting on Gate.
                     // Release the route before waking queued accounts; the next task must not
                     // apply a different process-wide proxy while this WebView is still alive.
+                    if (!stopCleanupConfirmed) {
+                        val reason = runFailureReason ?: "STOP_CLEANUP_UNCONFIRMED"
+                        stopSafetyQuarantineReason = reason
+                        AccountExecutionGate.quarantine(reason)
+                        exclusiveExecutionPermit?.quarantine(reason)
+                        workerLease?.quarantine(reason)
+                        publishLog(LogEntry(
+                            username = account.username,
+                            component = "SECURITY",
+                            message = "EXECUTION_GATE_QUARANTINED accountId=$accountId reason=$reason; later accounts blocked",
+                            isError = true
+                        ))
+                    }
                     proxyRoutePermit?.release()
                     workerLease?.release()
                     exclusiveExecutionPermit?.release()

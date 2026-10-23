@@ -81,6 +81,19 @@ class WorkerSlotPoolTest {
     }
 
     @Test
+    fun stopAckIpcLossQuarantinesSlotAndPreventsReuse() = runBlocking {
+        val pool = WorkerSlotPool(1)
+        val lease = pool.acquire("proxy:a:1")
+        lease.quarantine("STOP_ACK_TIMEOUT_OR_IPC_LOST")
+        lease.release()
+        assertEquals(WorkerSlotState.QUARANTINED, pool.state(lease.index))
+        assertEquals("STOP_ACK_TIMEOUT_OR_IPC_LOST", pool.quarantineReason(lease.index))
+        var unavailable = false
+        try { pool.acquire("proxy:b:2") } catch (_: WorkerPoolUnavailableException) { unavailable = true }
+        assertTrue("a slot with lost stop IPC must never be reused", unavailable)
+    }
+
+    @Test
     fun quarantineCannotBeOverriddenByLateConfirmation() = runBlocking {
         val pool = WorkerSlotPool(1)
         val lease = pool.acquire("proxy:a:1")

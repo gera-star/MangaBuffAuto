@@ -127,6 +127,9 @@ internal class WorkerSlotPool(private val size: Int) {
             }
         }
 
+        fun isStopConfirmed(): Boolean =
+            verifiedClosed.get() && failureReason == null && !released.get()
+
         fun quarantine(reason: String) {
             if (reason.isNotBlank() && !released.get()) failureReason = reason
         }
