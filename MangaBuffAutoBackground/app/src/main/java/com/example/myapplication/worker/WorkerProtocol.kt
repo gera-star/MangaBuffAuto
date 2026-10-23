@@ -76,4 +76,7 @@ internal object WorkerStopConfirmation {
     /** A stop event is not a released slot; require the matching run to report state FREE. */
     fun acceptsRelease(expected: WorkerRunIdentity, received: WorkerRunIdentity?, state: String?): Boolean =
         received != null && expected == received && state == "FREE"
+
+    /** EV_STOPPED handling sends CMD_ACK_STOP immediately; don't send a duplicate STOP afterwards. */
+    fun shouldSendStopCommand(stopEventAlreadyAccepted: Boolean): Boolean = !stopEventAlreadyAccepted
 }

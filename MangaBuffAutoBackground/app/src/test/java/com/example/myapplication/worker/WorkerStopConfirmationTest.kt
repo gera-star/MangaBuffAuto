@@ -30,6 +30,12 @@ class WorkerStopConfirmationTest {
     }
 
     @Test
+    fun doesNotSendDuplicateStopWhenStoppedEventWasAlreadyAccepted() {
+        assertFalse(WorkerStopConfirmation.shouldSendStopCommand(stopEventAlreadyAccepted = true))
+        assertTrue(WorkerStopConfirmation.shouldSendStopCommand(stopEventAlreadyAccepted = false))
+    }
+
+    @Test
     fun exactRunIdentityAndPositiveAckAreRequired() {
         assertTrue(WorkerStopConfirmation.accepts(activeRun, activeRun, stopConfirmed = true))
         assertFalse(WorkerStopConfirmation.accepts(activeRun, activeRun, stopConfirmed = false))

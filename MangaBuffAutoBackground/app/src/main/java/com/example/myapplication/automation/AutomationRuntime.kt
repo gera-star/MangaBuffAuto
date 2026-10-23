@@ -508,18 +508,27 @@ class AutomationRuntime(
     }
 
     fun stopAll() {
-        val ids = synchronized(this) {
+        val runtimeIds = synchronized(this) {
             (runtimes.keys + automationEngines.keys + executionJobs.keys + failedStops).toSet()
         }
+        val ids = AccountRuntimeCleanupPlan.merge(runtimeIds, webViewStore.activeAccountIdsSnapshot())
         ids.forEach { stopAccount(it) }
     }
 
     suspend fun stopAllAndAwait() {
-        val ids = synchronized(this) {
+        val runtimeIds = synchronized(this) {
             (runtimes.keys + automationEngines.keys + executionJobs.keys + failedStops).toSet()
         }
+        val ids = AccountRuntimeCleanupPlan.merge(runtimeIds, webViewStore.activeAccountIdsSnapshot())
         ids.forEach { stopAccountAndAwait(it) }
-        // Do not release untracked WebViews here: a prior timed-out run may still own network work.
+
+        // A view not represented in any runtime/job map is still a live WebView and must prevent
+        // EV_STOPPED. Snapshot again after teardown to catch a WebView published during cancellation.
+        val remainingWebViews = webViewStore.activeAccountIdsSnapshot()
+        if (remainingWebViews.isNotEmpty()) {
+            remainingWebViews.forEach { failedStops.add(it) }
+            throw IllegalStateException("STOP_UNTRACKED_WEBVIEWS_REMAINING count=${remainingWebViews.size}")
+        }
     }
 
     @Synchronized

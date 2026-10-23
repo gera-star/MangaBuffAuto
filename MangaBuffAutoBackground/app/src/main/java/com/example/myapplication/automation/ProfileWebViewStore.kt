@@ -43,7 +43,10 @@ class ProfileWebViewStore(
     private val onLog: (LogEntry) -> Unit = {},
     private val onRendererGone: (accountId: String, webView: WebView) -> Unit = { _, _ -> }
 ) {
-    private val activeWebViews = mutableMapOf<String, WebView>()
+    private val activeWebViews = java.util.concurrent.ConcurrentHashMap<String, WebView>()
+
+    /** Snapshot used by STOP cleanup to include WebViews with no matching runtime/job entry. */
+    fun activeAccountIdsSnapshot(): Set<String> = activeWebViews.keys.toSet()
     private val attachDeferreds = mutableMapOf<String, CompletableDeferred<Unit>>()
     private val webViewRunIds = mutableMapOf<String, String>()
 

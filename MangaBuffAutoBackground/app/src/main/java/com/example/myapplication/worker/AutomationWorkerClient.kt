@@ -275,7 +275,11 @@ internal class AutomationWorkerClient(
         } catch (e: CancellationException) {
             var stopFailure: String? = null
             withContext(NonCancellable) {
-                val sent = send(index, WorkerProtocol.CMD_STOP_ACCOUNT) { putRunIdentity(entry) }
+                val needsStopCommand = WorkerStopConfirmation.shouldSendStopCommand(
+                    stopEventAlreadyAccepted = entry.stopped.isCompleted
+                )
+                val sent = !needsStopCommand ||
+                    send(index, WorkerProtocol.CMD_STOP_ACCOUNT) { putRunIdentity(entry) }
                 if (!sent) {
                     stopFailure = "STOP_COMMAND_FAILED"
                 } else {
@@ -390,7 +394,10 @@ internal class AutomationWorkerClient(
                 } else {
                     try {
                         if (next == WorkerSlotState.QUARANTINED) {
+                            val error = WorkerDiedException("WORKER_QUARANTINED_STATE worker=${entry.worker}")
                             entry.lease.quarantine("WORKER_QUARANTINED_STATE")
+                            entry.stopped.completeExceptionally(error)
+                            entry.released.completeExceptionally(error)
                         } else if (next == WorkerSlotState.VERIFIED_CLOSED) {
                             entry.lease.markVerifiedClosed()
                         } else if (next == WorkerSlotState.FREE) {
@@ -406,7 +413,10 @@ internal class AutomationWorkerClient(
                             entry.lease.transition(next)
                         }
                     } catch (_: Exception) {
+                        val error = WorkerDiedException("INVALID_WORKER_STATE_TRANSITION worker=${entry.worker}")
                         entry.lease.quarantine("INVALID_WORKER_STATE_TRANSITION")
+                        entry.stopped.completeExceptionally(error)
+                        entry.released.completeExceptionally(error)
                         onLog(LogEntry(username = id, component = "SECURITY", message = "INVALID_WORKER_STATE_TRANSITION state=${next.name}", isError = true))
                     }
                 }
