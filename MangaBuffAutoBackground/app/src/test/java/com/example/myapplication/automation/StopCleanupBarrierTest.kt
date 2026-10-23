@@ -1,6 +1,7 @@
 package com.example.myapplication.automation
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -19,10 +20,13 @@ class StopCleanupBarrierTest {
     fun waitsForRunJobAndHttpDrainBeforeDestroy() = runBlocking {
         val finallyGate = CompletableDeferred<Unit>()
         val httpGate = CompletableDeferred<Unit>()
-        val job = launch {
+        val jobStarted = CompletableDeferred<Unit>()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            jobStarted.complete(Unit)
             try { CompletableDeferred<Unit>().await() }
             finally { withContext(NonCancellable) { finallyGate.await() } }
         }
+        jobStarted.await()
         val events = mutableListOf<String>()
         val cleanup = async {
             StopCleanupBarrier.execute(timeoutMs = 1_000L) {
@@ -50,10 +54,13 @@ class StopCleanupBarrierTest {
     @Test
     fun stopTimeoutDoesNotAdvanceToHttpDrainOrDestroy() = runBlocking {
         val finallyGate = CompletableDeferred<Unit>()
-        val job = launch {
+        val jobStarted = CompletableDeferred<Unit>()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            jobStarted.complete(Unit)
             try { CompletableDeferred<Unit>().await() }
             finally { withContext(NonCancellable) { finallyGate.await() } }
         }
+        jobStarted.await()
         val events = mutableListOf<String>()
         var timedOut = false
         try {
