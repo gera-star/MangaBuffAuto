@@ -209,14 +209,16 @@ class AutomationRuntime(
                     val runtimeToClear = lateRuntime ?: targetRuntime
                     if (runtimeToClear != null) {
                         runtimeToClear.state = AccountState.STOPPED
-                        runCatching { onWebViewCleared(accountId, runtimeToClear.webView) }
-                            .onFailure { error ->
-                                onLog(LogEntry(
-                                    username = accountId, component = "WEBVIEW",
-                                    message = "WEBVIEW_CLEAR_CALLBACK_FAILED reason=${error.javaClass.simpleName}",
-                                    isError = true
-                                ))
-                            }
+                        try {
+                            onWebViewCleared(accountId, runtimeToClear.webView)
+                        } catch (error: Exception) {
+                            onLog(LogEntry(
+                                username = accountId, component = "WEBVIEW",
+                                message = "WEBVIEW_CLEAR_CALLBACK_FAILED reason=${error.javaClass.simpleName}",
+                                isError = true
+                            ))
+                            throw IllegalStateException("WEBVIEW_CLEAR_CALLBACK_FAILED", error)
+                        }
                     }
                     webViewStore.releaseWebView(accountId)
                     onLog(LogEntry(

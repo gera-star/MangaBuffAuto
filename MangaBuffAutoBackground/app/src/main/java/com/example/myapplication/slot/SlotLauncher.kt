@@ -43,9 +43,9 @@ object SlotLauncher {
         val normalized = normalizeSlotUrlForRoute(url, route)
             ?: return Result.failure(
                 IllegalArgumentException(
-                    if (route.type == SlotProxyType.SOCKS5 && url.trim().startsWith("http://", ignoreCase = true))
-                        "SOCKS5-маршрут поддерживает только HTTPS"
-                    else "Допустимы только корректные HTTP/HTTPS адреса"
+                    if (url.trim().startsWith("http://", ignoreCase = true))
+                        "Незащищённый HTTP отключён политикой безопасности. Используй HTTPS."
+                    else "Допустим только корректный HTTPS-адрес"
                 )
             )
 

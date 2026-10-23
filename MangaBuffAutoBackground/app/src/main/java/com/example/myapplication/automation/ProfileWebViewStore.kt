@@ -445,27 +445,53 @@ class ProfileWebViewStore(
         } ?: return
 
         withContext(Dispatchers.Main.immediate) {
-            runCatching {
+            var cleanupFailure: Throwable? = null
+            var destroySucceeded = false
+
+            try {
                 ProfileStore.getInstance().getProfile("mb_$accountId")?.cookieManager?.flush()
-            }.onFailure { error ->
+            } catch (error: Exception) {
+                cleanupFailure = error
                 onLog(LogEntry(
                     username = accountId, component = "PROFILE",
                     message = "COOKIE_FLUSH_FAILED reason=${error.javaClass.simpleName}",
                     isError = true
                 ))
             }
+
             try {
                 webView.stopLoading()
-                webView.destroy()
-                onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "DESTROYED profile=mb_$accountId"))
-            } catch (e: Exception) {
+            } catch (error: Exception) {
+                if (cleanupFailure == null) cleanupFailure = error
                 onLog(LogEntry(
                     username = accountId, component = "WEBVIEW",
-                    message = "WEBVIEW_DESTROY_FAILED profile=mb_$accountId reason=${e.javaClass.simpleName}",
+                    message = "WEBVIEW_STOP_LOADING_FAILED reason=${error.javaClass.simpleName}",
                     isError = true
                 ))
-                throw IllegalStateException("WEBVIEW_DESTROY_FAILED accountId=$accountId", e)
             }
+
+            try {
+                webView.destroy()
+                destroySucceeded = true
+            } catch (error: Exception) {
+                if (cleanupFailure == null) cleanupFailure = error
+                onLog(LogEntry(
+                    username = accountId, component = "WEBVIEW",
+                    message = "WEBVIEW_DESTROY_FAILED reason=${error.javaClass.simpleName}",
+                    isError = true
+                ))
+            }
+
+            if (cleanupFailure != null) {
+                onLog(LogEntry(
+                    username = accountId, component = "WEBVIEW",
+                    message = "WEBVIEW_CLEANUP_UNCONFIRMED destroySucceeded=$destroySucceeded",
+                    isError = true
+                ))
+                throw IllegalStateException("WEBVIEW_CLEANUP_UNCONFIRMED accountId=$accountId", cleanupFailure)
+            }
+
+            onLog(LogEntry(username = accountId, component = "WEBVIEW", message = "DESTROYED profile=mb_$accountId"))
         }
         synchronized(this) {
             if (activeWebViews[accountId] === webView) activeWebViews.remove(accountId)

@@ -54,20 +54,18 @@ class SlotRouteTest {
     }
 
     @Test
-    fun socks5RouteRejectsPlainHttpButAcceptsHttps() {
-        val socks = SlotRoute(SlotProxyType.SOCKS5, "proxy.example", 1080)
-        assertNull(normalizeSlotUrlForRoute("http://example.org", socks))
-        assertEquals("https://example.org", normalizeSlotUrlForRoute("https://example.org", socks))
-        assertEquals("https://example.org", normalizeSlotUrlForRoute("example.org", socks))
-    }
-
-    @Test
-    fun directAndHttpProxyRoutesMayUseExplicitHttp() {
-        assertEquals("http://example.org", normalizeSlotUrlForRoute("http://example.org", SlotRoute()))
-        assertEquals(
-            "http://example.org",
-            normalizeSlotUrlForRoute("http://example.org", SlotRoute(SlotProxyType.HTTP, "proxy.example", 8080))
+    fun everyRouteRejectsCleartextHttpAndAcceptsHttpsOnly() {
+        val routes = listOf(
+            SlotRoute(),
+            SlotRoute(SlotProxyType.HTTP, "proxy.example", 8080),
+            SlotRoute(SlotProxyType.SOCKS5, "proxy.example", 1080)
         )
+        routes.forEach { route ->
+            assertNull(normalizeSlotUrlForRoute("http://example.org", route))
+            assertEquals("https://example.org", normalizeSlotUrlForRoute("https://example.org", route))
+            assertEquals("https://example.org", normalizeSlotUrlForRoute("example.org", route))
+        }
+        assertNull(normalizeSlotUrlForRoute("https://example.org", SlotRoute(SlotProxyType.HTTP, "", 0)))
     }
 
     @Test

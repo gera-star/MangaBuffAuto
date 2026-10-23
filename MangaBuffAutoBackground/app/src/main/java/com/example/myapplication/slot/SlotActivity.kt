@@ -34,6 +34,7 @@ open class SlotActivity : ComponentActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activeTabId: String? = null
     private var activeRouteKey: String? = null
+    private var activeBinding: SlotProcessRouteBinding? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,9 +64,9 @@ open class SlotActivity : ComponentActivity() {
         }
         route.validate()?.let { return fail(it) }
         val url = normalizeSlotUrlForRoute(rawUrl, route) ?: return fail(
-            if (route.type == SlotProxyType.SOCKS5 && rawUrl.trim().startsWith("http://", ignoreCase = true))
-                "SOCKS5-маршрут поддерживает только HTTPS. Открой HTTPS-адрес."
-            else "Недопустимый URL: разрешены только корректные HTTP/HTTPS-адреса."
+            if (rawUrl.trim().startsWith("http://", ignoreCase = true))
+                "HTTP без TLS отключён политикой безопасности. Открой HTTPS-адрес."
+            else "Недопустимый URL: разрешены только корректные HTTPS-адреса."
         )
 
         val slot = SlotLauncher.slotIndexOf(currentProcessName())
@@ -95,6 +96,7 @@ open class SlotActivity : ComponentActivity() {
         val accepted = reservation as? SlotRouteReservation.Accepted
             ?: return fail((reservation as SlotRouteReservation.Rejected).message)
         val binding = accepted.binding
+        activeBinding = binding
         activeTabId = tabId
         activeRouteKey = route.bindingKey()
 
@@ -221,9 +223,10 @@ open class SlotActivity : ComponentActivity() {
     private inner class SlotClient(private val binding: SlotProcessRouteBinding) : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
             val scheme = request?.url?.scheme?.lowercase()
-            if (scheme != "https" && scheme != "http") return true
-            if (binding.socksBridge != null && scheme == "http") {
-                status.text = "Переход на HTTP заблокирован для SOCKS5-маршрута."
+            if (scheme != "https") {
+                if (scheme == "http") {
+                    status.text = "HTTP без TLS отключён политикой безопасности. Переход заблокирован."
+                }
                 return true
             }
             return false
@@ -250,7 +253,28 @@ open class SlotActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        webView?.let { runCatching { it.stopLoading(); it.destroy() } }
+        val view = webView
+        if (view != null) {
+            var cleanupFailed = false
+            try {
+                view.stopLoading()
+            } catch (_: Exception) {
+                cleanupFailed = true
+            }
+            try {
+                view.destroy()
+            } catch (_: Exception) {
+                cleanupFailed = true
+            }
+            if (cleanupFailed) {
+                // A failed renderer teardown is not a clean stop. Keep the view strongly
+                // referenced and quarantine this process so it cannot host another tab.
+                failedWebViews.add(view)
+                activeBinding?.let {
+                    SlotProcessRouteOwnerRegistry.owner.quarantine(it, "WEBVIEW_DESTROY_FAILED")
+                }
+            }
+        }
         webView = null
         // Keep process-owned route and bridge. Activity destruction cannot prove that Chromium's
         // sockets or requests have drained.
@@ -259,6 +283,8 @@ open class SlotActivity : ComponentActivity() {
 
     private companion object {
         const val PROXY_APPLY_TIMEOUT_MS = 15_000L
+        val failedWebViews: MutableList<WebView> =
+            java.util.Collections.synchronizedList(mutableListOf())
     }
 }
 

@@ -101,13 +101,12 @@ fun normalizeSlotUrl(raw: String): String? {
 
 
 /**
- * Route-aware URL validation. The local SOCKS5 bridge supports CONNECT only, so cleartext HTTP
- * URLs are rejected before a WebView or tunnel is started.
+ * Route-aware URL validation. The app disables cleartext traffic, so every slot is HTTPS only.
+ * The SOCKS5 bridge also supports CONNECT only.
  */
 fun normalizeSlotUrlForRoute(raw: String, route: SlotRoute): String? {
+    if (route.validate() != null) return null
     val normalized = normalizeSlotUrl(raw) ?: return null
-    if (route.type == SlotProxyType.SOCKS5 &&
-        normalized.startsWith("http://", ignoreCase = true)
-    ) return null
+    if (normalized.startsWith("http://", ignoreCase = true)) return null
     return normalized
 }

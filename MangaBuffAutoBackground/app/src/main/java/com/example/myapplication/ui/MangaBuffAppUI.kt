@@ -1832,7 +1832,6 @@ fun TasksTab(
     val context = LocalContext.current
     val parallelProxyConfigs = accounts.filterNot { it.isOffline }
         .map { AppProxySettings.read(context, it.id) }
-    val parallelProxyRoutesCompatible = AccountExecutionModePolicy.areProxyRoutesCompatible(parallelProxyConfigs)
     val workersSupported = remember { com.example.myapplication.worker.AutomationWorkerClient.isSupported(context) }
     val parallelModeAvailable = AccountExecutionModePolicy.isParallelExecutionAvailable(
         configs = parallelProxyConfigs,
