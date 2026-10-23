@@ -55,6 +55,7 @@ internal class SlotProcessRouteOwner(
                     proxyUser = "",
                     proxyPassword = "",
                     proxyAuthority = "",
+                    proxyAuthorityWithPort = "",
                     socksBridge = null,
                     proxyApplied = true
                 )
@@ -64,6 +65,7 @@ internal class SlotProcessRouteOwner(
                     proxyUser = route.username,
                     proxyPassword = route.password,
                     proxyAuthority = route.host.trim(),
+                    proxyAuthorityWithPort = "${route.authorityHost()}:${route.port}",
                     socksBridge = null,
                     proxyApplied = false
                 )
@@ -75,6 +77,7 @@ internal class SlotProcessRouteOwner(
                         proxyUser = Socks5ConnectBridge.AUTH_USER,
                         proxyPassword = bridge.accessToken,
                         proxyAuthority = "127.0.0.1",
+                        proxyAuthorityWithPort = "127.0.0.1:${bridge.port}",
                         socksBridge = bridge,
                         proxyApplied = false
                     )
@@ -122,9 +125,15 @@ internal class SlotProcessRouteBinding(
     val proxyUser: String,
     val proxyPassword: String,
     val proxyAuthority: String,
+    val proxyAuthorityWithPort: String,
     val socksBridge: Socks5ConnectBridge?,
     @Volatile var proxyApplied: Boolean
-)
+) {
+    fun matchesProxyAuthHost(receivedHost: String?): Boolean =
+        !receivedHost.isNullOrBlank() &&
+            (receivedHost.equals(proxyAuthority, ignoreCase = true) ||
+                receivedHost.equals(proxyAuthorityWithPort, ignoreCase = true))
+}
 
 internal sealed class SlotRouteReservation {
     data class Accepted(

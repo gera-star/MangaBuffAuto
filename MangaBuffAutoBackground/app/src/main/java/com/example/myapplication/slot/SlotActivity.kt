@@ -71,8 +71,11 @@ open class SlotActivity : ComponentActivity() {
         val slot = SlotLauncher.slotIndexOf(currentProcessName())
             ?: return fail("Слот запущен вне своего процесса — изоляция невозможна.")
         val containerApp = application as? ContainerApp
-        if (containerApp?.isolatedWebViewProcessReady != true ||
-            containerApp.isolatedWebViewSuffix != "slot${slot}"
+        if (!SlotProcessAdmissionPolicy.isReady(
+                processName = currentProcessName(),
+                isolatedWebViewProcessReady = containerApp?.isolatedWebViewProcessReady == true,
+                isolatedWebViewSuffix = containerApp?.isolatedWebViewSuffix
+            )
         ) {
             return fail("Не подтверждена изоляция каталога WebView для этого слота. Страница не загружена.")
         }
@@ -237,7 +240,7 @@ open class SlotActivity : ComponentActivity() {
             realm: String?
         ) {
             if (handler != null && binding.proxyUser.isNotEmpty() &&
-                host.equals(binding.proxyAuthority, ignoreCase = true)
+                binding.matchesProxyAuthHost(host)
             ) {
                 handler.proceed(binding.proxyUser, binding.proxyPassword)
             } else {

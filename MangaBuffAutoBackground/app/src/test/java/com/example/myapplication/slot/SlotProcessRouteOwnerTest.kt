@@ -47,6 +47,18 @@ class SlotProcessRouteOwnerTest {
     }
 
     @Test
+    fun proxyAuthenticationMatchesHostWithOrWithoutPortButNotAnotherProxy() {
+        val owner = SlotProcessRouteOwner()
+        val binding = (owner.reserve(SlotRoute(
+            SlotProxyType.HTTP, "proxy.example", 8080, "user", "password"
+        )) as SlotRouteReservation.Accepted).binding
+        assertTrue(binding.matchesProxyAuthHost("proxy.example"))
+        assertTrue(binding.matchesProxyAuthHost("proxy.example:8080"))
+        assertFalse(binding.matchesProxyAuthHost("other.example:8080"))
+        assertFalse(binding.matchesProxyAuthHost(null))
+    }
+
+    @Test
     fun failedProxyApplicationQuarantinesProcessPermanently() {
         val owner = SlotProcessRouteOwner()
         val first = owner.reserve(SlotRoute(SlotProxyType.HTTP, "proxy.example", 8080))
