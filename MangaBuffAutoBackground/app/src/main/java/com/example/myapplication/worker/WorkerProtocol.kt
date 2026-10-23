@@ -72,4 +72,8 @@ internal data class WorkerRunIdentity(
 internal object WorkerStopConfirmation {
     fun accepts(expected: WorkerRunIdentity, received: WorkerRunIdentity?, stopConfirmed: Boolean): Boolean =
         stopConfirmed && received != null && expected == received
+
+    /** A stop event is not a released slot; require the matching run to report state FREE. */
+    fun acceptsRelease(expected: WorkerRunIdentity, received: WorkerRunIdentity?, state: String?): Boolean =
+        received != null && expected == received && state == "FREE"
 }

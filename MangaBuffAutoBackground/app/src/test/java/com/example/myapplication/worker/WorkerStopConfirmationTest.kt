@@ -19,6 +19,17 @@ class WorkerStopConfirmationTest {
     }
 
     @Test
+    fun staleOrNonFreeStateCannotConfirmWorkerRelease() {
+        assertFalse(
+            WorkerStopConfirmation.acceptsRelease(
+                activeRun, activeRun.copy(runId = "old-run"), state = "FREE"
+            )
+        )
+        assertFalse(WorkerStopConfirmation.acceptsRelease(activeRun, activeRun, state = "VERIFIED_CLOSED"))
+        assertTrue(WorkerStopConfirmation.acceptsRelease(activeRun, activeRun, state = "FREE"))
+    }
+
+    @Test
     fun exactRunIdentityAndPositiveAckAreRequired() {
         assertTrue(WorkerStopConfirmation.accepts(activeRun, activeRun, stopConfirmed = true))
         assertFalse(WorkerStopConfirmation.accepts(activeRun, activeRun, stopConfirmed = false))

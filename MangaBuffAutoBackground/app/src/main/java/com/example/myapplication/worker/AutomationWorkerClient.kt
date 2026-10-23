@@ -82,7 +82,8 @@ internal class AutomationWorkerClient(
         val routeId: String,
         val lease: WorkerSlotPool.Lease,
         val result: CompletableDeferred<Bundle>,
-        val stopped: CompletableDeferred<Bundle>
+        val stopped: CompletableDeferred<Bundle>,
+        val released: CompletableDeferred<Bundle>
     )
     private class Conn(val index: Int) {
         @Volatile var messenger: Messenger? = null
@@ -98,6 +99,8 @@ internal class AutomationWorkerClient(
     private val activeWorkerByAccount = ConcurrentHashMap<String, Int>()
     private val activePendingByAccount = ConcurrentHashMap<String, Pending>()
     private val stopAckTimeoutMs = 10_000L
+    // Worker quarantines itself if CMD_ACK_STOP is not processed; wait longer than that deadline.
+    private val releaseAckTimeoutMs = 15_000L
     private val replyHandler = Handler(Looper.getMainLooper()) { msg ->
         handleEvent(msg)
         true
@@ -133,6 +136,7 @@ internal class AutomationWorkerClient(
             onRecovery(p.accountId)
             p.result.completeExceptionally(WorkerDiedException(reason))
             p.stopped.completeExceptionally(WorkerDiedException(reason))
+            p.released.completeExceptionally(WorkerDiedException(reason))
         }
     }
 
@@ -187,7 +191,8 @@ internal class AutomationWorkerClient(
             routeId = lease.route,
             lease = lease,
             result = CompletableDeferred(),
-            stopped = CompletableDeferred()
+            stopped = CompletableDeferred(),
+            released = CompletableDeferred()
         )
         if (activePendingByAccount.putIfAbsent(account.id, entry) != null) {
             lease.quarantine("ACCOUNT_ALREADY_ACTIVE_IN_WORKER_CLIENT")
@@ -243,6 +248,21 @@ internal class AutomationWorkerClient(
                 throw WorkerDiedException("STOP_NOT_CONFIRMED worker=$index")
             }
             lease.markVerifiedClosed()
+            val freeReceipt = try {
+                withTimeout(releaseAckTimeoutMs) { entry.released.await() }
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                lease.quarantine("WORKER_FREE_ACK_TIMEOUT")
+                throw WorkerDiedException("WORKER_FREE_ACK_TIMEOUT worker=$index; slot quarantined")
+            }
+            if (!WorkerStopConfirmation.acceptsRelease(
+                    runIdentity(entry),
+                    runIdentity(freeReceipt),
+                    freeReceipt.getString(WorkerProtocol.K_STATE)
+                )
+            ) {
+                lease.quarantine("INVALID_WORKER_FREE_ACK")
+                throw WorkerDiedException("INVALID_WORKER_FREE_ACK worker=$index; slot quarantined")
+            }
 
             if (!result.getBoolean(WorkerProtocol.K_OK)) {
                 val msg = result.getString(WorkerProtocol.K_ERR_MSG).orEmpty()
@@ -265,9 +285,18 @@ internal class AutomationWorkerClient(
                             stopFailure = "STOP_NOT_CONFIRMED"
                         } else {
                             lease.markVerifiedClosed()
+                            val freeReceipt = withTimeout(releaseAckTimeoutMs) { entry.released.await() }
+                            if (!WorkerStopConfirmation.acceptsRelease(
+                                    runIdentity(entry),
+                                    runIdentity(freeReceipt),
+                                    freeReceipt.getString(WorkerProtocol.K_STATE)
+                                )
+                            ) {
+                                stopFailure = "INVALID_WORKER_FREE_ACK"
+                            }
                         }
                     } catch (_: Exception) {
-                        stopFailure = "STOP_ACK_TIMEOUT_OR_IPC_LOST"
+                        stopFailure = "STOP_ACK_OR_FREE_RECEIPT_TIMEOUT_OR_IPC_LOST"
                     }
                 }
                 if (stopFailure != null) lease.quarantine(stopFailure!!)
@@ -364,7 +393,16 @@ internal class AutomationWorkerClient(
                             entry.lease.quarantine("WORKER_QUARANTINED_STATE")
                         } else if (next == WorkerSlotState.VERIFIED_CLOSED) {
                             entry.lease.markVerifiedClosed()
-                        } else if (next != WorkerSlotState.FREE) {
+                        } else if (next == WorkerSlotState.FREE) {
+                            if (WorkerStopConfirmation.acceptsRelease(runIdentity(entry), runIdentity(d), next.name)) {
+                                entry.released.complete(d)
+                            } else {
+                                entry.lease.quarantine("INVALID_WORKER_FREE_RECEIPT")
+                                entry.released.completeExceptionally(
+                                    WorkerDiedException("INVALID_WORKER_FREE_RECEIPT worker=${entry.worker}")
+                                )
+                            }
+                        } else {
                             entry.lease.transition(next)
                         }
                     } catch (_: Exception) {
@@ -386,9 +424,9 @@ internal class AutomationWorkerClient(
                     val ackSent = send(entry.worker, WorkerProtocol.CMD_ACK_STOP) { putRunIdentity(entry) }
                     if (!ackSent) {
                         entry.lease.quarantine("STOP_RECEIPT_ACK_SEND_FAILED")
-                        entry.stopped.completeExceptionally(
-                            WorkerDiedException("STOP_RECEIPT_ACK_SEND_FAILED worker=${entry.worker}")
-                        )
+                        val error = WorkerDiedException("STOP_RECEIPT_ACK_SEND_FAILED worker=${entry.worker}")
+                        entry.stopped.completeExceptionally(error)
+                        entry.released.completeExceptionally(error)
                     } else {
                         entry.stopped.complete(d)
                     }
