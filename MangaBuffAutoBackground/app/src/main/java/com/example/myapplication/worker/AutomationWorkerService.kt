@@ -351,7 +351,7 @@ open class AutomationWorkerService : Service() {
         }
         val current = activeRun
         if (current != null || lifecycleState != WorkerSlotState.FREE) {
-            if (current.requestId == reqId && current.runId == runId) return // duplicate RUN is idempotent
+            if (current != null && current.requestId == reqId && current.runId == runId) return // duplicate RUN is idempotent
             emitResult(incoming, false, "WORKER_BUSY", "Worker already owns another active run.")
             return
         }
