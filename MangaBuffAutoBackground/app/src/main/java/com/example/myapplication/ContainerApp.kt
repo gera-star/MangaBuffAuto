@@ -15,6 +15,10 @@ class ContainerApp : Application() {
     var isolatedWebViewProcessReady: Boolean = false
         private set
 
+    /** Exact data-directory suffix that was successfully applied in this process. */
+    var isolatedWebViewSuffix: String? = null
+        private set
+
     override fun onCreate() {
         super.onCreate()
         val processName = processNameCompat()
@@ -34,6 +38,7 @@ class ContainerApp : Application() {
                 ProcessGlobalConfig().setDataDirectorySuffix(this, suffix)
             )
         }.onSuccess {
+            isolatedWebViewSuffix = suffix
             isolatedWebViewProcessReady = true
         }
     }

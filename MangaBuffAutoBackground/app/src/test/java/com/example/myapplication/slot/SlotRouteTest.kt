@@ -54,6 +54,23 @@ class SlotRouteTest {
     }
 
     @Test
+    fun socks5RouteRejectsPlainHttpButAcceptsHttps() {
+        val socks = SlotRoute(SlotProxyType.SOCKS5, "proxy.example", 1080)
+        assertNull(normalizeSlotUrlForRoute("http://example.org", socks))
+        assertEquals("https://example.org", normalizeSlotUrlForRoute("https://example.org", socks))
+        assertEquals("https://example.org", normalizeSlotUrlForRoute("example.org", socks))
+    }
+
+    @Test
+    fun directAndHttpProxyRoutesMayUseExplicitHttp() {
+        assertEquals("http://example.org", normalizeSlotUrlForRoute("http://example.org", SlotRoute()))
+        assertEquals(
+            "http://example.org",
+            normalizeSlotUrlForRoute("http://example.org", SlotRoute(SlotProxyType.HTTP, "proxy.example", 8080))
+        )
+    }
+
+    @Test
     fun ipv6AuthorityIsBracketed() {
         assertEquals("[::1]", SlotRoute(SlotProxyType.HTTP, "::1", 1).authorityHost())
         assertEquals("h", SlotRoute(SlotProxyType.HTTP, "h", 1).authorityHost())

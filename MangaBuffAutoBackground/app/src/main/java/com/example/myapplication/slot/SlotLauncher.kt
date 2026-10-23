@@ -37,8 +37,14 @@ object SlotLauncher {
         if (slot !in 0 until SLOT_COUNT) return Result.failure(IllegalArgumentException("Нет такого слота: $slot"))
         if (!isValidTabId(tabId)) return Result.failure(IllegalArgumentException("Недопустимый id вкладки"))
         route.validate()?.let { return Result.failure(IllegalArgumentException(it)) }
-        val normalized = normalizeSlotUrl(url)
-            ?: return Result.failure(IllegalArgumentException("Допустимы только http/https адреса"))
+        val normalized = normalizeSlotUrlForRoute(url, route)
+            ?: return Result.failure(
+                IllegalArgumentException(
+                    if (route.type == SlotProxyType.SOCKS5 && url.trim().startsWith("http://", ignoreCase = true))
+                        "SOCKS5-маршрут поддерживает только HTTPS"
+                    else "Допустимы только корректные HTTP/HTTPS адреса"
+                )
+            )
 
         val intent = Intent().setClassName(context.packageName, activities[slot])
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)

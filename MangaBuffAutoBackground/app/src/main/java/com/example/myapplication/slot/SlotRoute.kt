@@ -98,3 +98,16 @@ fun normalizeSlotUrl(raw: String): String? {
     if (uri.port == 0 || uri.port > 65535) return null
     return withScheme
 }
+
+
+/**
+ * Route-aware URL validation. The local SOCKS5 bridge supports CONNECT only, so cleartext HTTP
+ * URLs are rejected before a WebView or tunnel is started.
+ */
+fun normalizeSlotUrlForRoute(raw: String, route: SlotRoute): String? {
+    val normalized = normalizeSlotUrl(raw) ?: return null
+    if (route.type == SlotProxyType.SOCKS5 &&
+        normalized.startsWith("http://", ignoreCase = true)
+    ) return null
+    return normalized
+}
