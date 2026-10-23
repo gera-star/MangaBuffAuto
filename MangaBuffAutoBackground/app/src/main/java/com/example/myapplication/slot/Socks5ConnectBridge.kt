@@ -11,9 +11,10 @@ import java.net.Socket
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Локальный HTTP-прокси на 127.0.0.1, понимающий только метод CONNECT и пробрасывающий
@@ -44,23 +45,53 @@ class Socks5ConnectBridge(
     private val pool = Executors.newCachedThreadPool { r ->
         Thread(r, "socks5-bridge").apply { isDaemon = true }
     }
+    private val lifecycleLock = Any()
+    private val activeSockets = ConcurrentHashMap.newKeySet<Socket>()
 
     @Volatile
     private var closed = false
+    private var started = false
 
     /** Порт, на котором слушает мост (loopback). */
     val port: Int get() = server.localPort
 
     fun start(): Socks5ConnectBridge {
-        pool.execute { acceptLoop() }
+        synchronized(lifecycleLock) {
+            check(!closed) { "SOCKS5 bridge is already closed" }
+            if (started) return this
+            started = true
+        }
+        try {
+            pool.execute { acceptLoop() }
+        } catch (e: RejectedExecutionException) {
+            close()
+            throw IOException("SOCKS5 bridge executor is unavailable", e)
+        }
         return this
     }
 
     override fun close() {
-        closed = true
+        val sockets = synchronized(lifecycleLock) {
+            if (closed) return
+            closed = true
+            activeSockets.toList()
+        }
         closeQuietly(server)
+        // Interruption alone does not reliably interrupt blocking Socket.read() on Android.
+        // Closing each owned socket unblocks both directions of every managed tunnel.
+        sockets.forEach(::closeQuietly)
         pool.shutdownNow()
     }
+
+    private fun registerSocket(socket: Socket): Boolean = synchronized(lifecycleLock) {
+        if (closed) false else activeSockets.add(socket)
+    }
+
+    private fun unregisterSocket(socket: Socket?) {
+        if (socket != null) activeSockets.remove(socket)
+    }
+
+    internal fun activeSocketCountForTest(): Int = activeSockets.size
 
     private fun acceptLoop() {
         while (!closed) {
@@ -69,9 +100,16 @@ class Socks5ConnectBridge(
             } catch (_: IOException) {
                 break
             }
+            // Registration and close() use the same lock: a socket accepted during shutdown is
+            // either included in close()'s snapshot or rejected and closed immediately.
+            if (!registerSocket(client)) {
+                closeQuietly(client)
+                break
+            }
             try {
                 pool.execute { handle(client) }
             } catch (_: RejectedExecutionException) {
+                unregisterSocket(client)
                 closeQuietly(client)
                 break
             }
@@ -132,6 +170,8 @@ class Socks5ConnectBridge(
                 closeQuietly(upstream)
                 closeQuietly(client)
             }
+            unregisterSocket(upstream)
+            unregisterSocket(client)
         }
     }
 
@@ -159,6 +199,10 @@ class Socks5ConnectBridge(
     /** Открывает SOCKS5-соединение до [host]:[port] через удалённый сервер. */
     private fun openSocks(host: String, port: Int): Socket {
         val s = Socket()
+        if (!registerSocket(s)) {
+            closeQuietly(s)
+            throw IOException("SOCKS5 bridge is closing")
+        }
         try {
             s.tcpNoDelay = true
             s.connect(InetSocketAddress(socksHost, socksPort), connectTimeoutMs)
@@ -225,25 +269,33 @@ class Socks5ConnectBridge(
             s.soTimeout = 0
             return s
         } catch (t: Throwable) {
+            unregisterSocket(s)
             closeQuietly(s)
             throw t
         }
     }
 
     private fun tunnel(a: Socket, b: Socket) {
-        val remaining = AtomicInteger(2)
-        val finish = {
-            if (remaining.decrementAndGet() == 0) {
-                closeQuietly(a)
-                closeQuietly(b)
+        val reverseDirectionFinished = CountDownLatch(1)
+        // Keep sockets in activeSockets until both pumps have actually ended. Otherwise the
+        // synchronous pump could return after a half-close and remove them while the reverse
+        // pump is still blocked, making that connection invisible to close().
+        pool.execute {
+            try {
+                pump(a, b)
+            } finally {
+                reverseDirectionFinished.countDown()
             }
         }
-        pool.execute {
-            pump(a, b)
-            finish()
+        try {
+            pump(b, a)
+            reverseDirectionFinished.await()
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        } finally {
+            closeQuietly(a)
+            closeQuietly(b)
         }
-        pump(b, a)
-        finish()
     }
 
     private fun pump(from: Socket, to: Socket) {

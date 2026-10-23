@@ -199,6 +199,57 @@ class Socks5ConnectBridgeTest {
     }
 
     @Test
+    fun closeShutsDownActiveBidirectionalTunnelAndReleasesSockets() {
+        FakeSocks(requireAuth = false).use { socks ->
+            val bridge = Socks5ConnectBridge(
+                "127.0.0.1", socks.server.localPort, "", "", connectTimeoutMs = 2_000
+            ).start()
+            try {
+                Socket("127.0.0.1", bridge.port).use { client ->
+                    client.soTimeout = 3_000
+                    client.getOutputStream().write(
+                        ("CONNECT example.org:443 HTTP/1.1\\r\\n" +
+                            "Proxy-Authorization: ${basic(bridge.accessToken)}\\r\\n\\r\\n").toByteArray()
+                    )
+                    assertTrue(readStatusLine(client).contains("200"))
+                    client.getOutputStream().write("ping".toByteArray())
+                    val echoed = ByteArray(4)
+                    var offset = 0
+                    while (offset < echoed.size) {
+                        val n = client.getInputStream().read(echoed, offset, echoed.size - offset)
+                        if (n < 0) throw AssertionError("Tunnel closed before echo completed")
+                        offset += n
+                    }
+                    assertEquals("ping", String(echoed))
+                    bridge.close()
+                    val eof = runCatching { client.getInputStream().read() }.getOrNull()
+                    assertTrue("client side should be closed or at EOF", eof == null || eof == -1)
+                }
+                assertTrue("upstream fake server should observe tunnel close", socks.done.await(3, TimeUnit.SECONDS))
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+                while (bridge.activeSocketCountForTest() != 0 && System.nanoTime() < deadline) {
+                    Thread.sleep(10)
+                }
+                assertEquals(0, bridge.activeSocketCountForTest())
+            } finally {
+                bridge.close()
+            }
+        }
+    }
+
+    @Test
+    fun closeIsIdempotentBeforeAndAfterStart() {
+        val neverStarted = Socks5ConnectBridge("127.0.0.1", 1080, "", "")
+        neverStarted.close()
+        assertTrue(runCatching { neverStarted.start() }.isFailure)
+        neverStarted.close()
+
+        val started = Socks5ConnectBridge("127.0.0.1", 1080, "", "").start()
+        started.close()
+        started.close()
+    }
+
+    @Test
     fun parsesAuthorityAndIpv4() {
         assertEquals("a.b" to 443, Socks5ConnectBridge.parseAuthority("a.b:443"))
         assertEquals("::1" to 8443, Socks5ConnectBridge.parseAuthority("[::1]:8443"))
