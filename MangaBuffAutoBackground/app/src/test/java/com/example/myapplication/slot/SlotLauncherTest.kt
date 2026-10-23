@@ -14,6 +14,15 @@ class SlotLauncherTest {
         assertNull(SlotLauncher.slotIndexOf(null))
     }
 
+    @Test fun onlyThreeFixedSlotsAreValid() {
+        assertEquals(3, SlotLauncher.SLOT_COUNT)
+        assertTrue(SlotLauncher.isValidSlot(0))
+        assertTrue(SlotLauncher.isValidSlot(1))
+        assertTrue(SlotLauncher.isValidSlot(2))
+        assertFalse(SlotLauncher.isValidSlot(-1))
+        assertFalse(SlotLauncher.isValidSlot(3))
+    }
+
     @Test fun tabIdAndProfileName() {
         assertTrue(SlotLauncher.isValidTabId("3f2a-9B_x"))
         assertFalse(SlotLauncher.isValidTabId("../evil"))

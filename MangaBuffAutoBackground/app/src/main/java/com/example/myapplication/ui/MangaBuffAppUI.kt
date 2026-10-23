@@ -99,6 +99,7 @@ fun MangaBuffAppUI(
     var showSupportDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showWebViewAccountMenu by remember { mutableStateOf(false) }
+    var showSlotContainerDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
@@ -203,10 +204,8 @@ fun MangaBuffAppUI(
                     )
                     NavigationBarItem(
                         selected = debugWebViewVisible,
-                        onClick = {
-                            if (webViewAccountIds.isNotEmpty()) showWebViewAccountMenu = true
-                        },
-                        enabled = webViewAccountIds.isNotEmpty(),
+                        onClick = { showWebViewAccountMenu = true },
+                        enabled = true,
                         icon = {
                             Icon(Icons.Default.Language, contentDescription = "Открыть WEB")
                         },
@@ -327,7 +326,7 @@ fun MangaBuffAppUI(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Выберите аккаунт для WEB",
+                            text = "WEB и контейнерные вкладки",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleMedium
@@ -339,6 +338,27 @@ fun MangaBuffAppUI(
                                 tint = Color.White
                             )
                         }
+                    }
+                    Text(
+                        "Контейнеры: ровно 3 фиксированных слота. Каждый слот закрепляет свой профиль и маршрут прокси до завершения процесса.",
+                        color = Color(0xFFB8C0D5),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Button(
+                        onClick = {
+                            showWebViewAccountMenu = false
+                            showSlotContainerDialog = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Открыть контейнерную вкладку (1–3)")
+                    }
+                    if (webViewAccountIds.isEmpty()) {
+                        Text(
+                            "Нет аккаунтов для старого WEB-просмотра. Контейнерные вкладки можно использовать независимо.",
+                            color = Color(0xFFB8C0D5),
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                     LazyColumn(
                         modifier = Modifier.heightIn(max = 420.dp),
@@ -609,6 +629,10 @@ fun MangaBuffAppUI(
                 TextButton(onClick = { balanceUnavailableMessage = null }) { Text("Понятно") }
             }
         )
+    }
+
+    if (showSlotContainerDialog) {
+        SlotContainerDialog(onDismiss = { showSlotContainerDialog = false })
     }
 
     // ДИАЛОГ ПРОСМОТРА БАЛАНСА НА САЙТЕ ПО КЛИКУ НА АВАТАР

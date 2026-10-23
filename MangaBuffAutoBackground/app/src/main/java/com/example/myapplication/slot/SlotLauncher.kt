@@ -28,13 +28,16 @@ object SlotLauncher {
         return n.takeIf { it in 0 until SLOT_COUNT }
     }
 
+    /** Slots are fixed process containers, not an unbounded browser tab pool. */
+    fun isValidSlot(slot: Int): Boolean = slot in 0 until SLOT_COUNT
+
     /** tabId — стабильный идентификатор вкладки; из него строится имя профиля WebView. */
     fun isValidTabId(tabId: String): Boolean = tabId.matches(Regex("[A-Za-z0-9_-]{1,64}"))
 
     fun profileName(tabId: String): String = "tab_$tabId"
 
     fun launch(context: Context, slot: Int, tabId: String, url: String, route: SlotRoute): Result<Unit> {
-        if (slot !in 0 until SLOT_COUNT) return Result.failure(IllegalArgumentException("Нет такого слота: $slot"))
+        if (!isValidSlot(slot)) return Result.failure(IllegalArgumentException("Нет такого слота: $slot"))
         if (!isValidTabId(tabId)) return Result.failure(IllegalArgumentException("Недопустимый id вкладки"))
         route.validate()?.let { return Result.failure(IllegalArgumentException(it)) }
         val normalized = normalizeSlotUrlForRoute(url, route)
