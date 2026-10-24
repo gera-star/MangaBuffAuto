@@ -15,13 +15,11 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
-import androidx.webkit.ProfileStore
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
-import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.example.myapplication.ContainerApp
-import com.example.myapplication.automation.WebViewContainerPrivacy
+import com.example.myapplication.automation.ProfileWebViewFactory
 
 /**
  * One container process owns one immutable route and one data-directory suffix.
@@ -103,36 +101,27 @@ open class SlotActivity : ComponentActivity() {
         val wv = WebView(this)
         // Hold a strong reference before profile binding or any other operation that can fail.
         webView = wv
-        val cookies = try {
-            // Profile assignment precedes all settings and navigation.
-            WebViewCompat.setProfile(wv, SlotLauncher.profileName(tabId))
-            ProfileStore.getInstance().getProfile(SlotLauncher.profileName(tabId))?.cookieManager
-                ?: throw IllegalStateException("PROFILE_COOKIE_MANAGER_MISSING")
-        } catch (error: Exception) {
-            val missingCookieManager = error.message == "PROFILE_COOKIE_MANAGER_MISSING"
-            cleanupFailedInitialization(
-                view = wv,
-                binding = binding,
-                quarantineReason = if (missingCookieManager) "PROFILE_COOKIE_MANAGER_MISSING" else "PROFILE_BIND_FAILED",
-                message = if (missingCookieManager) {
-                    "Профиль вкладки не найден. Слот заблокирован до перезапуска приложения."
-                } else {
-                    "Не удалось привязать профиль WebView. Слот заблокирован до перезапуска приложения."
-                }
-            )
-            return
-        }
-
         try {
-            WebViewContainerPrivacy.apply(this, wv, cookies)
+            // The WebView reference is already retained before profile binding can throw.
+            ProfileWebViewFactory.bindProfileAndApply(
+                context = this,
+                webView = wv,
+                profileName = SlotLauncher.profileName(tabId)
+            )
             wv.webViewClient = SlotClient(binding)
             root.addView(wv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            val profileFailure = error.message?.contains("PROFILE") == true ||
+                error.message?.contains("MULTI_PROFILE") == true
             cleanupFailedInitialization(
                 view = wv,
                 binding = binding,
-                quarantineReason = "WEBVIEW_INITIALIZATION_FAILED",
-                message = "Не удалось подготовить WebView. Слот заблокирован до перезапуска приложения."
+                quarantineReason = if (profileFailure) "PROFILE_INITIALIZATION_FAILED" else "WEBVIEW_INITIALIZATION_FAILED",
+                message = if (profileFailure) {
+                    "Не удалось подготовить изолированный профиль WebView. Слот заблокирован до перезапуска приложения."
+                } else {
+                    "Не удалось подготовить WebView. Слот заблокирован до перезапуска приложения."
+                }
             )
             return
         }

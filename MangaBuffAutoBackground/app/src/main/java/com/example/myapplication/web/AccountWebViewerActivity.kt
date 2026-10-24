@@ -23,13 +23,11 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.webkit.ProfileStore
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
-import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.example.myapplication.ContainerApp
-import com.example.myapplication.automation.WebViewContainerPrivacy
+import com.example.myapplication.automation.ProfileWebViewFactory
 import com.example.myapplication.data.MangaBuffAccount
 import com.example.myapplication.network.AppProxyConfig
 import com.google.gson.JsonParser
@@ -136,24 +134,33 @@ class AccountWebViewerActivity : ComponentActivity() {
 
         val profileName = "mb_$currentAccountId"
         val wv = WebView(this)
-        try {
-            // Profile binding must happen before WebView settings or navigation.
-            WebViewCompat.setProfile(wv, profileName)
-        } catch (e: Exception) {
-            wv.destroy()
-            showError("Не удалось открыть профиль аккаунта: ${e.message ?: "ошибка WebView"}.")
-            return
-        }
+        // Track the view before profile binding/settings can fail.
+        webView = wv
         val cookieManager: CookieManager = try {
-            ProfileStore.getInstance().getProfile(profileName)?.cookieManager
-                ?: throw IllegalStateException("Профиль cookies не найден")
+            ProfileWebViewFactory.bindProfileAndApply(
+                context = this,
+                webView = wv,
+                profileName = profileName
+            )
         } catch (e: Exception) {
-            wv.destroy()
-            showError("Не удалось открыть хранилище аккаунта: ${e.message ?: "ошибка профиля"}.")
+            val destroyed = runCatching {
+                wv.stopLoading()
+                wv.destroy()
+            }.isSuccess
+            if (destroyed) {
+                if (webView === wv) webView = null
+            } else {
+                retainFailedWebView(wv)
+            }
+            showError(
+                if (destroyed) {
+                    "Не удалось открыть изолированный профиль аккаунта: ${e.message ?: "ошибка WebView"}."
+                } else {
+                    "Не удалось открыть профиль, а очистка WebView не подтверждена. Перезапусти контейнер."
+                }
+            )
             return
         }
-
-        WebViewContainerPrivacy.apply(this, wv, cookieManager)
         if (userAgent.isNotBlank()) wv.settings.userAgentString = userAgent
         wv.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -298,11 +305,25 @@ class AccountWebViewerActivity : ComponentActivity() {
 
     private fun showError(message: String) { status.text = message }
 
+    private fun retainFailedWebView(view: WebView) {
+        synchronized(failedWebViews) {
+            if (!failedWebViews.contains(view)) failedWebViews.add(view)
+        }
+    }
+
     private fun destroyCurrentWebView() {
         val old = webView ?: return
-        webView = null
         (old.parent as? ViewGroup)?.removeView(old)
-        runCatching { old.stopLoading(); old.loadUrl("about:blank"); old.destroy() }
+        val cleaned = runCatching {
+            old.stopLoading()
+            old.destroy()
+        }.isSuccess
+        if (cleaned) {
+            if (webView === old) webView = null
+        } else {
+            retainFailedWebView(old)
+            showError("Очистка WebView не подтверждена. Контейнер нельзя считать свободным.")
+        }
     }
 
     override fun onDestroy() {
@@ -318,6 +339,8 @@ class AccountWebViewerActivity : ComponentActivity() {
     }
 
     companion object {
+        // Intentionally retain WebViews whose destroy() failed; do not falsely report clean state.
+        private val failedWebViews = java.util.Collections.synchronizedList(mutableListOf<WebView>())
         private const val EXTRA_ACCOUNT_ID = "web.account.id"
         private const val EXTRA_USERNAME = "web.account.username"
         private const val EXTRA_URL = "web.account.url"

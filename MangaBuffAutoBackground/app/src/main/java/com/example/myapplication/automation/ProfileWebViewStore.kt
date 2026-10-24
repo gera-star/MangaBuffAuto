@@ -13,8 +13,6 @@ import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.webkit.ProfileStore
-import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.google.gson.JsonParser
 import com.example.myapplication.data.LogEntry
@@ -142,23 +140,17 @@ class ProfileWebViewStore(
         val webView = WebView(context)
         val profileCookieManager = initializeTrackedWebView(activeWebViews, accountId, webView) { trackedView ->
             try {
-                WebViewCompat.setProfile(trackedView, profileName)
-                onLog(LogEntry(username = accountId, component = "PROFILE", message = "PROFILE BOUND profile=$profileName"))
+                ProfileWebViewFactory.bindProfileAndApply(
+                    context = context,
+                    webView = trackedView,
+                    profileName = profileName
+                )
             } catch (e: Exception) {
-                onLog(LogEntry(username = accountId, component = "PROFILE", message = "SET_PROFILE_FAIL error=${e.javaClass.simpleName}", isError = true))
-                throw IllegalStateException("PROFILE: SET_PROFILE_FAIL accountId=$accountId", e)
+                onLog(LogEntry(username = accountId, component = "PROFILE", message = "PROFILE_INIT_FAIL error=${e.javaClass.simpleName}", isError = true))
+                throw IllegalStateException("PROFILE: PROFILE_INIT_FAIL accountId=$accountId", e)
             }
-
-            ProfileStore.getInstance()
-                .getProfile(profileName)?.cookieManager
-                ?: throw IllegalStateException("PROFILE: COOKIE_PROFILE_FAIL accountId=$accountId error=Profile_not_found")
         }
-
-        WebViewContainerPrivacy.apply(
-            context = context,
-            webView = webView,
-            profileCookieManager = profileCookieManager
-        )
+        onLog(LogEntry(username = accountId, component = "PROFILE", message = "PROFILE BOUND profile=$profileName"))
         webView.setBackgroundColor(Color.TRANSPARENT)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
