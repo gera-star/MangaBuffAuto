@@ -13,6 +13,7 @@ import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.ProfileStore
 import androidx.webkit.WebViewFeature
 import com.google.gson.JsonParser
 import com.example.myapplication.data.LogEntry
