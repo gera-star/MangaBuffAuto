@@ -4,12 +4,10 @@ import android.app.Application
 import android.os.Build
 import androidx.webkit.ProcessGlobalConfig
 import androidx.webkit.WebViewFeature
-import com.example.myapplication.slot.SlotLauncher
 
 /**
- * Прокси и каталог данных WebView задаются на весь процесс, поэтому каждый слот-вкладка живёт в
- * собственном процессе (":slotN"). Суффикс каталога данных обязан быть выставлен один раз,
- * до первого обращения к android.webkit в процессе, то есть здесь.
+ * Proxy and WebView data-directory configuration are process-wide. Each isolated slot, worker,
+ * and account-viewer process must set its unique suffix here, before any WebView is constructed.
  */
 class ContainerApp : Application() {
     var isolatedWebViewProcessReady: Boolean = false
@@ -21,12 +19,7 @@ class ContainerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        val processName = processNameCompat()
-        // Slot, worker and account-viewer processes each get their own WebView data directory.
-        val suffix = SlotLauncher.slotIndexOf(processName)?.let { "slot$it" }
-            ?: processName?.substringAfter(":w", "")?.toIntOrNull()?.let { "w$it" }
-            ?: processName?.takeIf { it.endsWith(":webviewer") }?.let { "webviewer" }
-            ?: return
+        val suffix = WebViewProcessIsolationPolicy.suffixFor(processNameCompat()) ?: return
         if (!WebViewFeature.isStartupFeatureSupported(
                 this,
                 WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX
