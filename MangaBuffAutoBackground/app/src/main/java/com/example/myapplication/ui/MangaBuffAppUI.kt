@@ -18,6 +18,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import com.example.myapplication.automation.AutomationWebViewRegistry
+import com.example.myapplication.automation.ProfileWebViewFactory
 import com.example.myapplication.network.AppProxySettings
 import com.example.myapplication.service.AccountExecutionModePolicy
 import com.example.myapplication.network.ExitIpChecker
@@ -49,7 +50,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.webkit.ProfileStore
-import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.example.myapplication.data.GlobalSettings
 import com.example.myapplication.data.ReaderSpeedMode
@@ -663,28 +663,29 @@ fun MangaBuffAppUI(
                             println("PROFILE: BALANCE accountId=${acc.id} profile=$profileName")
                             val wv = WebView(ctx)
 
-                            // Bind the same long-lived account profile used by the reader BEFORE
-                            // configuring the view or navigating, so site widgets see its real session.
-                            val profileCookieManager = if (
-                                WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
-                            ) {
-                                try {
-                                    WebViewCompat.setProfile(wv, profileName)
-                                    ProfileStore.getInstance()
-                                        .getProfile(profileName)
-                                        ?.cookieManager
-                                        ?.also { it.setAcceptCookie(true) }
-                                } catch (e: Exception) {
-                                    println("PROFILE: BALANCE_PROFILE_FAIL accountId=${acc.id} error=${e.message}")
-                                    null
+                            // Use the same central profile/settings path as the reader. If binding
+                            // fails, do not load the balance page in the default WebView profile.
+                            val profileCookieManager = try {
+                                ProfileWebViewFactory.bindProfileAndApply(
+                                    context = ctx,
+                                    webView = wv,
+                                    profileName = profileName
+                                )
+                            } catch (e: Exception) {
+                                val cleaned = ProfileWebViewFactory.destroyAfterFailedInitialization(wv)
+                                println("PROFILE: BALANCE_PROFILE_FAIL accountId=${acc.id} type=${e.javaClass.simpleName} cleanupConfirmed=$cleaned")
+                                selectedBalanceAccount = null
+                                Toast.makeText(
+                                    ctx,
+                                    if (cleaned) "Не удалось подготовить изолированный профиль WebView."
+                                    else "Ошибка профиля и очистка WebView не подтверждена. Перезапусти приложение.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                return@AndroidView android.widget.TextView(ctx).apply {
+                                    text = "Страница не загружена: изолированный профиль недоступен."
+                                    setPadding(24, 24, 24, 24)
                                 }
-                            } else {
-                                null
                             }
-
-                            wv.settings.javaScriptEnabled = true
-                            wv.settings.domStorageEnabled = true
-                            wv.settings.databaseEnabled = true
 
                             // Keep the site's native navigation behavior, but repair profile popups
                             // that the balance page positions partly above the WebView viewport.
@@ -817,7 +818,7 @@ fun MangaBuffAppUI(
                                         profileCookieManager?.getCookie(BALANCE_URL)
                                     }.getOrNull()
 
-                                    if (profileCookieManager == null || !existingCookies.isNullOrBlank()) {
+                                    if (!existingCookies.isNullOrBlank()) {
                                         // Keep the active profile's current cookies; they may be newer than
                                         // the saved account snapshot after a reader session.
                                         wv.loadUrl(BALANCE_URL)
@@ -928,20 +929,26 @@ fun MangaBuffAppUI(
                     AndroidView(
                         factory = { ctx ->
                             val wv = WebView(ctx)
+                            // Keep a strong reference until binding succeeds or cleanup is confirmed.
                             loginWebViewState.value = wv
-                            wv.settings.javaScriptEnabled = true
-                            wv.settings.domStorageEnabled = true
-                            wv.settings.databaseEnabled = true
-
-                            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
-                                try {
-                                    WebViewCompat.setProfile(wv, tempProfileName)
-                                    println("PROFILE: CREATE tempAccountId=$newAccountId profile=$tempProfileName")
-                                } catch (e: Exception) {
-                                    loginStatusText = "Не удалось создать изолированный профиль входа: " + (e.message ?: "ошибка WebView")
+                            try {
+                                ProfileWebViewFactory.bindProfileAndApply(
+                                    context = ctx,
+                                    webView = wv,
+                                    profileName = tempProfileName
+                                )
+                            } catch (e: Exception) {
+                                val cleaned = ProfileWebViewFactory.destroyAfterFailedInitialization(wv)
+                                loginWebViewState.value = null
+                                loginStatusText = if (cleaned) {
+                                    "Не удалось подготовить изолированный профиль входа. Обновите Android System WebView и попробуйте снова."
+                                } else {
+                                    "Профиль входа не создан, а очистка WebView не подтверждена. Перезапустите приложение."
                                 }
-                            } else {
-                                loginStatusText = "Этот WebView не поддерживает изолированные профили. Обновите Android System WebView."
+                                return@AndroidView android.widget.TextView(ctx).apply {
+                                    text = loginStatusText
+                                    setPadding(16, 16, 16, 16)
+                                }
                             }
 
                             wv.webViewClient = object : WebViewClient() {

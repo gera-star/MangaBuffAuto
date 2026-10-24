@@ -15,4 +15,13 @@ class WebViewContainerPrivacyPolicyTest {
         assertFalse(config.acceptThirdPartyCookies)
         assertEquals(WebSettings.LOAD_DEFAULT, config.cacheMode)
     }
+    @Test
+    fun profileNamesMustBeStableAndSafeForAndroidXProfileApi() {
+        assertTrue(ProfileWebViewFactory.isValidProfileNameForTest("mb_account_123"))
+        assertTrue(ProfileWebViewFactory.isValidProfileNameForTest("tab-slot_2"))
+        assertFalse(ProfileWebViewFactory.isValidProfileNameForTest("profile with spaces"))
+        assertFalse(ProfileWebViewFactory.isValidProfileNameForTest(""))
+        assertFalse(ProfileWebViewFactory.isValidProfileNameForTest("x".repeat(65)))
+    }
+
 }

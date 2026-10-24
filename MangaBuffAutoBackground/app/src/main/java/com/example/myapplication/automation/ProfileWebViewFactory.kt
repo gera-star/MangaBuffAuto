@@ -14,13 +14,31 @@ import androidx.webkit.WebViewFeature
  */
 @SuppressLint("RestrictedApi")
 internal object ProfileWebViewFactory {
+    internal fun isValidProfileNameForTest(profileName: String): Boolean =
+        profileName.matches(Regex("[A-Za-z0-9_-]{1,64}"))
+
+    /**
+     * Best-effort cleanup for a WebView whose profile/settings initialization failed.
+     * A failed destroy is retained strongly so the caller cannot silently lose track of it.
+     * This does not claim that Chromium networking has stopped.
+     */
+    fun destroyAfterFailedInitialization(webView: WebView): Boolean {
+        runCatching { webView.stopLoading() }
+        val destroyed = runCatching { webView.destroy() }.isSuccess
+        if (!destroyed) failedInitializationViews.add(webView)
+        return destroyed
+    }
+
+    private val failedInitializationViews =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<WebView>()
+
     fun bindProfileAndApply(
         context: Context,
         webView: WebView,
         profileName: String,
         config: WebViewContainerPrivacyConfig = WebViewContainerPrivacyConfig()
     ): CookieManager {
-        require(profileName.matches(Regex("[A-Za-z0-9_-]{1,64}"))) {
+        require(isValidProfileNameForTest(profileName)) {
             "PROFILE_NAME_INVALID"
         }
         check(WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
