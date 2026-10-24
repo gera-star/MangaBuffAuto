@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -165,7 +164,11 @@ class AccountWebViewerActivity : ComponentActivity() {
         wv.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val scheme = request?.url?.scheme?.lowercase()
-                return scheme != "http" && scheme != "https"
+                if (scheme != "https") {
+                    status.text = "Переход заблокирован: контейнер открывает только HTTPS-адреса."
+                    return true
+                }
+                return false
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -331,12 +334,8 @@ class AccountWebViewerActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun normalizeWebUrl(raw: String): String? {
-        val candidate = raw.trim().ifBlank { "https://mangabuff.ru/" }
-        val uri = runCatching { Uri.parse(candidate) }.getOrNull() ?: return null
-        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) return null
-        return candidate
-    }
+    private fun normalizeWebUrl(raw: String): String? =
+        AccountWebUrlPolicy.normalize(raw)
 
     companion object {
         // Intentionally retain WebViews whose destroy() failed; do not falsely report clean state.
