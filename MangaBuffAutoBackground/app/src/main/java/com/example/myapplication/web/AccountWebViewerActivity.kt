@@ -254,8 +254,14 @@ class AccountWebViewerActivity : ComponentActivity() {
                 seedCookiesThenLoad(cookieManager, cookies, target, url)
             } else {
                 AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
-                destroyCurrentWebView()
-                showError("Состояние маршрута не подтверждено. Перезапусти контейнер просмотра.")
+                val cleaned = destroyCurrentWebView()
+                showError(
+                    if (cleaned) {
+                        "Состояние маршрута не подтверждено. Перезапусти контейнер просмотра."
+                    } else {
+                        "Состояние маршрута не подтверждено, а очистка WebView завершилась ошибкой. Процесс заблокирован до перезапуска."
+                    }
+                )
             }
             return
         }
