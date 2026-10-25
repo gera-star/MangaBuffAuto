@@ -19,7 +19,10 @@ class ContainerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        val suffix = WebViewProcessIsolationPolicy.suffixFor(processNameCompat()) ?: return
+        val suffix = WebViewProcessIsolationPolicy.suffixFor(
+            processNameCompat(),
+            packageName
+        ) ?: return
         if (!WebViewFeature.isStartupFeatureSupported(
                 this,
                 WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX
