@@ -213,30 +213,80 @@ class AccountWebViewerActivity : ComponentActivity() {
     ) {
         if (proxy.enabled && !proxy.isValid()) {
             showError("Проверь настройки прокси этого аккаунта.")
+            destroyCurrentWebView()
             return
         }
         val proxySupported = WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)
         if (proxy.enabled && !proxySupported) {
             showError("Эта версия WebView не поддерживает прокси. Страница не загружена, чтобы не раскрыть IP.")
+            destroyCurrentWebView()
             return
+        }
+
+        val reservation = when (val result = AccountWebViewerProcessRouteOwnerRegistry.owner.reserve(proxy)) {
+            is AccountWebViewerRouteReservation.Accepted -> result
+            is AccountWebViewerRouteReservation.Rejected -> {
+                destroyCurrentWebView()
+                showError(result.reason)
+                return
+            }
+        }
+
+        // Never reconfigure ProxyController for a second account/Activity in this process.
+        // Even after destroy(), Chromium networking is not guaranteed to have drained.
+        if (!reservation.applyProxyOverride) {
+            seedCookiesThenLoad(cookieManager, cookies, target, url)
+            return
+        }
+
+        if (!proxy.enabled && !proxySupported) {
+            if (AccountWebViewerProcessRouteOwnerRegistry.owner.markApplied(reservation.key)) {
+                seedCookiesThenLoad(cookieManager, cookies, target, url)
+            } else {
+                AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
+                destroyCurrentWebView()
+                showError("Состояние маршрута не подтверждено. Перезапусти контейнер просмотра.")
+            }
+            return
+        }
+
+        val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val timeout = Runnable {
+            if (completed.compareAndSet(false, true)) {
+                AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
+                if (webView === target) runCatching { target.stopLoading() }
+                showError("Применение прокси не подтверждено по тайм-ауту. Контейнер заблокирован до перезапуска.")
+            }
         }
         val executor = ContextCompat.getMainExecutor(this)
         val afterProxy = Runnable {
+            if (!completed.compareAndSet(false, true)) return@Runnable
+            mainHandler.removeCallbacks(timeout)
+            if (!AccountWebViewerProcessRouteOwnerRegistry.owner.markApplied(reservation.key)) {
+                AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
+                showError("Состояние маршрута не удалось подтвердить. Перезапусти контейнер просмотра.")
+                return@Runnable
+            }
             if (webView === target) seedCookiesThenLoad(cookieManager, cookies, target, url)
         }
+
+        mainHandler.postDelayed(timeout, PROXY_APPLY_TIMEOUT_MS)
         try {
             if (proxy.enabled) {
                 val config = ProxyConfig.Builder()
                     .addProxyRule("${proxy.host.trim()}:${proxy.port}")
                     .build()
                 ProxyController.getInstance().setProxyOverride(config, executor, afterProxy)
-            } else if (proxySupported) {
-                ProxyController.getInstance().clearProxyOverride(executor, afterProxy)
             } else {
-                afterProxy.run()
+                ProxyController.getInstance().clearProxyOverride(executor, afterProxy)
             }
         } catch (e: Exception) {
-            showError("Не удалось применить прокси: ${e.message ?: e.javaClass.simpleName}.")
+            mainHandler.removeCallbacks(timeout)
+            if (completed.compareAndSet(false, true)) {
+                AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
+            }
+            destroyCurrentWebView()
+            showError("Не удалось применить прокси: ${e.message ?: e.javaClass.simpleName}. Контейнер заблокирован до перезапуска.")
         }
     }
 
