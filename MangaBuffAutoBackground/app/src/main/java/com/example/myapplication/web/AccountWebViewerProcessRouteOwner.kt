@@ -61,7 +61,7 @@ internal class AccountWebViewerProcessRouteOwner {
     }
 
     @Synchronized
-    internal fun isQuarantinedForTest(): Boolean = quarantined
+    fun isQuarantined(): Boolean = quarantined
 
     @Synchronized
     internal fun isAppliedForTest(): Boolean = applied

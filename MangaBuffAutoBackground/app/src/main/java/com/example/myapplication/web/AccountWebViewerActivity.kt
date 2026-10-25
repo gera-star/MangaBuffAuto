@@ -104,6 +104,22 @@ class AccountWebViewerActivity : ComponentActivity() {
     }
 
     private fun openFromIntent(intent: Intent?) {
+        val routeOwner = AccountWebViewerProcessRouteOwnerRegistry.owner
+        if (routeOwner.isQuarantined()) {
+            val cleaned = destroyCurrentWebView()
+            showError(
+                if (cleaned) {
+                    "Контейнер просмотра заблокирован после неопределённого состояния. Перезапусти процесс просмотра."
+                } else {
+                    "Очистка WebView не подтверждена. Контейнер заблокирован до перезапуска процесса."
+                }
+            )
+            return
+        }
+        if (!destroyCurrentWebView()) {
+            // destroyCurrentWebView quarantines the process on any cleanup exception.
+            return
+        }
         currentAccountId = intent?.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
         currentUsername = intent?.getStringExtra(EXTRA_USERNAME).orEmpty()
         val url = normalizeWebUrl(intent?.getStringExtra(EXTRA_URL).orEmpty())
@@ -117,7 +133,6 @@ class AccountWebViewerActivity : ComponentActivity() {
             password = intent?.getStringExtra(EXTRA_PROXY_PASS).orEmpty()
         )
 
-        destroyCurrentWebView()
         if (currentAccountId.isBlank() || url == null) {
             showError("Не удалось открыть WEB: неверные параметры аккаунта или адреса.")
             return
@@ -142,20 +157,12 @@ class AccountWebViewerActivity : ComponentActivity() {
                 profileName = profileName
             )
         } catch (e: Exception) {
-            val destroyed = runCatching {
-                wv.stopLoading()
-                wv.destroy()
-            }.isSuccess
-            if (destroyed) {
-                if (webView === wv) webView = null
-            } else {
-                retainFailedWebView(wv)
-            }
+            val destroyed = destroyCurrentWebView()
             showError(
                 if (destroyed) {
                     "Не удалось открыть изолированный профиль аккаунта: ${e.message ?: "ошибка WebView"}."
                 } else {
-                    "Не удалось открыть профиль, а очистка WebView не подтверждена. Перезапусти контейнер."
+                    "Не удалось открыть профиль, а очистка WebView не подтверждена. Процесс заблокирован до перезапуска."
                 }
             )
             return
@@ -226,8 +233,11 @@ class AccountWebViewerActivity : ComponentActivity() {
         val reservation = when (val result = AccountWebViewerProcessRouteOwnerRegistry.owner.reserve(proxy)) {
             is AccountWebViewerRouteReservation.Accepted -> result
             is AccountWebViewerRouteReservation.Rejected -> {
-                destroyCurrentWebView()
-                showError(result.reason)
+                val cleaned = destroyCurrentWebView()
+                showError(
+                    if (cleaned) result.reason
+                    else "Очистка WebView не подтверждена. Контейнер заблокирован до перезапуска процесса."
+                )
                 return
             }
         }
@@ -254,8 +264,14 @@ class AccountWebViewerActivity : ComponentActivity() {
         val timeout = Runnable {
             if (completed.compareAndSet(false, true)) {
                 AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
-                if (webView === target) destroyCurrentWebView()
-                showError("Применение прокси не подтверждено по тайм-ауту. Контейнер заблокирован до перезапуска.")
+                val cleaned = if (webView === target) destroyCurrentWebView() else true
+                showError(
+                    if (cleaned) {
+                        "Применение прокси не подтверждено по тайм-ауту. Контейнер заблокирован до перезапуска."
+                    } else {
+                        "Применение прокси не подтверждено; кроме того, очистка WebView завершилась ошибкой. Процесс заблокирован до перезапуска."
+                    }
+                )
             }
         }
         val executor = ContextCompat.getMainExecutor(this)
@@ -264,8 +280,14 @@ class AccountWebViewerActivity : ComponentActivity() {
             mainHandler.removeCallbacks(timeout)
             if (!AccountWebViewerProcessRouteOwnerRegistry.owner.markApplied(reservation.key)) {
                 AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
-                destroyCurrentWebView()
-                showError("Состояние маршрута не удалось подтвердить. Перезапусти контейнер просмотра.")
+                val cleaned = destroyCurrentWebView()
+                showError(
+                    if (cleaned) {
+                        "Состояние маршрута не удалось подтвердить. Перезапусти контейнер просмотра."
+                    } else {
+                        "Состояние маршрута не подтверждено, а очистка WebView завершилась ошибкой. Процесс заблокирован до перезапуска."
+                    }
+                )
                 return@Runnable
             }
             if (webView === target) seedCookiesThenLoad(cookieManager, cookies, target, url)
@@ -286,8 +308,14 @@ class AccountWebViewerActivity : ComponentActivity() {
             if (completed.compareAndSet(false, true)) {
                 AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
             }
-            destroyCurrentWebView()
-            showError("Не удалось применить прокси: ${e.message ?: e.javaClass.simpleName}. Контейнер заблокирован до перезапуска.")
+            val cleaned = destroyCurrentWebView()
+            showError(
+                if (cleaned) {
+                    "Не удалось применить прокси: ${e.message ?: e.javaClass.simpleName}. Контейнер заблокирован до перезапуска."
+                } else {
+                    "Не удалось применить прокси, и очистка WebView завершилась ошибкой. Процесс заблокирован до перезапуска."
+                }
+            )
         }
     }
 
@@ -365,19 +393,23 @@ class AccountWebViewerActivity : ComponentActivity() {
         }
     }
 
-    private fun destroyCurrentWebView() {
-        val old = webView ?: return
-        (old.parent as? ViewGroup)?.removeView(old)
-        val cleaned = runCatching {
+    private fun destroyCurrentWebView(): Boolean {
+        val old = webView ?: return true
+        val cleaned = AccountWebViewerCleanupPolicy.destroyOrQuarantine(
+            AccountWebViewerProcessRouteOwnerRegistry.owner
+        ) {
+            (old.parent as? ViewGroup)?.removeView(old)
             old.stopLoading()
             old.destroy()
-        }.isSuccess
+        }
         if (cleaned) {
             if (webView === old) webView = null
         } else {
+            // Keep a strong reference and permanently block this process from creating another view.
             retainFailedWebView(old)
-            showError("Очистка WebView не подтверждена. Контейнер нельзя считать свободным.")
+            showError("Очистка WebView не подтверждена. Контейнер заблокирован до перезапуска процесса.")
         }
+        return cleaned
     }
 
     override fun onDestroy() {

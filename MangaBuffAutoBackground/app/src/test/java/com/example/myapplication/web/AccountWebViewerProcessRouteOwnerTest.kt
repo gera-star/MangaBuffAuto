@@ -42,7 +42,7 @@ class AccountWebViewerProcessRouteOwnerTest {
 
         assertTrue(owner.reserve(AppProxyConfig(true, "proxy.example", 8080))
             is AccountWebViewerRouteReservation.Rejected)
-        assertTrue(owner.isQuarantinedForTest())
+        assertTrue(owner.isQuarantined())
         assertTrue(owner.reserve(AppProxyConfig(true, "proxy.example", 8080))
             is AccountWebViewerRouteReservation.Rejected)
     }
@@ -53,7 +53,7 @@ class AccountWebViewerProcessRouteOwnerTest {
         owner.reserve(AppProxyConfig(true, "proxy.example", 8080))
         owner.quarantine()
 
-        assertTrue(owner.isQuarantinedForTest())
+        assertTrue(owner.isQuarantined())
         assertTrue(owner.reserve(AppProxyConfig(true, "proxy.example", 8080))
             is AccountWebViewerRouteReservation.Rejected)
     }
