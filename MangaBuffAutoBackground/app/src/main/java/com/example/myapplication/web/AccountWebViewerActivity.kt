@@ -400,6 +400,7 @@ class AccountWebViewerActivity : ComponentActivity() {
         private const val EXTRA_PROXY_PORT = "web.proxy.port"
         private const val EXTRA_PROXY_USER = "web.proxy.user"
         private const val EXTRA_PROXY_PASS = "web.proxy.pass"
+        private const val PROXY_APPLY_TIMEOUT_MS = 15_000L
 
         fun launch(context: Context, account: MangaBuffAccount, cookies: String, proxy: AppProxyConfig) {
             val url = account.getSafeActiveMangaUrl()
