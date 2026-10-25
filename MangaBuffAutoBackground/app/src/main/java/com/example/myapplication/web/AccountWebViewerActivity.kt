@@ -254,7 +254,7 @@ class AccountWebViewerActivity : ComponentActivity() {
         val timeout = Runnable {
             if (completed.compareAndSet(false, true)) {
                 AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
-                if (webView === target) runCatching { target.stopLoading() }
+                if (webView === target) destroyCurrentWebView()
                 showError("Применение прокси не подтверждено по тайм-ауту. Контейнер заблокирован до перезапуска.")
             }
         }
@@ -264,6 +264,7 @@ class AccountWebViewerActivity : ComponentActivity() {
             mainHandler.removeCallbacks(timeout)
             if (!AccountWebViewerProcessRouteOwnerRegistry.owner.markApplied(reservation.key)) {
                 AccountWebViewerProcessRouteOwnerRegistry.owner.quarantine()
+                destroyCurrentWebView()
                 showError("Состояние маршрута не удалось подтвердить. Перезапусти контейнер просмотра.")
                 return@Runnable
             }
