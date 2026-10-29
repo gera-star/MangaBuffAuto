@@ -2036,8 +2036,10 @@ class MangaBuffForegroundService : Service() {
         if (!repository.getSettings().cardTimerFarmEnabled) return
         val dueAt = System.currentTimeMillis() + CARD_TIMER_DELAY_MS
         cardTimerPrefs().edit().putLong(KEY_CARD_TIMER_DUE_AT, dueAt).apply()
-        cardTimerFarmJob?.cancel()
         publishLog(LogEntry(component = "CARD_TIMER", message = "TIMER_ARMED reason=$reason dueAt=$dueAt"))
+        // A drop during a cycle is queued for later; never cancel the active account cycle.
+        if (cardTimerFarmCycleRunning) return
+        cardTimerFarmJob?.cancel()
         launchCardTimerFarmAt(dueAt)
     }
 
@@ -2071,6 +2073,8 @@ class MangaBuffForegroundService : Service() {
             publishLog(LogEntry(component = "CARD_TIMER", message = "TIMER_EXPIRED starting_reader_cycle"))
             try {
                 startAllInternal(TaskType.READER)
+                // Allow the service to publish RUNNING status before checking the shared queue.
+                delay(5_000L)
                 // Wait for the existing account queue to complete before permitting another cycle.
                 while (repository.getSettings().cardTimerFarmEnabled &&
                     repository.getAccounts().any { it.isRunning }) {
@@ -2078,6 +2082,8 @@ class MangaBuffForegroundService : Service() {
                 }
             } finally {
                 cardTimerFarmCycleRunning = false
+                cardTimerFarmJob = null
+                restoreCardTimerFarmIfNeeded()
             }
         }
     }
