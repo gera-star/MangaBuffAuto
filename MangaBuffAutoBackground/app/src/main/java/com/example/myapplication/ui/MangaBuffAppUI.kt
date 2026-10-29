@@ -1902,6 +1902,28 @@ fun TasksTab(
                         FilledTonalButton(
                             onClick = {
                                 onSaveSettings(
+                                    settings.copy(cardTimerFarmEnabled = !settings.cardTimerFarmEnabled)
+                                )
+                            },
+                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(9.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = if (settings.cardTimerFarmEnabled) Color(0xFF256D4A) else MaterialTheme.colorScheme.secondaryContainer
+                            )
+                        ) {
+                            Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                if (settings.cardTimerFarmEnabled) "Фарм карт ВКЛ" else "Фарм по таймеру",
+                                fontSize = 10.sp,
+                                maxLines = 1
+                            )
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                onSaveSettings(
                                     settings.copy(keepScreenOn = !settings.keepScreenOn)
                                 )
                             },
