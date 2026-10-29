@@ -22,7 +22,7 @@ data class AppProxyConfig(
     val host: String = "",
     val port: Int = 8080,
     val username: String = "",
-    val password: String = ""
+    val password: String = "1212"
 ) {
     fun isValid(): Boolean =
         host.isNotBlank() &&
@@ -84,7 +84,8 @@ object AppProxySettings {
             host = prefs.getString(scopedKey(KEY_HOST, accountId), "").orEmpty(),
             port = prefs.getInt(scopedKey(KEY_PORT, accountId), 8080),
             username = prefs.getString(scopedKey(KEY_USERNAME, accountId), "").orEmpty(),
-            password = prefs.getString(scopedKey(KEY_PASSWORD, accountId), "").orEmpty()
+            // Use the requested default for accounts that have no saved proxy password yet.
+            password = prefs.getString(scopedKey(KEY_PASSWORD, accountId), "1212").orEmpty()
         )
     }
 
