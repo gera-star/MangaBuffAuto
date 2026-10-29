@@ -460,9 +460,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveSettings(newSettings: GlobalSettings) {
         val wasTimerFarmEnabled = _settings.value.cardTimerFarmEnabled
-        _settings.value = newSettings
-        repository.saveSettings(newSettings)
-        if (newSettings.cardTimerFarmEnabled && !wasTimerFarmEnabled) {
+        val effectiveSettings = if (newSettings.cardTimerFarmEnabled) {
+            newSettings.copy(parallelAccounts = false)
+        } else newSettings
+        _settings.value = effectiveSettings
+        repository.saveSettings(effectiveSettings)
+        if (effectiveSettings.cardTimerFarmEnabled && !wasTimerFarmEnabled) {
             // Enforce reader-only mode for every saved account immediately.
             _accounts.value.forEach { account ->
                 repository.updateAccount(account.id) {
