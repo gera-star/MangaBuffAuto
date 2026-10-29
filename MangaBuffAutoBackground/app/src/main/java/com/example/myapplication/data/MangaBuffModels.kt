@@ -188,6 +188,8 @@ data class GlobalSettings(
     val towerUpgradeMentorship: Boolean = true,
     val towerUpgradeSupply: Boolean = true,
     val keepScreenOn: Boolean = false,
+    /** Dedicated mode: only manga reading is allowed; card timer automation is opt-in. */
+    val cardTimerFarmEnabled: Boolean = false,
     /** false = accounts run one after another (default); true = accounts run at the same time. */
     val parallelAccounts: Boolean = false,
     val readerSiteAutoscroll: Boolean = false,
