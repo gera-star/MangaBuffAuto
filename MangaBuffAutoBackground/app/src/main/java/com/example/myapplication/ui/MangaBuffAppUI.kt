@@ -268,6 +268,7 @@ fun MangaBuffAppUI(
             when (activeTab) {
                 0 -> AccountsTab(
                     accounts = accounts,
+                    cardTimerFarmEnabled = settings.cardTimerFarmEnabled,
                     battleTarget = settings.battleTargetCount,
                     onRunTask = { account, type -> viewModel.runTaskForAccount(account, type) },
                     onStopAccount = { account -> viewModel.stopAccountTask(account.id) },
@@ -1208,6 +1209,7 @@ fun MangaBuffAppUI(
 @Composable
 fun AccountsTab(
     accounts: List<MangaBuffAccount>,
+    cardTimerFarmEnabled: Boolean = false,
     battleTarget: Int,
     onRunTask: (MangaBuffAccount, TaskType) -> Unit,
     onStopAccount: (MangaBuffAccount) -> Unit,
@@ -1253,6 +1255,7 @@ fun AccountsTab(
             items(accounts, key = { it.id }) { account ->
                 AccountCard(
                     account = account,
+                    cardTimerFarmEnabled = cardTimerFarmEnabled,
                     battleTarget = battleTarget,
                     onRunTask = { type -> onRunTask(account, type) },
                     onStopAccount = { onStopAccount(account) },
@@ -1312,6 +1315,7 @@ private fun AccountExitIpRow(accountId: String) {
 @Composable
 fun AccountCard(
     account: MangaBuffAccount,
+    cardTimerFarmEnabled: Boolean = false,
     battleTarget: Int,
     onRunTask: (TaskType) -> Unit,
     onStopAccount: () -> Unit,
@@ -1594,19 +1598,19 @@ fun AccountCard(
                         }
                     }
 
-                    TaskSwitchRow("🃏 Бои", "${dailyBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled) { b ->
+                    TaskSwitchRow("🃏 Бои", "${dailyBattleAttempts}(боев)/${dailyBattles} победы", account.battleEnabled, enabled = !cardTimerFarmEnabled) { b ->
                         onUpdateTasks(account.readerEnabled, account.towerEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, b)
                     }
-                    TaskSwitchRow("🗼 Башня Разлома", towerRemainingLabel(account), account.towerEnabled) { tower ->
+                    TaskSwitchRow("🗼 Башня Разлома", towerRemainingLabel(account), account.towerEnabled, enabled = !cardTimerFarmEnabled) { tower ->
                         onUpdateTasks(account.readerEnabled, tower, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("📺 Просмотр рекламы", "${dailyAds}/3", account.advEnabled) { a ->
+                    TaskSwitchRow("📺 Просмотр рекламы", "${dailyAds}/3", account.advEnabled, enabled = !cardTimerFarmEnabled) { a ->
                         onUpdateTasks(account.readerEnabled, account.towerEnabled, a, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("⛏️ Шахта", mineOreBalanceLabel, account.mineEnabled) { m ->
+                    TaskSwitchRow("⛏️ Шахта", mineOreBalanceLabel, account.mineEnabled, enabled = !cardTimerFarmEnabled) { m ->
                         onUpdateTasks(account.readerEnabled, account.towerEnabled, account.advEnabled, m, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
-                    TaskSwitchRow("📖 Чтение", "${dailyReaderChapters} глав", account.readerEnabled) { r ->
+                    TaskSwitchRow("📖 Чтение", "${dailyReaderChapters} глав", account.readerEnabled, enabled = true) { r ->
                         onUpdateTasks(r, account.towerEnabled, account.advEnabled, account.mineEnabled, account.commentEnabled, account.deckCommentEnabled, account.battleEnabled)
                     }
                     TaskSwitchRow(
@@ -1614,7 +1618,8 @@ fun AccountCard(
                         account.commentProgress.takeIf {
                             Regex("""^\d+\s*/\s*\d+$""").matches(it.trim())
                         } ?: "${dailyComments}/13",
-                        account.commentEnabled
+                        account.commentEnabled,
+                        enabled = !cardTimerFarmEnabled
                     ) { c ->
                         onUpdateTasks(
                             account.readerEnabled,
@@ -1730,6 +1735,7 @@ fun TaskSwitchRow(
     label: String,
     dailyStat: String,
     checked: Boolean,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
@@ -1745,7 +1751,7 @@ fun TaskSwitchRow(
             maxLines = 1
         )
         Spacer(Modifier.width(8.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange, modifier = Modifier.height(32.dp))
+        Switch(checked = checked, enabled = enabled, onCheckedChange = onCheckedChange, modifier = Modifier.height(32.dp))
     }
 }
 
