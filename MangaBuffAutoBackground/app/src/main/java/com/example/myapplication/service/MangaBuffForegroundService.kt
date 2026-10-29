@@ -133,6 +133,9 @@ class MangaBuffForegroundService : Service() {
         private const val PREFS_RUNTIME = "mangabuff_runtime"
         private const val KEY_ACTIVE_RUNS = "active_runs"
         private const val KEY_TOWER_CYCLE_ENDS = "tower_cycle_ends"
+        private const val KEY_CARD_TIMER_DUE_AT = "card_timer_due_at"
+        private const val CARD_TIMER_DELAY_MS = 60 * 60 * 1000L
+
         private const val KEY_PENDING_PROFILE_DELETES = "pending_profile_deletes"
         private const val WATCHDOG_INTERVAL_MS = 15_000L
         private const val PROXY_APPLY_TIMEOUT_MS = 15_000L
@@ -305,6 +308,9 @@ class MangaBuffForegroundService : Service() {
     // finish inline inside onStartCommand/startAllInternal before every account Job is registered.
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val accountJobs = AccountJobRegistry()
+    @Volatile private var cardTimerFarmJob: Job? = null
+    @Volatile private var cardTimerFarmCycleRunning = false
+
     // Pending delayed restarts are tracked so OFFLINE can cancel them immediately.
     private val accountRecoveryRestartJobs = ConcurrentHashMap<String, Job>()
 
@@ -664,6 +670,12 @@ class MangaBuffForegroundService : Service() {
                 )
             )
             removePersistedRun(accountId)
+            return
+        }
+
+        if (repository.getSettings().cardTimerFarmEnabled && taskType != TaskType.READER) {
+            publishLog(LogEntry(username = account.username, component = "CARD_TIMER", message = "START_REJECTED reader_only_mode"))
+            publishStatus(accountId, "Режим фарма карт: разрешено только чтение", false, "", 0f)
             return
         }
 
@@ -1594,6 +1606,10 @@ class MangaBuffForegroundService : Service() {
     }
 
     private fun startAllInternal(taskType: TaskType, promoCode: String? = null) {
+        if (repository.getSettings().cardTimerFarmEnabled && taskType != TaskType.READER) {
+            publishLog(LogEntry(component = "CARD_TIMER", message = "START_ALL_REJECTED reader_only_mode"))
+            return
+        }
         val accounts = repository.getAccounts().filterNot { it.isOffline }
         if (accounts.isEmpty()) {
             publishLog(LogEntry(component = "OFFLINE", message = "START_ALL_IGNORED no_online_accounts"))
@@ -2021,6 +2037,16 @@ class MangaBuffForegroundService : Service() {
         comments: String,
         eventCandies: String
     ) {
+        if (repository.getSettings().cardTimerFarmEnabled) {
+            val account = repository.getAccounts().firstOrNull { it.id == accountId }
+            val oldCount = account?.cardDrop?.substringBefore("/")?.trim()?.toIntOrNull()
+            val newCount = cardDrop.substringBefore("/")?.trim()?.toIntOrNull()
+            if (oldCount != null && newCount != null && newCount > oldCount) {
+                scheduleCardTimerFarm("card_drop")
+            } else {
+                restoreCardTimerFarmIfNeeded()
+            }
+        }
         sendRuntimeEvent(
             EVENT_STATS,
             accountId = accountId,
