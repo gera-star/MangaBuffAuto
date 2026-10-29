@@ -165,8 +165,9 @@ class MainActivity : ComponentActivity() {
                 var tradePassword by remember { mutableStateOf("") }
                 var tradePasswordError by remember { mutableStateOf(false) }
 
-                DisposableEffect(settings.keepScreenOn, automationRunning) {
-                    if (settings.keepScreenOn && automationRunning) {
+                DisposableEffect(settings.keepScreenOn, settings.cardTimerFarmEnabled, automationRunning) {
+                    // The timer mode intentionally keeps the display awake while this Activity is visible.
+                    if (settings.cardTimerFarmEnabled || (settings.keepScreenOn && automationRunning)) {
                         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     } else {
                         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
