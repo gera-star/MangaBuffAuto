@@ -521,6 +521,7 @@ class MangaBuffForegroundService : Service() {
                 skipAccountId = towerDueAccountId.takeIf { action == ACTION_TOWER_CYCLE_DUE }
             )
         }
+        restoreCardTimerFarmIfNeeded()
 
         // START_STICKY can recreate the service with a null intent or the last delivered
         // intent after process death. Restore the saved trade monitor on any non-stop command,
@@ -2027,6 +2028,58 @@ class MangaBuffForegroundService : Service() {
                 putExtra(EXTRA_ERROR, entry.isError)
             }
         )
+    }
+
+    private fun cardTimerPrefs() = getSharedPreferences(PREFS_RUNTIME, Context.MODE_PRIVATE)
+
+    private fun scheduleCardTimerFarm(reason: String) {
+        if (!repository.getSettings().cardTimerFarmEnabled) return
+        val dueAt = System.currentTimeMillis() + CARD_TIMER_DELAY_MS
+        cardTimerPrefs().edit().putLong(KEY_CARD_TIMER_DUE_AT, dueAt).apply()
+        cardTimerFarmJob?.cancel()
+        publishLog(LogEntry(component = "CARD_TIMER", message = "TIMER_ARMED reason=$reason dueAt=$dueAt"))
+        launchCardTimerFarmAt(dueAt)
+    }
+
+    private fun restoreCardTimerFarmIfNeeded() {
+        if (!repository.getSettings().cardTimerFarmEnabled) {
+            cardTimerFarmJob?.cancel()
+            cardTimerPrefs().edit().remove(KEY_CARD_TIMER_DUE_AT).apply()
+            return
+        }
+        val dueAt = cardTimerPrefs().getLong(KEY_CARD_TIMER_DUE_AT, 0L)
+        if (dueAt > 0L && cardTimerFarmJob?.isActive != true) launchCardTimerFarmAt(dueAt)
+    }
+
+    private fun launchCardTimerFarmAt(dueAt: Long) {
+        cardTimerFarmJob = serviceScope.launch {
+            val remaining = (dueAt - System.currentTimeMillis()).coerceAtLeast(0L)
+            if (remaining > 0L) delay(remaining)
+            if (!repository.getSettings().cardTimerFarmEnabled) {
+                cardTimerPrefs().edit().remove(KEY_CARD_TIMER_DUE_AT).apply()
+                return@launch
+            }
+            // Do not overlap a current run. If one is active, poll until the shared queue is idle.
+            while (repository.getSettings().cardTimerFarmEnabled &&
+                repository.getAccounts().any { it.isRunning }) {
+                delay(15_000L)
+            }
+            if (!repository.getSettings().cardTimerFarmEnabled) return@launch
+            if (cardTimerFarmCycleRunning) return@launch
+            cardTimerFarmCycleRunning = true
+            cardTimerPrefs().edit().remove(KEY_CARD_TIMER_DUE_AT).apply()
+            publishLog(LogEntry(component = "CARD_TIMER", message = "TIMER_EXPIRED starting_reader_cycle"))
+            try {
+                startAllInternal(TaskType.READER)
+                // Wait for the existing account queue to complete before permitting another cycle.
+                while (repository.getSettings().cardTimerFarmEnabled &&
+                    repository.getAccounts().any { it.isRunning }) {
+                    delay(15_000L)
+                }
+            } finally {
+                cardTimerFarmCycleRunning = false
+            }
+        }
     }
 
     private fun publishStats(
