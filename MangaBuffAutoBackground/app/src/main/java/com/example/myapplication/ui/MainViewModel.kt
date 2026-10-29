@@ -310,17 +310,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         deckComment: Boolean,
         battle: Boolean
     ) {
+        // Timer mode is a hard policy, not just a visual switch lock.
+        val timerFarm = _settings.value.cardTimerFarmEnabled
+        val effectiveReader = if (timerFarm) true else reader
+        val effectiveTower = if (timerFarm) false else tower
+        val effectiveAdv = if (timerFarm) false else adv
+        val effectiveMine = if (timerFarm) false else mine
+        val effectiveComment = if (timerFarm) false else comment
+        val effectiveDeckComment = if (timerFarm) false else deckComment
+        val effectiveBattle = if (timerFarm) false else battle
         var previousDeckCommentEnabled: Boolean? = null
         val updated = repository.updateAccount(account.id) {
             previousDeckCommentEnabled = it.deckCommentEnabled
             it.copy(
-                readerEnabled = reader,
-                towerEnabled = tower,
-                advEnabled = adv,
-                mineEnabled = mine,
-                commentEnabled = comment,
-                deckCommentEnabled = deckComment,
-                battleEnabled = battle
+                readerEnabled = effectiveReader,
+                towerEnabled = effectiveTower,
+                advEnabled = effectiveAdv,
+                mineEnabled = effectiveMine,
+                commentEnabled = effectiveComment,
+                deckCommentEnabled = effectiveDeckComment,
+                battleEnabled = effectiveBattle
             )
         } ?: return
 
@@ -450,8 +459,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveSettings(newSettings: GlobalSettings) {
+        val wasTimerFarmEnabled = _settings.value.cardTimerFarmEnabled
         _settings.value = newSettings
         repository.saveSettings(newSettings)
+        if (newSettings.cardTimerFarmEnabled && !wasTimerFarmEnabled) {
+            // Enforce reader-only mode for every saved account immediately.
+            _accounts.value.forEach { account ->
+                repository.updateAccount(account.id) {
+                    it.copy(
+                        readerEnabled = true,
+                        towerEnabled = false,
+                        advEnabled = false,
+                        mineEnabled = false,
+                        commentEnabled = false,
+                        deckCommentEnabled = false,
+                        battleEnabled = false
+                    )
+                }
+            }
+            _accounts.update { list ->
+                list.map {
+                    it.copy(
+                        readerEnabled = true,
+                        towerEnabled = false,
+                        advEnabled = false,
+                        mineEnabled = false,
+                        commentEnabled = false,
+                        deckCommentEnabled = false,
+                        battleEnabled = false
+                    )
+                }
+            }
+        }
         // A running reader checks the registry for each addHistory reward response, so
         // the Events toggle applies immediately without restarting or duplicating reading.
         _accounts.value.forEach { account ->
@@ -466,6 +505,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runTaskForAccount(account: MangaBuffAccount, taskType: TaskType) {
+        if (_settings.value.cardTimerFarmEnabled && taskType != TaskType.READER) {
+            addLog(LogEntry(username = account.username, component = "CARD_TIMER", message = "START_REJECTED reader_only_mode"))
+            return
+        }
         if (account.isOffline) {
             addLog(
                 LogEntry(
@@ -511,6 +554,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runTaskForAllAccounts(taskType: TaskType) {
+        if (_settings.value.cardTimerFarmEnabled && taskType != TaskType.READER) {
+            addLog(LogEntry(component = "CARD_TIMER", message = "START_ALL_REJECTED reader_only_mode"))
+            return
+        }
         val eligibleAccountIds = _accounts.value.filterNot { it.isOffline }.map { it.id }.toSet()
         val requestedCount = eligibleAccountIds.size
         if (requestedCount == 0) {
