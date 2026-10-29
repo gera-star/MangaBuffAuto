@@ -85,7 +85,7 @@ object AppProxySettings {
             port = prefs.getInt(scopedKey(KEY_PORT, accountId), 8080),
             username = prefs.getString(scopedKey(KEY_USERNAME, accountId), "").orEmpty(),
             // Use the requested default for accounts that have no saved proxy password yet.
-            password = prefs.getString(scopedKey(KEY_PASSWORD, accountId), "1212").orEmpty()
+            password = prefs.getString(scopedKey(KEY_PASSWORD, accountId), "1212").orEmpty().ifBlank { "1212" }
         )
     }
 
